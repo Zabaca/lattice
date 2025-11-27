@@ -1,0 +1,23 @@
+# Optional: Ingress for external access (uncomment and configure as needed)
+# This is typically not needed for FalkorDB as it uses Redis protocol
+# Included for completeness if HTTP API access is added later
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: lattice-ingress
+  namespace: lattice
+  annotations:
+    kubernetes.io/ingress.class: traefik
+spec:
+  rules:
+    - host: lattice.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: falkordb
+                port:
+                  number: 6379

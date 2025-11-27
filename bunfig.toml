@@ -1,0 +1,13 @@
+[build]
+# Mark optional dependencies as external
+# These are optional NestJS features we don't need for CLI
+external = [
+  "@nestjs/platform-socket.io",
+  "nats",
+  "mqtt",
+  "amqplib",
+  "amqp-connection-manager",
+  "kafkajs",
+  "@grpc/grpc-js",
+  "@grpc/proto-loader"
+]

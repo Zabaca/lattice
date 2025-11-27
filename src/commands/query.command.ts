@@ -51,141 +51,79 @@ export function registerQueryCommands(program: Command) {
 			}
 		});
 
-	// Search command - search for nodes
+	// Search command - semantic search across the knowledge graph
 	program
-		.command("search")
-		.description("Search for nodes in the graph or perform semantic search")
-		.option("-l, --label <label>", "Filter by node label")
-		.option("-n, --name <name>", "Filter by name (substring match)")
-		.option("-s, --semantic <query>", "Perform semantic/vector search on documents")
+		.command("search <query>")
+		.description("Semantic search across the knowledge graph")
+		.option("-l, --label <label>", "Filter by entity label (e.g., Technology, Concept, Document)")
 		.option("--limit <n>", "Limit results", "20")
-		.action(async (options) => {
+		.action(async (query: string, options) => {
 			let app;
 			try {
 				app = await NestFactory.createApplicationContext(AppModule, {
 					logger: ['error'],
 				});
 				const graph = app.get(GraphService);
-
-				// Handle semantic search
-				if (options.semantic) {
-					const embedding = app.get(EmbeddingService);
-					const limit = Math.min(parseInt(options.limit, 10), 100);
-
-					try {
-						// Generate embedding for the query
-						const queryEmbedding = await embedding.generateEmbedding(
-							options.semantic
-						);
-
-						// Perform vector search across all entity types
-						const results = await graph.vectorSearchAll(
-							queryEmbedding,
-							limit
-						);
-
-						console.log(`\n=== Semantic Search Results for "${options.semantic}" ===\n`);
-
-						if (results.length === 0) {
-							console.log("No results found with semantic search.\n");
-							await app.close();
-							process.exit(0);
-						}
-
-						results.forEach((result, idx) => {
-							console.log(`${idx + 1}. [${result.label}] ${result.name}`);
-							if (result.title) {
-								console.log(`   Title: ${result.title}`);
-							}
-							if (result.description && result.label !== 'Document') {
-								// Truncate long descriptions
-								const desc = result.description.length > 80
-									? result.description.slice(0, 80) + '...'
-									: result.description;
-								console.log(`   ${desc}`);
-							}
-							console.log(`   Similarity: ${(result.score * 100).toFixed(2)}%`);
-						});
-						console.log();
-
-						await app.close();
-						process.exit(0);
-					} catch (semanticError) {
-						const errorMsg =
-							semanticError instanceof Error
-								? semanticError.message
-								: String(semanticError);
-						console.error(
-							"Semantic search error:",
-							errorMsg
-						);
-						if (
-							errorMsg.includes("no embeddings") ||
-							errorMsg.includes("vector")
-						) {
-							console.log(
-								"\nNote: Semantic search requires embeddings to be generated first."
-							);
-							console.log(
-								"Run 'lattice sync' to generate embeddings for documents.\n"
-							);
-						}
-						await app.close();
-						process.exit(1);
-					}
-				}
-
-				// Handle traditional keyword search
-				let cypher: string;
+				const embedding = app.get(EmbeddingService);
 				const limit = Math.min(parseInt(options.limit, 10), 100);
 
-				if (options.label && options.name) {
-					const escapedLabel = options.label.replace(/`/g, "\\`");
-					const escapedName = options.name.replace(/'/g, "\\'");
-					cypher = `MATCH (n:\`${escapedLabel}\`) WHERE n.name CONTAINS '${escapedName}' RETURN n LIMIT ${limit}`;
-				} else if (options.label) {
-					const escapedLabel = options.label.replace(/`/g, "\\`");
-					cypher = `MATCH (n:\`${escapedLabel}\`) RETURN n LIMIT ${limit}`;
-				} else if (options.name) {
-					const escapedName = options.name.replace(/'/g, "\\'");
-					cypher = `MATCH (n) WHERE n.name CONTAINS '${escapedName}' RETURN n LIMIT ${limit}`;
+				// Generate embedding for the query
+				const queryEmbedding = await embedding.generateEmbedding(query);
+
+				let results: Array<{ name: string; label: string; title?: string; description?: string; score: number }>;
+
+				if (options.label) {
+					// Search within specific label
+					const labelResults = await graph.vectorSearch(options.label, queryEmbedding, limit);
+					results = labelResults.map(r => ({
+						name: r.name,
+						label: options.label,
+						title: r.title,
+						score: r.score,
+					}));
 				} else {
-					cypher = `MATCH (n) RETURN n LIMIT ${limit}`;
+					// Search across all entity types
+					results = await graph.vectorSearchAll(queryEmbedding, limit);
 				}
 
-				const result = await graph.query(cypher);
-				const results = result.resultSet || [];
-
-				console.log(`\n=== Search Results (${results.length} nodes) ===\n`);
+				const labelSuffix = options.label ? ` (${options.label})` : '';
+				console.log(`\n=== Semantic Search Results for "${query}"${labelSuffix} ===\n`);
 
 				if (results.length === 0) {
-					console.log("No nodes found matching criteria.\n");
+					console.log("No results found.\n");
+					if (options.label) {
+						console.log(`Tip: Try without --label to search all entity types.\n`);
+					}
 					await app.close();
 					process.exit(0);
 				}
 
-				results.forEach((row: any) => {
-					const node = row[0];
-					const labels = (node.labels || []).join(", ");
-					const name = node.properties?.name || "unnamed";
-
-					console.log(`[${labels}] ${name}`);
-					if (node.properties?.description) {
-						console.log(`  Description: ${node.properties.description}`);
+				results.forEach((result, idx) => {
+					console.log(`${idx + 1}. [${result.label}] ${result.name}`);
+					if (result.title) {
+						console.log(`   Title: ${result.title}`);
 					}
-					if (node.properties?.importance) {
-						console.log(`  Importance: ${node.properties.importance}`);
+					if (result.description && result.label !== 'Document') {
+						const desc = result.description.length > 80
+							? result.description.slice(0, 80) + '...'
+							: result.description;
+						console.log(`   ${desc}`);
 					}
+					console.log(`   Similarity: ${(result.score * 100).toFixed(2)}%`);
 				});
 				console.log();
 
 				await app.close();
 				process.exit(0);
 			} catch (error) {
-				console.error(
-					"Error:",
-					error instanceof Error ? error.message : String(error)
-				);
+				const errorMsg = error instanceof Error ? error.message : String(error);
+				console.error("Error:", errorMsg);
+
+				if (errorMsg.includes("no embeddings") || errorMsg.includes("vector")) {
+					console.log("\nNote: Semantic search requires embeddings to be generated first.");
+					console.log("Run 'lattice sync' to generate embeddings for documents.\n");
+				}
+
 				if (app) await app.close();
 				process.exit(1);
 			}

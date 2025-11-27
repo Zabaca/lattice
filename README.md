@@ -108,13 +108,12 @@ lattice status --verbose        # Include detailed change information
 
 ### `lattice search`
 
-Search the knowledge graph.
+Semantic search across the knowledge graph.
 
 ```bash
-lattice search --semantic "query"    # Semantic search using embeddings
-lattice search --keyword "term"      # Keyword-based search
-lattice search --type concept        # Filter by entity type
-lattice search --limit 10            # Limit results
+lattice search "query"                    # Search all entity types
+lattice search --label Technology "query" # Filter by entity label
+lattice search --limit 10 "query"         # Limit results (default: 20)
 ```
 
 ### `lattice stats`

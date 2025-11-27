@@ -5,6 +5,7 @@ import {
 	registerQueryCommands,
 	registerValidateCommand,
 	registerOntologyCommand,
+	registerInitCommand,
 } from './commands/index.js';
 
 // Set up CLI metadata
@@ -13,9 +14,10 @@ program
 	.description(
 		'Human-initiated, AI-powered knowledge graph for markdown documentation',
 	)
-	.version('0.1.0');
+	.version('0.3.0');
 
 // Register all commands
+registerInitCommand(program);
 registerSyncCommand(program);
 registerStatusCommand(program);
 registerQueryCommands(program);

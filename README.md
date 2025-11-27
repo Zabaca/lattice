@@ -67,22 +67,97 @@ VOYAGE_MODEL=voyage-3
 LOG_LEVEL=info
 ```
 
-### 4. Sync Your Documents
+### 4. Initialize Claude Code Integration
+
+Install Lattice slash commands for Claude Code:
 
 ```bash
-# Sync all markdown files with frontmatter
-lattice sync
+lattice init              # For this project only
+# or
+lattice init --global     # For all projects (~/.claude/commands/)
+```
 
-# Sync specific paths
-lattice sync ./docs ./notes
+### 5. Launch Claude Code
 
-# Check what would change without syncing
-lattice sync --dry-run
+```bash
+claude
+```
+
+### 6. Research a Topic
+
+Use the `/research` command to search existing knowledge or create new documentation:
+
+```bash
+/research "knowledge graphs"
+```
+
+This will:
+- Search your existing docs for related content
+- Present findings and ask if you need new research
+- Create organized documentation if requested
+
+### 7. Sync & Search
+
+After creating or updating documents, sync to the graph and search:
+
+```bash
+/graph-sync                    # Extract entities and sync
+lattice search "your query"    # Semantic search
+```
+
+---
+
+## Using /research
+
+The `/research` command provides an AI-assisted research workflow.
+
+### Searching Existing Research
+
+```bash
+/research "semantic search"
+```
+
+Claude will:
+1. Search your docs using semantic similarity
+2. Read and summarize relevant findings
+3. Ask if existing research answers your question
+
+### Creating New Research
+
+```bash
+/research "new topic to explore"
+```
+
+If no existing docs match, Claude will:
+1. Perform web research
+2. Create a new topic directory (`docs/new-topic/`)
+3. Generate README.md index and research document
+4. Remind you to run `/graph-sync`
+
+### Batch Syncing
+
+`/graph-sync` doesn't need to run after each research session. It identifies all documents needing sync:
+
+```bash
+# After multiple research sessions
+/graph-sync
+
+# Shows: "4 documents need syncing"
+# Extracts entities and syncs all at once
 ```
 
 ---
 
 ## CLI Commands
+
+### `lattice init`
+
+Install Claude Code slash commands for Lattice.
+
+```bash
+lattice init              # Install to .claude/commands/ (current project)
+lattice init --global     # Install to ~/.claude/commands/ (all projects)
+```
 
 ### `lattice sync`
 

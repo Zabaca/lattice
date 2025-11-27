@@ -15,7 +15,7 @@ export function registerQueryCommands(program: Command) {
 			let app;
 			try {
 				app = await NestFactory.createApplicationContext(AppModule, {
-					logger: false,
+					logger: ['error'],
 				});
 				const graph = app.get(GraphService);
 
@@ -63,7 +63,7 @@ export function registerQueryCommands(program: Command) {
 			let app;
 			try {
 				app = await NestFactory.createApplicationContext(AppModule, {
-					logger: false,
+					logger: ['error'],
 				});
 				const graph = app.get(GraphService);
 
@@ -199,7 +199,7 @@ export function registerQueryCommands(program: Command) {
 			let app;
 			try {
 				app = await NestFactory.createApplicationContext(AppModule, {
-					logger: false,
+					logger: ['error'],
 				});
 				const graph = app.get(GraphService);
 
@@ -265,7 +265,7 @@ export function registerQueryCommands(program: Command) {
 			let app;
 			try {
 				app = await NestFactory.createApplicationContext(AppModule, {
-					logger: false,
+					logger: ['error'],
 				});
 				const graph = app.get(GraphService);
 
@@ -296,7 +296,7 @@ export function registerQueryCommands(program: Command) {
 			let app;
 			try {
 				app = await NestFactory.createApplicationContext(AppModule, {
-					logger: false,
+					logger: ['error'],
 				});
 				const graph = app.get(GraphService);
 				const pathResolver = app.get(PathResolverService);

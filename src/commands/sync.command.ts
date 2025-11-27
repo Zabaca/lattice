@@ -137,7 +137,7 @@ export function registerSyncCommand(program: Command) {
 
 			try {
 				app = await NestFactory.createApplicationContext(AppModule, {
-					logger: options.verbose ? ['log', 'error', 'warn'] : false,
+					logger: options.verbose ? ['log', 'error', 'warn'] : ['error'],
 				});
 				const sync = app.get(SyncService);
 

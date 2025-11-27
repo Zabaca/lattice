@@ -20,7 +20,7 @@ export function registerValidateCommand(program: Command) {
 			let app;
 			try {
 				app = await NestFactory.createApplicationContext(AppModule, {
-					logger: false,
+					logger: ['error'],
 				});
 				const parser = app.get(DocumentParserService);
 

@@ -11,7 +11,7 @@ export function registerOntologyCommand(program: Command) {
 			let app;
 			try {
 				app = await NestFactory.createApplicationContext(AppModule, {
-					logger: false,
+					logger: ['error'],
 				});
 				const ontologyService = app.get(OntologyService);
 				const ontology = await ontologyService.deriveOntology();

@@ -13,7 +13,7 @@ export function registerStatusCommand(program: Command) {
 			let app;
 			try {
 				app = await NestFactory.createApplicationContext(AppModule, {
-					logger: false,
+					logger: ['error'],
 				});
 				const sync = app.get(SyncService);
 				const manifest = app.get(ManifestService);

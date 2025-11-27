@@ -127,7 +127,7 @@ export function registerQueryCommands(program: Command) {
 								"\nNote: Semantic search requires embeddings to be generated first."
 							);
 							console.log(
-								"Run 'bun graph sync' to generate embeddings for documents.\n"
+								"Run 'lattice sync' to generate embeddings for documents.\n"
 							);
 						}
 						await app.close();

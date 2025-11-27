@@ -75,7 +75,7 @@ export function registerStatusCommand(program: Command) {
 					console.log('✅ All documents are in sync\n');
 				} else {
 					console.log(`Total: ${pendingCount} document(s) need syncing`);
-					console.log('💡 Run `bun graph sync` to apply changes\n');
+					console.log('💡 Run `lattice sync` to apply changes\n');
 				}
 
 				await app.close();

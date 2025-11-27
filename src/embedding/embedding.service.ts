@@ -46,7 +46,7 @@ export class EmbeddingService {
         if (!this.config.apiKey) {
           throw new Error(
             'OPENAI_API_KEY environment variable is required for embeddings. ' +
-            'Set it in packages/graph/.env or use --no-embeddings to skip embedding generation.'
+            'Set it in .env or use --no-embeddings to skip embedding generation.'
           );
         }
         return new OpenAIEmbeddingProvider({
@@ -61,7 +61,7 @@ export class EmbeddingService {
         if (!this.config.apiKey) {
           throw new Error(
             'VOYAGE_API_KEY environment variable is required for embeddings. ' +
-            'Set it in packages/graph/.env or use --no-embeddings to skip embedding generation.'
+            'Set it in .env or use --no-embeddings to skip embedding generation.'
           );
         }
         return new VoyageEmbeddingProvider({

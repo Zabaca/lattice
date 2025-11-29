@@ -1,6 +1,6 @@
 ---
 description: Extract entities from modified docs and sync to graph
-model: sonnet
+model: haiku
 ---
 
 Identify modified documents, extract entities from them, and sync to the knowledge graph.
@@ -12,7 +12,7 @@ Identify modified documents, extract entities from them, and sync to the knowled
 Run the status command to identify modified documents:
 
 ```bash
-lattice graph status
+lattice status
 ```
 
 This will show:
@@ -57,7 +57,7 @@ This is much faster than sequential execution for multiple documents.
 After all entity extractions are complete:
 
 ```bash
-lattice graph sync
+lattice sync
 ```
 
 **Note:** The sync command validates frontmatter schema and will fail with errors if:

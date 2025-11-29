@@ -1,7 +1,7 @@
 ---
 description: Search documentation - searches existing docs, asks before new research
 argument-hint: search-query
-model: sonnet
+model: opus
 ---
 
 Search the documentation for "$ARGUMENTS" by first checking existing documentation, then performing new research if needed.
@@ -13,7 +13,7 @@ Search the documentation for "$ARGUMENTS" by first checking existing documentati
 Run semantic search to find related documents:
 
 ```bash
-lattice search --semantic "$ARGUMENTS" --limit 10
+lattice search "$ARGUMENTS" --limit 10
 ```
 
 ### Step 2: Review Search Results

@@ -1,109 +1,73 @@
 # @zabaca/lattice
 
-**Human-initiated, AI-powered knowledge graph for markdown documentation**
+**Build a knowledge base with Claude Code — using your existing subscription**
 
 [![npm version](https://img.shields.io/npm/v/@zabaca/lattice.svg)](https://www.npmjs.com/package/@zabaca/lattice)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Node.js](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen.svg)](https://nodejs.org/)
+
+Lattice turns your markdown documentation into a searchable knowledge graph. Unlike other GraphRAG tools that require separate LLM APIs, **Lattice uses Claude Code for entity extraction** — so you're already paying for it.
+
+## The Workflow
+
+```bash
+/research "knowledge graphs"   # Find existing docs or create new research
+/graph-sync                    # Extract entities & sync (automatic)
+lattice search "your query"    # Semantic search your knowledge base
+```
+
+That's it. Two commands to build a knowledge base.
 
 ---
 
-## Features
+## Why Lattice?
 
-- **Knowledge Graph Sync** - Automatically sync entities and relationships from markdown frontmatter to a graph database
-- **Semantic Search** - AI-powered search using Voyage AI embeddings for intelligent document discovery
-- **Entity Extraction** - Define entities (concepts, technologies, patterns) directly in your documentation
-- **Relationship Mapping** - Model connections between entities with typed relationships (USES, IMPLEMENTS, DEPENDS_ON)
-- **FalkorDB Backend** - High-performance graph database built on Redis for fast queries
-- **Incremental Sync** - Smart change detection syncs only modified documents
-- **CLI Interface** - Simple commands for sync, search, validation, and migration
+| Feature | Lattice | Other GraphRAG Tools |
+|---------|---------|---------------------|
+| **LLM for extraction** | Your Claude Code subscription | Separate API key + costs |
+| **Setup time** | 5 minutes | 30+ minutes |
+| **Containers** | 1 (FalkorDB) | 2-3 (DB + vector + graph) |
+| **API keys needed** | 1 (Voyage AI for embeddings) | 2-3 (LLM + embedding + rerank) |
+| **Workflow** | `/research` → `/graph-sync` | Custom scripts |
 
 ---
 
-## Quick Start
+## Quick Start (5 Minutes)
 
-### 1. Install Lattice
+### What You Need
 
-```bash
-npm install -g @zabaca/lattice
-```
+- **Claude Code** (you probably already have it)
+- **Docker** (for FalkorDB)
+- **Voyage AI API key** ([get one here](https://www.voyageai.com/) - embeddings only, ~$0.01/1M tokens)
 
-Or with bun:
-
-```bash
-bun add -g @zabaca/lattice
-```
-
-### 2. Start FalkorDB
-
-Using Docker Compose:
+### 1. Install & Start
 
 ```bash
-# Create docker-compose.yaml (see Infrastructure section)
-docker-compose up -d
+bun add -g @zabaca/lattice                    # Install CLI
+docker run -d -p 6379:6379 falkordb/falkordb  # Start database
+export VOYAGE_API_KEY=your-key-here           # Set API key
+lattice init --global                         # Install Claude Code commands
 ```
 
-Or pull and run directly:
+### 2. Start Researching
 
 ```bash
-docker run -d -p 6379:6379 falkordb/falkordb:latest
+claude                        # Launch Claude Code
+/research "your topic"        # Find or create documentation
+/graph-sync                   # Build knowledge graph (automatic)
+lattice search "your query"   # Semantic search
 ```
 
-### 3. Configure Environment
+### That's It!
 
-Create a `.env` file in your project root:
-
-```bash
-# FalkorDB Connection
-FALKORDB_HOST=localhost
-FALKORDB_PORT=6379
-FALKORDB_GRAPH_NAME=lattice
-
-# Embedding Provider (Voyage AI)
-VOYAGE_API_KEY=your-voyage-api-key-here
-VOYAGE_MODEL=voyage-3
-
-# Logging
-LOG_LEVEL=info
-```
-
-### 4. Initialize Claude Code Integration
-
-Install Lattice slash commands for Claude Code:
-
-```bash
-lattice init              # For this project only
-# or
-lattice init --global     # For all projects (~/.claude/commands/)
-```
-
-### 5. Launch Claude Code
-
-```bash
-claude
-```
-
-### 6. Research a Topic
-
-Use the `/research` command to search existing knowledge or create new documentation:
-
-```bash
-/research "knowledge graphs"
-```
-
-This will:
+The `/research` command will:
 - Search your existing docs for related content
-- Present findings and ask if you need new research
-- Create organized documentation if requested
+- Ask if you need new research
+- Create organized documentation with AI assistance
 
-### 7. Sync & Search
-
-After creating or updating documents, sync to the graph and search:
-
-```bash
-/graph-sync                    # Extract entities and sync
-lattice search "your query"    # Semantic search
-```
+The `/graph-sync` command will:
+- Detect all new/changed documents
+- Extract entities using Claude Code (your subscription)
+- Sync to FalkorDB for semantic search
 
 ---
 
@@ -148,7 +112,12 @@ If no existing docs match, Claude will:
 
 ---
 
-## CLI Commands
+## CLI Reference
+
+The Lattice CLI runs behind the scenes. You typically won't use it directly — the Claude Code slash commands handle everything.
+
+<details>
+<summary><b>CLI Commands (Advanced)</b></summary>
 
 ### `lattice init`
 
@@ -167,18 +136,14 @@ Synchronize documents to the knowledge graph.
 lattice sync [paths...]         # Sync specified paths or current directory
 lattice sync --force            # Force re-sync (rebuilds entire graph)
 lattice sync --dry-run          # Preview changes without applying
-lattice sync --verbose          # Show detailed output
-lattice sync --watch            # Watch for changes and auto-sync
-lattice sync --no-embeddings    # Skip embedding generation
 ```
 
 ### `lattice status`
 
-Show the current sync status and pending changes.
+Show documents that need syncing.
 
 ```bash
-lattice status                  # Show documents that need syncing
-lattice status --verbose        # Include detailed change information
+lattice status                  # Show new/changed documents
 ```
 
 ### `lattice search`
@@ -186,17 +151,7 @@ lattice status --verbose        # Include detailed change information
 Semantic search across the knowledge graph.
 
 ```bash
-lattice search "query"                    # Search all entity types
-lattice search --label Technology "query" # Filter by entity label
-lattice search --limit 10 "query"         # Limit results (default: 20)
-```
-
-### `lattice stats`
-
-Display graph statistics.
-
-```bash
-lattice stats                   # Show node/edge counts and graph metrics
+lattice search "query"          # Search all entity types
 ```
 
 ### `lattice validate`
@@ -214,8 +169,9 @@ Display the derived ontology from your documents.
 
 ```bash
 lattice ontology                # Show entity types and relationship types
-lattice ontology --format json  # Output as JSON
 ```
+
+</details>
 
 ---
 
@@ -225,75 +181,43 @@ lattice ontology --format json  # Output as JSON
 
 | Variable | Description | Default |
 |----------|-------------|---------|
+| `VOYAGE_API_KEY` | Voyage AI API key for embeddings | *required* |
 | `FALKORDB_HOST` | FalkorDB server hostname | `localhost` |
 | `FALKORDB_PORT` | FalkorDB server port | `6379` |
-| `FALKORDB_GRAPH_NAME` | Name of the graph database | `lattice` |
-| `VOYAGE_API_KEY` | Voyage AI API key for embeddings | *required* |
-| `VOYAGE_MODEL` | Voyage AI model to use | `voyage-3` |
-| `LOG_LEVEL` | Logging verbosity (debug, info, warn, error) | `info` |
 
-### Frontmatter Schema
+<details>
+<summary><b>How It Works (Technical Details)</b></summary>
 
-Lattice extracts knowledge from YAML frontmatter in your markdown files:
+### Entity Extraction
+
+When you run `/graph-sync`, Claude Code extracts entities from your documents and writes them to YAML frontmatter. The Lattice CLI then syncs this to FalkorDB.
 
 ```yaml
 ---
-title: Document Title
-description: Brief description of the document
-created: 2024-01-15
-updated: 2024-01-20
-
 entities:
   - name: React
     type: technology
     description: JavaScript library for building user interfaces
-  - name: Component Architecture
-    type: pattern
-    description: Modular UI building blocks
 
 relationships:
   - source: React
     target: Component Architecture
-    type: IMPLEMENTS
-  - source: React
-    target: Virtual DOM
-    type: USES
+    relation: REFERENCES
 ---
-
-# Document content here...
 ```
 
-### Entity Types
+You don't need to write this manually — Claude Code handles it automatically.
 
-Common entity types (you can define your own):
-
-- `concept` - Abstract ideas and principles
-- `technology` - Tools, frameworks, and libraries
-- `pattern` - Design patterns and architectural approaches
-- `service` - External services and APIs
-- `component` - System components and modules
-- `person` - People and contributors
-- `organization` - Companies and teams
-
-### Relationship Types
-
-Common relationship types:
-
-- `USES` - Entity A uses Entity B
-- `IMPLEMENTS` - Entity A implements Entity B
-- `DEPENDS_ON` - Entity A depends on Entity B
-- `EXTENDS` - Entity A extends Entity B
-- `CONTAINS` - Entity A contains Entity B
-- `RELATED_TO` - General relationship
-- `SUPERSEDES` - Entity A replaces Entity B
+</details>
 
 ---
 
 ## Infrastructure
 
-### Docker Compose
+<details>
+<summary><b>Docker Compose (Alternative Setup)</b></summary>
 
-Create `docker-compose.yaml`:
+If you prefer Docker Compose over a single `docker run` command:
 
 ```yaml
 version: '3.8'
@@ -301,44 +225,31 @@ version: '3.8'
 services:
   falkordb:
     image: falkordb/falkordb:latest
-    container_name: lattice-falkordb
     ports:
       - "6379:6379"
     volumes:
       - falkordb-data:/data
-    environment:
-      - FALKORDB_ARGS=--requirepass ""
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
 
 volumes:
   falkordb-data:
-    driver: local
 ```
-
-Start the database:
 
 ```bash
 docker-compose up -d
 ```
 
-### Kubernetes (k3s)
+</details>
+
+<details>
+<summary><b>Kubernetes (k3s)</b></summary>
 
 For production deployments, use the provided k3s manifests:
 
 ```bash
-# Create namespace
 kubectl apply -f infra/k3s/namespace.yaml
-
-# Deploy storage
 kubectl apply -f infra/k3s/pv.yaml
 kubectl apply -f infra/k3s/pvc.yaml
-
-# Deploy FalkorDB
 kubectl apply -f infra/k3s/deployment.yaml
 kubectl apply -f infra/k3s/service.yaml
 
@@ -349,9 +260,14 @@ kubectl apply -f infra/k3s/nodeport-service.yaml
 kubectl apply -f infra/k3s/ingress.yaml
 ```
 
+</details>
+
 ---
 
-## Development
+## Contributing
+
+<details>
+<summary><b>Development Setup</b></summary>
 
 ### Prerequisites
 
@@ -362,64 +278,25 @@ kubectl apply -f infra/k3s/ingress.yaml
 ### Setup
 
 ```bash
-# Clone the repository
 git clone https://github.com/Zabaca/lattice.git
 cd lattice
-
-# Install dependencies
 bun install
-
-# Copy environment configuration
 cp .env.example .env
-# Edit .env with your settings
-
-# Start FalkorDB
 docker-compose -f infra/docker-compose.yaml up -d
 ```
 
 ### Running Locally
 
 ```bash
-# Development mode
-bun run dev
-
-# Run CLI commands during development
-bun run lattice sync
-bun run lattice status
-
-# Run tests
-bun test
-
-# Build for production
-bun run build
+bun run dev              # Development mode
+bun test                 # Run tests
+bun run build            # Build for production
 ```
 
-### Project Structure
+</details>
 
-```
-lattice/
-├── src/
-│   ├── commands/       # CLI command implementations
-│   ├── embedding/      # Voyage AI embedding service
-│   ├── graph/          # FalkorDB graph operations
-│   ├── query/          # Query builders and parsers
-│   ├── sync/           # Document sync logic
-│   ├── utils/          # Shared utilities
-│   ├── app.module.ts   # NestJS application module
-│   ├── cli.ts          # CLI entry point
-│   └── main.ts         # Main application entry
-├── infra/
-│   ├── docker-compose.yaml
-│   └── k3s/            # Kubernetes manifests
-├── examples/           # Usage examples
-└── dist/               # Build output
-```
-
----
-
-## API Usage
-
-Lattice can also be used programmatically:
+<details>
+<summary><b>Programmatic API</b></summary>
 
 ```typescript
 import { NestFactory } from '@nestjs/core';
@@ -427,16 +304,11 @@ import { AppModule } from '@zabaca/lattice';
 
 async function main() {
   const app = await NestFactory.createApplicationContext(AppModule);
-
-  // Get services
   const syncService = app.get(SyncService);
-  const graphService = app.get(GraphService);
 
-  // Sync documents
   const result = await syncService.sync({
     paths: ['./docs'],
-    force: false,
-    dryRun: false
+    force: false
   });
 
   console.log(`Synced ${result.added} new documents`);
@@ -445,17 +317,9 @@ async function main() {
 }
 ```
 
----
-
-## Contributing
+</details>
 
 Contributions are welcome! Please feel free to submit a Pull Request.
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
 
 ---
 
@@ -465,8 +329,4 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ---
 
-## Acknowledgments
-
-- [FalkorDB](https://www.falkordb.com/) - High-performance graph database
-- [Voyage AI](https://www.voyageai.com/) - State-of-the-art embeddings
-- [NestJS](https://nestjs.com/) - Progressive Node.js framework
+Built with [FalkorDB](https://www.falkordb.com/), [Voyage AI](https://www.voyageai.com/), and [Claude Code](https://claude.ai/code)

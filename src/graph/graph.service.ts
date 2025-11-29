@@ -397,7 +397,7 @@ export class GraphService implements OnModuleDestroy {
 		} catch (error) {
 			// Index might already exist, that's okay
 			const errorMessage = error instanceof Error ? error.message : String(error);
-			if (!errorMessage.includes('already exists')) {
+			if (!errorMessage.includes('already indexed')) {
 				this.logger.error(`Failed to create vector index: ${errorMessage}`);
 				throw error;
 			}

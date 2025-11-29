@@ -3,7 +3,6 @@ import { ConfigService } from "@nestjs/config";
 import Redis from "ioredis";
 import type {
 	FalkorDBConfig,
-	GraphStats,
 	CypherResult,
 } from "./graph.types.js";
 
@@ -117,89 +116,6 @@ export class GraphService implements OnModuleDestroy {
 				`Cypher query failed: ${error instanceof Error ? error.message : String(error)}`
 			);
 			throw error;
-		}
-	}
-
-	async getStats(): Promise<GraphStats> {
-		try {
-			const labels = await this.getLabels();
-			const relationshipTypes = await this.getRelationshipTypes();
-
-			// Get node count
-			const nodeCountResult = await this.query(
-				"MATCH (n) RETURN count(n) as count"
-			);
-			const nodeCount =
-				(nodeCountResult.resultSet?.[0]?.[0] as number) || 0;
-
-			// Get edge count
-			const edgeCountResult = await this.query(
-				"MATCH ()-[r]-() RETURN count(r) as count"
-			);
-			const edgeCount =
-				(edgeCountResult.resultSet?.[0]?.[0] as number) || 0;
-
-			// Get entity counts by label
-			const entityCounts: Record<string, number> = {};
-			for (const label of labels) {
-				const result = await this.query(
-					`MATCH (n:\`${label}\`) RETURN count(n) as count`
-				);
-				entityCounts[label] =
-					(result.resultSet?.[0]?.[0] as number) || 0;
-			}
-
-			// Get relationship counts by type
-			const relationshipCounts: Record<string, number> = {};
-			for (const relType of relationshipTypes) {
-				const result = await this.query(
-					`MATCH ()-[r:\`${relType}\`]-() RETURN count(r) as count`
-				);
-				relationshipCounts[relType] =
-					(result.resultSet?.[0]?.[0] as number) || 0;
-			}
-
-			return {
-				nodeCount,
-				edgeCount,
-				labels,
-				relationshipTypes,
-				entityCounts,
-				relationshipCounts,
-			};
-		} catch (error) {
-			this.logger.error(
-				`Failed to get stats: ${error instanceof Error ? error.message : String(error)}`
-			);
-			throw error;
-		}
-	}
-
-	async getLabels(): Promise<string[]> {
-		try {
-			const result = await this.query(
-				"CALL db.labels() YIELD label RETURN label"
-			);
-			return (result.resultSet || []).map((row) => row[0] as string);
-		} catch (error) {
-			this.logger.error(
-				`Failed to get labels: ${error instanceof Error ? error.message : String(error)}`
-			);
-			return [];
-		}
-	}
-
-	async getRelationshipTypes(): Promise<string[]> {
-		try {
-			const result = await this.query(
-				"CALL db.relationshipTypes() YIELD relationshipType RETURN relationshipType"
-			);
-			return (result.resultSet || []).map((row) => row[0] as string);
-		} catch (error) {
-			this.logger.error(
-				`Failed to get relationship types: ${error instanceof Error ? error.message : String(error)}`
-			);
-			return [];
 		}
 	}
 

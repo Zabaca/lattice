@@ -7,11 +7,9 @@ import { QueryModule } from './query/query.module.js';
 import {
 	SyncCommand,
 	StatusCommand,
-	StatsCommand,
 	SearchCommand,
 	RelsCommand,
 	CypherCommand,
-	RelatedCommand,
 	ValidateCommand,
 	OntologyCommand,
 	InitCommand,
@@ -31,11 +29,9 @@ import {
 		// CLI Commands
 		SyncCommand,
 		StatusCommand,
-		StatsCommand,
 		SearchCommand,
 		RelsCommand,
 		CypherCommand,
-		RelatedCommand,
 		ValidateCommand,
 		OntologyCommand,
 		InitCommand,

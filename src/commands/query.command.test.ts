@@ -1,27 +1,17 @@
 import { describe, it, expect, beforeEach, mock, spyOn } from 'bun:test';
-import { StatsCommand, SearchCommand, RelsCommand, CypherCommand, RelatedCommand } from './query.command.js';
+import { SearchCommand, RelsCommand, CypherCommand } from './query.command.js';
 import type { GraphService } from '../graph/graph.service.js';
 import type { EmbeddingService } from '../embedding/embedding.service.js';
-import type { PathResolverService } from '../sync/path-resolver.service.js';
 
 describe('Query Commands', () => {
 	let mockGraphService: any;
 	let mockEmbeddingService: any;
-	let mockPathResolverService: any;
 	let consoleLogSpy: any;
 	let consoleErrorSpy: any;
 	let processExitSpy: any;
 
 	beforeEach(() => {
 		mockGraphService = {
-			getStats: mock(async () => ({
-				nodeCount: 100,
-				edgeCount: 50,
-				labels: ['Technology', 'Concept', 'Document'],
-				relationshipTypes: ['USES', 'APPEARS_IN'],
-				entityCounts: { Technology: 30, Concept: 40, Document: 30 },
-				relationshipCounts: { USES: 25, APPEARS_IN: 25 },
-			})),
 			vectorSearch: mock(async () => []),
 			vectorSearchAll: mock(async () => []),
 			query: mock(async () => ({ resultSet: [] })),
@@ -31,34 +21,11 @@ describe('Query Commands', () => {
 			generateEmbedding: mock(async () => [0.1, 0.2, 0.3]),
 		};
 
-		mockPathResolverService = {
-			resolveDocPath: mock((path: string) => `/absolute/${path}`),
-		};
-
 		consoleLogSpy = spyOn(console, 'log');
 		consoleErrorSpy = spyOn(console, 'error');
 		processExitSpy = spyOn(process, 'exit');
 		(processExitSpy as any).mockImplementation(() => {
 			throw new Error('PROCESS_EXIT_CALLED');
-		});
-	});
-
-	describe('StatsCommand', () => {
-		it('should display graph statistics', async () => {
-			const command = new StatsCommand(mockGraphService as GraphService);
-
-			try {
-				await command.run();
-			} catch (e) {
-				// Expected - process.exit mock throws
-			}
-
-			const logs = consoleLogSpy.mock.calls.map((call: any) => call[0]);
-			const output = logs.join('\n');
-			expect(output).toContain('Graph Statistics');
-			expect(output).toContain('Total Nodes: 100');
-			expect(output).toContain('Total Relationships: 50');
-			expect(output).toContain('Technology: 30');
 		});
 	});
 
@@ -237,53 +204,4 @@ describe('Query Commands', () => {
 		});
 	});
 
-	describe('RelatedCommand', () => {
-		it('should find related documents', async () => {
-			mockGraphService.query = mock(async () => ({
-				resultSet: [
-					['docs/related.md', 'Related Document', 3]
-				]
-			}));
-
-			const command = new RelatedCommand(
-				mockGraphService as GraphService,
-				mockPathResolverService as PathResolverService
-			);
-
-			try {
-				await command.run(['docs/test.md'], {});
-			} catch (e) {
-				// Expected - process.exit mock throws
-			}
-
-			const logs = consoleLogSpy.mock.calls.map((call: any) => call[0]);
-			expect(logs.join('\n')).toContain('Documents Related to');
-		});
-
-		it('should show no related documents message when none found', async () => {
-			mockGraphService.query = mock(async () => ({ resultSet: [] }));
-
-			const command = new RelatedCommand(
-				mockGraphService as GraphService,
-				mockPathResolverService as PathResolverService
-			);
-
-			try {
-				await command.run(['docs/test.md'], {});
-			} catch (e) {
-				// Expected - process.exit mock throws
-			}
-
-			const logs = consoleLogSpy.mock.calls.map((call: any) => call[0]);
-			expect(logs.join('\n')).toContain('No related documents found');
-		});
-
-		it('parseLimit should return the value', () => {
-			const command = new RelatedCommand(
-				mockGraphService as GraphService,
-				mockPathResolverService as PathResolverService
-			);
-			expect(command.parseLimit('20')).toBe('20');
-		});
-	});
 });

@@ -60,16 +60,6 @@ export interface GraphEdge {
 	properties?: Record<string, unknown>;
 }
 
-// Graph statistics
-export interface GraphStats {
-	nodeCount: number;
-	edgeCount: number;
-	labels: string[];
-	relationshipTypes: string[];
-	entityCounts: Record<string, number>;
-	relationshipCounts: Record<string, number>;
-}
-
 // Document info for sync
 export interface DocumentInfo {
 	path: string;

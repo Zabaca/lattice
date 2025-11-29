@@ -1,33 +1,14 @@
-import { program } from 'commander';
-import {
-	registerSyncCommand,
-	registerStatusCommand,
-	registerQueryCommands,
-	registerValidateCommand,
-	registerOntologyCommand,
-	registerInitCommand,
-} from './commands/index.js';
+#!/usr/bin/env node
 
-// Set up CLI metadata
-program
-	.name('lattice')
-	.description(
-		'Human-initiated, AI-powered knowledge graph for markdown documentation',
-	)
-	.version('0.3.0');
+import 'reflect-metadata';
+import { CommandFactory } from 'nest-commander';
+import { AppModule } from './app.module.js';
 
-// Register all commands
-registerInitCommand(program);
-registerSyncCommand(program);
-registerStatusCommand(program);
-registerQueryCommands(program);
-registerValidateCommand(program);
-registerOntologyCommand(program);
-
-// Parse and execute
-program.parse(process.argv);
-
-// Show help if no command provided
-if (!process.argv.slice(2).length) {
-	program.outputHelp();
+async function bootstrap() {
+	await CommandFactory.run(AppModule, ['error']);
 }
+
+bootstrap().catch((err) => {
+	console.error('❌ CLI failed:', err);
+	process.exit(1);
+});

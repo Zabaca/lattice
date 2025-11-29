@@ -556,12 +556,13 @@ export class GraphService implements OnModuleDestroy {
 	}
 
 	private parseStats(result: unknown): CypherResult["stats"] | undefined {
-		// FalkorDB returns statistics as the last element in the result array
-		if (!Array.isArray(result) || result.length < 2) {
+		// FalkorDB returns: [headers, rows, stats]
+		// Statistics is the last element (index 2 for 3-element array)
+		if (!Array.isArray(result) || result.length < 3) {
 			return undefined;
 		}
 
-		const statsStr = result[1] as string | undefined;
+		const statsStr = result[2] as string | undefined;
 		if (!statsStr || typeof statsStr !== "string") {
 			return undefined;
 		}

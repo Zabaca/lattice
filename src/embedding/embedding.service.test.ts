@@ -54,12 +54,11 @@ describe('EmbeddingService', () => {
       expect(customService.getDimensions()).toBe(512);
     });
 
-    it('should fallback to mock provider for unimplemented providers', () => {
+    it('should throw error for providers without API key', () => {
       const mockConfig = createMockConfigService({
         EMBEDDING_PROVIDER: 'voyage',
       });
-      const fallbackService = new EmbeddingService(mockConfig);
-      expect(fallbackService.getProviderName()).toBe('mock');
+      expect(() => new EmbeddingService(mockConfig)).toThrow('VOYAGE_API_KEY environment variable is required');
     });
   });
 
@@ -247,26 +246,22 @@ describe('EmbeddingService', () => {
       expect(defaultService.isRealProvider()).toBe(true);
     });
 
-    it('should fallback to mock when openai provider configured but no API key', () => {
+    it('should throw error when openai provider configured but no API key', () => {
       const mockConfig = createMockConfigService({
         EMBEDDING_PROVIDER: 'openai',
         OPENAI_API_KEY: undefined,
       });
-      const fallbackService = new EmbeddingService(mockConfig);
-      // Should fall back to mock provider
-      expect(fallbackService.getProviderName()).toBe('mock');
-      expect(fallbackService.isRealProvider()).toBe(false);
+      // Should throw error when no API key
+      expect(() => new EmbeddingService(mockConfig)).toThrow('OPENAI_API_KEY environment variable is required');
     });
 
-    it('should fallback to mock when openai provider configured with empty API key', () => {
+    it('should throw error when openai provider configured with empty API key', () => {
       const mockConfig = createMockConfigService({
         EMBEDDING_PROVIDER: 'openai',
         OPENAI_API_KEY: '',
       });
-      const fallbackService = new EmbeddingService(mockConfig);
-      // Empty string should also trigger fallback
-      expect(fallbackService.getProviderName()).toBe('mock');
-      expect(fallbackService.isRealProvider()).toBe(false);
+      // Empty string should also trigger error
+      expect(() => new EmbeddingService(mockConfig)).toThrow('OPENAI_API_KEY environment variable is required');
     });
   });
 

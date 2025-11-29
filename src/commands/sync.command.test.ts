@@ -82,8 +82,7 @@ describe('sync command', () => {
 		expect(optionNames).toContain('--dry-run');
 		expect(optionNames).toContain('--verbose');
 		expect(optionNames).toContain('--diff');
-		expect(optionNames).toContain('--embeddings');
-		expect(optionNames).toContain('--skip-embeddings');
+		expect(optionNames).toContain('--no-embeddings');
 	});
 
 	it('should print results correctly when sync succeeds', async () => {
@@ -357,108 +356,75 @@ describe('sync command - embedding options', () => {
 		registerSyncCommand(program);
 	});
 
-	it('should have --embeddings option with -e short alias', () => {
+	it('should have --no-embeddings option', () => {
 		const syncCmd = program.commands.find((cmd) => cmd.name() === 'sync');
 		expect(syncCmd).toBeDefined();
 
 		const options = syncCmd?.options || [];
-		const embeddingsOption = options.find((opt) => opt.long === '--embeddings');
+		const noEmbeddingsOption = options.find((opt) => opt.long === '--no-embeddings');
 
-		expect(embeddingsOption).toBeDefined();
-		expect(embeddingsOption?.short).toBe('-e');
+		expect(noEmbeddingsOption).toBeDefined();
 	});
 
-	it('should have --skip-embeddings option', () => {
-		const syncCmd = program.commands.find((cmd) => cmd.name() === 'sync');
-		expect(syncCmd).toBeDefined();
-
-		const options = syncCmd?.options || [];
-		const skipEmbeddingsOption = options.find(
-			(opt) => opt.long === '--skip-embeddings'
-		);
-
-		expect(skipEmbeddingsOption).toBeDefined();
-	});
-
-	it('should pass embeddings flag to sync service', async () => {
-		try {
-			await program.parseAsync(['node', 'graph', 'sync', '--embeddings']);
-		} catch (e) {
-			// Expected - process.exit mock throws
-		}
-
-		expect(mockSyncService.sync.mock.calls.length).toBe(1);
-		const callOptions = mockSyncService.sync.mock.calls[0][0];
-		expect(callOptions.embeddings).toBe(true);
-	});
-
-	it('should pass skipEmbeddings flag to sync service', async () => {
-		try {
-			await program.parseAsync(['node', 'graph', 'sync', '--skip-embeddings']);
-		} catch (e) {
-			// Expected - process.exit mock throws
-		}
-
-		expect(mockSyncService.sync.mock.calls.length).toBe(1);
-		const callOptions = mockSyncService.sync.mock.calls[0][0];
-		expect(callOptions.skipEmbeddings).toBe(true);
-	});
-
-	it('should display embeddings count in results when > 0', async () => {
-		try {
-			await program.parseAsync(['node', 'graph', 'sync', '--embeddings']);
-		} catch (e) {
-			// Expected - process.exit mock throws
-		}
-
-		const logs = consoleLogSpy.mock.calls.map((call) => call[0]);
-		expect(logs.join('\n')).toContain('Embeddings: 3');
-	});
-
-	it('should not display embeddings count when 0', async () => {
+	it('should enable embeddings by default', async () => {
 		try {
 			await program.parseAsync(['node', 'graph', 'sync']);
 		} catch (e) {
 			// Expected - process.exit mock throws
 		}
 
-		const logs = consoleLogSpy.mock.calls.map((call) => call[0]);
-		const joinedLogs = logs.join('\n');
-		// Should not contain embeddings line when count is 0
-		expect(joinedLogs).not.toContain('Embeddings: 0');
+		expect(mockSyncService.sync.mock.calls.length).toBe(1);
+		const callOptions = mockSyncService.sync.mock.calls[0][0];
+		expect(callOptions.embeddings).toBe(true);
 	});
 
-	it('should show message when embeddings are enabled', async () => {
+	it('should disable embeddings when --no-embeddings is passed', async () => {
 		try {
-			await program.parseAsync(['node', 'graph', 'sync', '--embeddings']);
-		} catch (e) {
-			// Expected - process.exit mock throws
-		}
-
-		const logs = consoleLogSpy.mock.calls.map((call) => call[0]);
-		expect(logs.join('\n')).toContain('Embedding generation enabled');
-	});
-
-	it('should show message when embeddings are skipped', async () => {
-		try {
-			await program.parseAsync(['node', 'graph', 'sync', '--skip-embeddings']);
-		} catch (e) {
-			// Expected - process.exit mock throws
-		}
-
-		const logs = consoleLogSpy.mock.calls.map((call) => call[0]);
-		expect(logs.join('\n')).toContain('Embedding generation disabled');
-	});
-
-	it('should use short alias -e for embeddings', async () => {
-		try {
-			await program.parseAsync(['node', 'graph', 'sync', '-e']);
+			await program.parseAsync(['node', 'graph', 'sync', '--no-embeddings']);
 		} catch (e) {
 			// Expected - process.exit mock throws
 		}
 
 		expect(mockSyncService.sync.mock.calls.length).toBe(1);
 		const callOptions = mockSyncService.sync.mock.calls[0][0];
-		expect(callOptions.embeddings).toBe(true);
+		expect(callOptions.embeddings).toBe(false);
+	});
+
+	it('should display embeddings count in results when > 0', async () => {
+		try {
+			await program.parseAsync(['node', 'graph', 'sync']);
+		} catch (e) {
+			// Expected - process.exit mock throws
+		}
+
+		const logs = consoleLogSpy.mock.calls.map((call: any) => call[0]);
+		expect(logs.join('\n')).toContain('Embeddings: 3');
+	});
+
+	it('should not display embeddings count when 0', async () => {
+		// Track calls before this test
+		const callsBefore = consoleLogSpy.mock.calls.length;
+
+		try {
+			await program.parseAsync(['node', 'graph', 'sync', '--no-embeddings']);
+		} catch (e) {
+			// Expected - process.exit mock throws
+		}
+
+		// Only check logs from this test run
+		const newLogs = consoleLogSpy.mock.calls.slice(callsBefore).map((call: any) => call[0]);
+		const joinedLogs = newLogs.join('\n');
+		expect(joinedLogs).not.toContain('Embeddings:');
+	});
+
+	it('should show message when embeddings are disabled', async () => {
+		try {
+			await program.parseAsync(['node', 'graph', 'sync', '--no-embeddings']);
+		} catch (e) {
+			// Expected - process.exit mock throws
+		}
+
+		const logs = consoleLogSpy.mock.calls.map((call: any) => call[0]);
+		expect(logs.join('\n')).toContain('Embedding generation disabled');
 	});
 });

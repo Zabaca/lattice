@@ -11,7 +11,7 @@ mock.module("@nestjs/core", () => ({
 	},
 }));
 
-describe("Query Commands - Semantic Search", () => {
+describe("Query Commands - Search", () => {
 	let mockGraphService: any;
 	let mockEmbeddingService: any;
 	let mockApp: any;
@@ -21,6 +21,7 @@ describe("Query Commands - Semantic Search", () => {
 		// Setup mock services
 		mockGraphService = {
 			vectorSearch: mock(async () => []),
+			vectorSearchAll: mock(async () => []),
 			query: mock(async () => ({ resultSet: [] })),
 		};
 
@@ -52,13 +53,15 @@ describe("Query Commands - Semantic Search", () => {
 		registerQueryCommands(program);
 	});
 
-	describe("semantic search feature", () => {
-		it("should call embedding service when --semantic is used", async () => {
+	describe("search command", () => {
+		it("should perform semantic search with query", async () => {
 			const mockEmbedding = [0.1, 0.2, 0.3, 0.4, 0.5];
 			mockEmbeddingService.generateEmbedding = mock(
 				async () => mockEmbedding
 			);
-			mockGraphService.vectorSearch = mock(async () => []);
+			mockGraphService.vectorSearchAll = mock(async () => [
+				{ name: "TestEntity", label: "Technology", score: 0.95 }
+			]);
 
 			let consoleOutput = "";
 			const originalLog = console.log;
@@ -66,36 +69,38 @@ describe("Query Commands - Semantic Search", () => {
 				consoleOutput += args.join(" ") + "\n";
 			};
 
-			let exitCode = 0;
 			const originalExit = process.exit;
-			process.exit = ((code?: number) => {
-				exitCode = code || 0;
-			}) as any;
+			process.exit = ((code?: number) => {}) as any;
 
 			try {
 				await program.parseAsync([
 					"node",
 					"test",
 					"search",
-					"--semantic",
 					"test query",
 				]);
 			} catch (e) {
 				// Ignore parse errors
 			}
 
-			// Verify the output indicates semantic search was attempted
+			// Verify the output shows semantic search results
 			expect(
 				consoleOutput.includes("Semantic Search Results") ||
-				consoleOutput.includes("No documents found")
+				consoleOutput.includes("TestEntity")
 			).toBe(true);
 
 			console.log = originalLog;
 			process.exit = originalExit;
 		});
 
-		it("should support --semantic with short flag -s", async () => {
-			mockGraphService.vectorSearch = mock(async () => []);
+		it("should filter by label when --label is used", async () => {
+			const mockEmbedding = [0.1, 0.2, 0.3, 0.4, 0.5];
+			mockEmbeddingService.generateEmbedding = mock(
+				async () => mockEmbedding
+			);
+			mockGraphService.vectorSearch = mock(async () => [
+				{ name: "TypeScript", title: "TypeScript Language", score: 0.9 }
+			]);
 
 			let consoleOutput = "";
 			const originalLog = console.log;
@@ -103,37 +108,32 @@ describe("Query Commands - Semantic Search", () => {
 				consoleOutput += args.join(" ") + "\n";
 			};
 
-			let exitCode = 0;
 			const originalExit = process.exit;
-			process.exit = ((code?: number) => {
-				exitCode = code || 0;
-			}) as any;
+			process.exit = ((code?: number) => {}) as any;
 
 			try {
-				// Try using the short form -s
 				await program.parseAsync([
 					"node",
 					"test",
 					"search",
-					"-s",
-					"test query",
+					"typescript",
+					"--label",
+					"Technology",
 				]);
 			} catch (e) {
-				// Ignore parse errors
+				// Ignore
 			}
 
-			// Verify semantic search was triggered (regardless of flag form)
-			expect(
-				consoleOutput.includes("Semantic Search Results") ||
-				consoleOutput.includes("No documents found")
-			).toBe(true);
+			// Verify vectorSearch was called (for label-specific search)
+			expect(mockGraphService.vectorSearch.mock.calls.length).toBeGreaterThan(0);
 
 			console.log = originalLog;
 			process.exit = originalExit;
 		});
 
-		it("should support limit option with semantic search", async () => {
-			mockGraphService.vectorSearch = mock(async () => []);
+		it("should support limit option", async () => {
+			mockGraphService.vectorSearchAll = mock(async () => []);
+			mockEmbeddingService.generateEmbedding = mock(async () => [0.1, 0.2]);
 
 			let consoleOutput = "";
 			const originalLog = console.log;
@@ -141,18 +141,14 @@ describe("Query Commands - Semantic Search", () => {
 				consoleOutput += args.join(" ") + "\n";
 			};
 
-			let exitCode = 0;
 			const originalExit = process.exit;
-			process.exit = ((code?: number) => {
-				exitCode = code || 0;
-			}) as any;
+			process.exit = ((code?: number) => {}) as any;
 
 			try {
 				await program.parseAsync([
 					"node",
 					"test",
 					"search",
-					"--semantic",
 					"test query",
 					"--limit",
 					"50",
@@ -162,31 +158,15 @@ describe("Query Commands - Semantic Search", () => {
 			}
 
 			// Should run without error
-			expect(
-				consoleOutput.includes("Semantic Search Results") ||
-				consoleOutput.includes("No documents found")
-			).toBe(true);
+			expect(consoleOutput.includes("Semantic Search Results") || consoleOutput.includes("No results")).toBe(true);
 
 			console.log = originalLog;
 			process.exit = originalExit;
 		});
 
-		it("should keep traditional keyword search working", async () => {
-			const mockResult: CypherResult = {
-				resultSet: [
-					[
-						{
-							labels: ["Technology"],
-							properties: {
-								name: "TypeScript",
-								description: "Programming language",
-							},
-						},
-					],
-				],
-			};
-
-			mockGraphService.query = mock(async () => mockResult);
+		it("should show no results message when nothing found", async () => {
+			mockGraphService.vectorSearchAll = mock(async () => []);
+			mockEmbeddingService.generateEmbedding = mock(async () => [0.1, 0.2]);
 
 			let consoleOutput = "";
 			const originalLog = console.log;
@@ -194,122 +174,86 @@ describe("Query Commands - Semantic Search", () => {
 				consoleOutput += args.join(" ") + "\n";
 			};
 
-			let exitCode = 0;
 			const originalExit = process.exit;
-			process.exit = ((code?: number) => {
-				exitCode = code || 0;
-			}) as any;
+			process.exit = ((code?: number) => {}) as any;
 
 			try {
 				await program.parseAsync([
 					"node",
 					"test",
 					"search",
+					"nonexistent query",
+				]);
+			} catch (e) {
+				// Ignore
+			}
+
+			expect(consoleOutput.includes("No results found")).toBe(true);
+
+			console.log = originalLog;
+			process.exit = originalExit;
+		});
+
+		it("should show results with similarity scores", async () => {
+			mockEmbeddingService.generateEmbedding = mock(async () => [0.1, 0.2]);
+			mockGraphService.vectorSearchAll = mock(async () => [
+				{ name: "FalkorDB", label: "Technology", description: "Graph database", score: 0.95 }
+			]);
+
+			let consoleOutput = "";
+			const originalLog = console.log;
+			console.log = (...args: any[]) => {
+				consoleOutput += args.join(" ") + "\n";
+			};
+
+			const originalExit = process.exit;
+			process.exit = ((code?: number) => {}) as any;
+
+			try {
+				await program.parseAsync([
+					"node",
+					"test",
+					"search",
+					"graph database",
+				]);
+			} catch (e) {
+				// Ignore
+			}
+
+			expect(consoleOutput.includes("FalkorDB")).toBe(true);
+			expect(consoleOutput.includes("Similarity:")).toBe(true);
+
+			console.log = originalLog;
+			process.exit = originalExit;
+		});
+
+		it("should suggest trying without --label when no results with label", async () => {
+			mockEmbeddingService.generateEmbedding = mock(async () => [0.1, 0.2]);
+			mockGraphService.vectorSearch = mock(async () => []);
+
+			let consoleOutput = "";
+			const originalLog = console.log;
+			console.log = (...args: any[]) => {
+				consoleOutput += args.join(" ") + "\n";
+			};
+
+			const originalExit = process.exit;
+			process.exit = ((code?: number) => {}) as any;
+
+			try {
+				await program.parseAsync([
+					"node",
+					"test",
+					"search",
+					"test",
 					"--label",
-					"Technology",
+					"NonexistentType",
 				]);
 			} catch (e) {
 				// Ignore
 			}
 
-			// When traditional search is used (no --semantic), results should show
-			expect(consoleOutput.includes("TypeScript")).toBe(true);
-
-			console.log = originalLog;
-			process.exit = originalExit;
-		});
-	});
-
-	describe("search command without semantic flag", () => {
-		it("should search by label", async () => {
-			const mockResult: CypherResult = {
-				resultSet: [
-					[
-						{
-							labels: ["Entity"],
-							properties: {
-								name: "TestEntity",
-								description: "A test entity",
-							},
-						},
-					],
-				],
-			};
-
-			mockGraphService.query = mock(async () => mockResult);
-
-			let consoleOutput = "";
-			const originalLog = console.log;
-			console.log = (...args: any[]) => {
-				consoleOutput += args.join(" ") + "\n";
-			};
-
-			let exitCode = 0;
-			const originalExit = process.exit;
-			process.exit = ((code?: number) => {
-				exitCode = code || 0;
-			}) as any;
-
-			try {
-				await program.parseAsync([
-					"node",
-					"test",
-					"search",
-					"--label",
-					"Entity",
-				]);
-			} catch (e) {
-				// Ignore
-			}
-
-			expect(consoleOutput.includes("TestEntity")).toBe(true);
-
-			console.log = originalLog;
-			process.exit = originalExit;
-		});
-
-		it("should search by name with substring match", async () => {
-			const mockResult: CypherResult = {
-				resultSet: [
-					[
-						{
-							labels: ["Technology"],
-							properties: {
-								name: "TypeScript",
-								description: "Language",
-							},
-						},
-					],
-				],
-			};
-
-			mockGraphService.query = mock(async () => mockResult);
-
-			let consoleOutput = "";
-			const originalLog = console.log;
-			console.log = (...args: any[]) => {
-				consoleOutput += args.join(" ") + "\n";
-			};
-
-			let exitCode = 0;
-			const originalExit = process.exit;
-			process.exit = ((code?: number) => {
-				exitCode = code || 0;
-			}) as any;
-
-			try {
-				await program.parseAsync([
-					"node",
-					"test",
-					"search",
-					"--name",
-					"Type",
-				]);
-			} catch (e) {
-				// Ignore
-			}
-
-			expect(consoleOutput.includes("TypeScript")).toBe(true);
+			expect(consoleOutput.includes("Try without --label")).toBe(true);
 
 			console.log = originalLog;
 			process.exit = originalExit;

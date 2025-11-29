@@ -95,9 +95,11 @@ describe("GraphService", () => {
 
 	describe("query()", () => {
 		it("should execute a raw Cypher query", async () => {
+			// FalkorDB returns: [headers, rows, stats]
 			const testData = [
-				[["value1"], ["value2"]],
-				"Nodes created: 0",
+				["n"],  // column headers
+				[["value1"], ["value2"]],  // data rows
+				"Nodes created: 0",  // stats
 			];
 			mockRedis.setMockResolvedValue(testData);
 
@@ -110,9 +112,11 @@ describe("GraphService", () => {
 		});
 
 		it("should parse stats from query result", async () => {
+			// FalkorDB returns: [headers, rows, stats]
 			const testData = [
-				[],
-				"Nodes created: 2, Relationships created: 1, Properties set: 5",
+				[],  // headers
+				[],  // rows
+				"Nodes created: 2, Relationships created: 1, Properties set: 5",  // stats
 			];
 			mockRedis.setMockResolvedValue(testData);
 
@@ -128,7 +132,8 @@ describe("GraphService", () => {
 		});
 
 		it("should handle empty result sets", async () => {
-			mockRedis.setMockResolvedValue([[], "Query OK"]);
+			// FalkorDB returns: [headers, rows, stats]
+			mockRedis.setMockResolvedValue([[], [], "Query OK"]);
 
 			const result = await graphService.query(
 				"MATCH (n:NonExistent) RETURN n"
@@ -153,29 +158,35 @@ describe("GraphService", () => {
 	describe("getStats()", () => {
 		it("should return graph statistics", async () => {
 			// Override the call method to return different values for different queries
+			// FalkorDB returns: [headers, rows, stats]
 			const originalCall = mockRedis.call.bind(mockRedis);
 			(mockRedis.call as any) = async (...args: any[]) => {
 				const cypher = args[2];
 				if (cypher.includes("db.labels()"))
 					return [
-						[["Technology"], ["Document"]],
-						"Query OK",
+						["label"],  // header
+						[["Technology"], ["Document"]],  // rows
+						"Query OK",  // stats
 					];
 				if (cypher.includes("db.relationshipTypes()"))
-					return [[[["USES"], ["DOCUMENTS"]]], "Query OK"];
+					return [
+						["relationshipType"],  // header
+						[["USES"], ["DOCUMENTS"]],  // rows
+						"Query OK",  // stats
+					];
 				if (cypher.includes("count(n)") && !cypher.includes(":"))
-					return [[[100]], "Query OK"];
+					return [["count(n)"], [[100]], "Query OK"];
 				if (cypher.includes("count(r)") && !cypher.includes(":"))
-					return [[[50]], "Query OK"];
+					return [["count(r)"], [[50]], "Query OK"];
 				if (cypher.includes("Technology"))
-					return [[[30]], "Query OK"];
+					return [["count"], [[30]], "Query OK"];
 				if (cypher.includes("Document"))
-					return [[[70]], "Query OK"];
+					return [["count"], [[70]], "Query OK"];
 				if (cypher.includes("USES"))
-					return [[[25]], "Query OK"];
+					return [["count"], [[25]], "Query OK"];
 				if (cypher.includes("DOCUMENTS"))
-					return [[[25]], "Query OK"];
-				return [[], "Query OK"];
+					return [["count"], [[25]], "Query OK"];
+				return [[], [], "Query OK"];
 			};
 
 			const stats = await graphService.getStats();
@@ -191,9 +202,11 @@ describe("GraphService", () => {
 
 	describe("getLabels()", () => {
 		it("should return all node labels", async () => {
+			// FalkorDB returns: [headers, rows, stats]
 			mockRedis.setMockResolvedValue([
-				[["Technology"], ["Document"], ["Concept"]],
-				"Query OK",
+				["label"],  // header
+				[["Technology"], ["Document"], ["Concept"]],  // rows
+				"Query OK",  // stats
 			]);
 
 			const labels = await graphService.getLabels();
@@ -212,9 +225,11 @@ describe("GraphService", () => {
 
 	describe("getRelationshipTypes()", () => {
 		it("should return all relationship types", async () => {
+			// FalkorDB returns: [headers, rows, stats]
 			mockRedis.setMockResolvedValue([
-				[["USES"], ["DEPENDS_ON"], ["DOCUMENTS"]],
-				"Query OK",
+				["relationshipType"],  // header
+				[["USES"], ["DEPENDS_ON"], ["DOCUMENTS"]],  // rows
+				"Query OK",  // stats
 			]);
 
 			const types = await graphService.getRelationshipTypes();
@@ -233,9 +248,11 @@ describe("GraphService", () => {
 
 	describe("upsertNode()", () => {
 		it("should create or update a node", async () => {
+			// FalkorDB returns: [headers, rows, stats]
 			mockRedis.setMockResolvedValue([
-				[],
-				"Nodes created: 1, Properties set: 2",
+				[],  // headers
+				[],  // rows
+				"Nodes created: 1, Properties set: 2",  // stats
 			]);
 			mockRedis.clearMockCalls();
 
@@ -253,7 +270,7 @@ describe("GraphService", () => {
 		});
 
 		it("should escape special characters in property values", async () => {
-			mockRedis.setMockResolvedValue([[], "Nodes created: 1"]);
+			mockRedis.setMockResolvedValue([[], [], "Nodes created: 1"]);
 			mockRedis.clearMockCalls();
 
 			await graphService.upsertNode("Document", {
@@ -297,8 +314,9 @@ describe("GraphService", () => {
 	describe("upsertRelationship()", () => {
 		it("should create or update a relationship", async () => {
 			mockRedis.setMockResolvedValue([
-				[],
-				"Relationships created: 1",
+				[],  // headers
+				[],  // rows
+				"Relationships created: 1",  // stats
 			]);
 			mockRedis.clearMockCalls();
 
@@ -320,8 +338,9 @@ describe("GraphService", () => {
 
 		it("should support relationship properties", async () => {
 			mockRedis.setMockResolvedValue([
-				[],
-				"Relationships created: 1",
+				[],  // headers
+				[],  // rows
+				"Relationships created: 1",  // stats
 			]);
 			mockRedis.clearMockCalls();
 
@@ -359,7 +378,7 @@ describe("GraphService", () => {
 
 	describe("deleteNode()", () => {
 		it("should delete a node by label and name", async () => {
-			mockRedis.setMockResolvedValue([[], "Nodes deleted: 1"]);
+			mockRedis.setMockResolvedValue([[], [], "Nodes deleted: 1"]);
 			mockRedis.clearMockCalls();
 
 			await graphService.deleteNode("Technology", "TypeScript");
@@ -387,8 +406,9 @@ describe("GraphService", () => {
 	describe("deleteDocumentRelationships()", () => {
 		it("should delete relationships for a document path", async () => {
 			mockRedis.setMockResolvedValue([
-				[],
-				"Relationships deleted: 3",
+				[],  // headers
+				[],  // rows
+				"Relationships deleted: 3",  // stats
 			]);
 			mockRedis.clearMockCalls();
 
@@ -404,8 +424,9 @@ describe("GraphService", () => {
 
 		it("should handle document paths with special characters", async () => {
 			mockRedis.setMockResolvedValue([
-				[],
-				"Relationships deleted: 0",
+				[],  // headers
+				[],  // rows
+				"Relationships deleted: 0",  // stats
 			]);
 			mockRedis.clearMockCalls();
 
@@ -421,7 +442,9 @@ describe("GraphService", () => {
 
 	describe("findNodesByLabel()", () => {
 		it("should find nodes by label", async () => {
+			// FalkorDB returns: [headers, rows, stats]
 			mockRedis.setMockResolvedValue([
+				["n"],  // headers
 				[
 					[
 						{
@@ -435,8 +458,8 @@ describe("GraphService", () => {
 							version: "ES2022",
 						},
 					],
-				],
-				"Query OK",
+				],  // rows
+				"Query OK",  // stats
 			]);
 
 			const nodes = await graphService.findNodesByLabel("Technology");
@@ -449,15 +472,17 @@ describe("GraphService", () => {
 		});
 
 		it("should support limit parameter", async () => {
+			// FalkorDB returns: [headers, rows, stats]
 			mockRedis.setMockResolvedValue([
+				["n"],  // headers
 				[
 					[
 						{
 							name: "TypeScript",
 						},
 					],
-				],
-				"Query OK",
+				],  // rows
+				"Query OK",  // stats
 			]);
 			mockRedis.clearMockCalls();
 
@@ -469,7 +494,7 @@ describe("GraphService", () => {
 		});
 
 		it("should return empty array when no nodes found", async () => {
-			mockRedis.setMockResolvedValue([[], "Query OK"]);
+			mockRedis.setMockResolvedValue([[], [], "Query OK"]);
 
 			const nodes = await graphService.findNodesByLabel("NonExistent");
 
@@ -479,12 +504,14 @@ describe("GraphService", () => {
 
 	describe("findRelationships()", () => {
 		it("should find relationships for a node", async () => {
+			// FalkorDB returns: [headers, rows, stats]
 			mockRedis.setMockResolvedValue([
+				["type(r)", "endNode.name"],  // headers
 				[
 					["USES", "Node.js"],
 					["DEPENDS_ON", "Express"],
-				],
-				"Query OK",
+				],  // rows
+				"Query OK",  // stats
 			]);
 
 			const relationships = await graphService.findRelationships(
@@ -495,7 +522,7 @@ describe("GraphService", () => {
 		});
 
 		it("should return empty array when no relationships found", async () => {
-			mockRedis.setMockResolvedValue([[], "Query OK"]);
+			mockRedis.setMockResolvedValue([[], [], "Query OK"]);
 
 			const relationships = await graphService.findRelationships(
 				"IsolatedNode"
@@ -507,7 +534,7 @@ describe("GraphService", () => {
 
 	describe("Cypher escaping", () => {
 		it("should properly escape backslashes", async () => {
-			mockRedis.setMockResolvedValue([[], "Nodes created: 1"]);
+			mockRedis.setMockResolvedValue([[], [], "Nodes created: 1"]);
 			mockRedis.clearMockCalls();
 
 			await graphService.upsertNode("Document", {
@@ -521,7 +548,7 @@ describe("GraphService", () => {
 		});
 
 		it("should properly escape single quotes", async () => {
-			mockRedis.setMockResolvedValue([[], "Nodes created: 1"]);
+			mockRedis.setMockResolvedValue([[], [], "Nodes created: 1"]);
 			mockRedis.clearMockCalls();
 
 			await graphService.upsertNode("Document", {
@@ -534,7 +561,7 @@ describe("GraphService", () => {
 		});
 
 		it("should properly escape double quotes", async () => {
-			mockRedis.setMockResolvedValue([[], "Nodes created: 1"]);
+			mockRedis.setMockResolvedValue([[], [], "Nodes created: 1"]);
 			mockRedis.clearMockCalls();
 
 			await graphService.upsertNode("Document", {

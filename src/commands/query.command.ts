@@ -160,9 +160,17 @@ export function registerQueryCommands(program: Command) {
 
 				results.forEach((row: any) => {
 					const [source, rel, target] = row;
-					const sourceName = source.properties?.name || "unknown";
-					const targetName = target.properties?.name || "unknown";
-					const relType = rel.type || "UNKNOWN";
+					// FalkorDB returns arrays of tuples, convert to objects
+					const sourceObj = Object.fromEntries(source);
+					const targetObj = Object.fromEntries(target);
+					const relObj = Object.fromEntries(rel);
+
+					const sourceProps = Object.fromEntries(sourceObj.properties || []);
+					const targetProps = Object.fromEntries(targetObj.properties || []);
+
+					const sourceName = sourceProps.name || "unknown";
+					const targetName = targetProps.name || "unknown";
+					const relType = relObj.type || "UNKNOWN";
 
 					if (sourceName === name) {
 						outgoing.push(`  -[${relType}]-> ${targetName}`);

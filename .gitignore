@@ -33,3 +33,5 @@ bun.lockb
 tmp/
 temp/
 *.tmp
+
+temporal-bridge.yaml

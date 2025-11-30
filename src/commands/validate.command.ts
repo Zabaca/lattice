@@ -45,10 +45,12 @@ export class ValidateCommand extends CommandRunner {
 			const entityIndex = new Map<string, Set<string>>();
 			for (const doc of docs) {
 				for (const entity of doc.entities) {
-					if (!entityIndex.has(entity.name)) {
-						entityIndex.set(entity.name, new Set());
+					let docPaths = entityIndex.get(entity.name);
+					if (!docPaths) {
+						docPaths = new Set<string>();
+						entityIndex.set(entity.name, docPaths);
 					}
-					entityIndex.get(entity.name)!.add(doc.path);
+					docPaths.add(doc.path);
 				}
 			}
 

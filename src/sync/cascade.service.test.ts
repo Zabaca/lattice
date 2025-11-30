@@ -1,14 +1,14 @@
 import { beforeEach, describe, expect, it, mock } from "bun:test";
 import { GraphService } from "../graph/graph.service.js";
+import type { EntityType, RelationType } from "../graph/graph.types.js";
 import {
-	AffectedDocument,
 	CascadeService,
-	CascadeTrigger,
-	EntityChange,
+	type CascadeTrigger,
+	type EntityChange,
 } from "./cascade.service.js";
 import {
-	DocumentParserService,
-	ParsedDocument,
+	type DocumentParserService,
+	type ParsedDocument,
 } from "./document-parser.service.js";
 
 // Mock dependencies
@@ -54,10 +54,10 @@ const createParsedDocument = (
 	content: "# Test",
 	contentHash: "abc123",
 	frontmatterHash: "def456",
-	entities: entities.map((e) => ({ ...e, type: e.type as any })),
+	entities: entities.map((e) => ({ ...e, type: e.type as EntityType })),
 	relationships: relationships.map((r) => ({
 		...r,
-		relation: r.relation as any,
+		relation: r.relation as RelationType,
 	})),
 	tags: [],
 });

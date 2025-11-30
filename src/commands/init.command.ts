@@ -1,9 +1,9 @@
+import * as fs from "node:fs/promises";
+import { homedir } from "node:os";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { Injectable } from "@nestjs/common";
-import * as fs from "fs/promises";
 import { Command, CommandRunner, Option } from "nest-commander";
-import { homedir } from "os";
-import * as path from "path";
-import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

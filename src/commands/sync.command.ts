@@ -1,7 +1,7 @@
+import { watch } from "node:fs";
+import { join } from "node:path";
 import { Injectable } from "@nestjs/common";
-import { watch } from "fs";
 import { Command, CommandRunner, Option } from "nest-commander";
-import { join } from "path";
 import type { ChangeType, DocumentChange } from "../sync/manifest.service.js";
 import { SyncOptions, SyncResult, SyncService } from "../sync/sync.service.js";
 
@@ -157,7 +157,7 @@ export class SyncCommand extends CommandRunner {
 
 						if (watchResult.errors.length > 0) {
 							console.log(
-								`   ❌ Errors: ${watchResult.errors.map((e: any) => e.path).join(", ")}`,
+								`   ❌ Errors: ${watchResult.errors.map((e) => e.path).join(", ")}`,
 							);
 						}
 
@@ -188,7 +188,7 @@ export class SyncCommand extends CommandRunner {
 		console.log("\n👁️  Watch mode enabled\n");
 		this.watcher = watch(docsPath, { recursive: true }, (event, filename) => {
 			// Only watch markdown files
-			if (filename && filename.endsWith(".md")) {
+			if (filename?.endsWith(".md")) {
 				const fullPath = join(docsPath, filename);
 				trackedFiles.add(fullPath);
 				debouncedSync();
@@ -255,7 +255,10 @@ export class SyncCommand extends CommandRunner {
 			console.log("\n⚠️  Cascade Impacts Detected:\n");
 
 			// Group by trigger type for clarity
-			const warningsByTrigger = new Map<string, any[]>();
+			const warningsByTrigger = new Map<
+				string,
+				(typeof result.cascadeWarnings)[number][]
+			>();
 			for (const warning of result.cascadeWarnings) {
 				const existing = warningsByTrigger.get(warning.trigger) || [];
 				existing.push(warning);

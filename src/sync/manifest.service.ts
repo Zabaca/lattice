@@ -1,8 +1,8 @@
+import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
+import { readFile, writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { Injectable } from "@nestjs/common";
-import { createHash } from "crypto";
-import { existsSync } from "fs";
-import { readFile, writeFile } from "fs/promises";
-import { resolve } from "path";
 import {
 	type ManifestEntry,
 	type SyncManifest,
@@ -57,7 +57,7 @@ export class ManifestService {
 			} else {
 				this.manifest = this.createEmptyManifest();
 			}
-		} catch (error) {
+		} catch (_error) {
 			// If parse fails or file doesn't exist, create empty manifest
 			this.manifest = this.createEmptyManifest();
 		}

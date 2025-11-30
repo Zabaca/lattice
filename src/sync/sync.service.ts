@@ -1,16 +1,21 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { EmbeddingService } from "../embedding/embedding.service.js";
 import { GraphService } from "../graph/graph.service.js";
+import {
+	collectUniqueEntities,
+	composeDocumentEmbeddingText,
+	composeEntityEmbeddingText,
+	getChangeReason,
+	type ValidationError,
+	validateDocuments as validateDocumentsPure,
+} from "../pure/index.js";
+import type { EntityProperties } from "../schemas/entity.schemas.js";
 import { CascadeAnalysis, CascadeService } from "./cascade.service.js";
 import {
 	DocumentParserService,
 	ParsedDocument,
 } from "./document-parser.service.js";
-import {
-	ChangeType,
-	DocumentChange,
-	ManifestService,
-} from "./manifest.service.js";
+import { DocumentChange, ManifestService } from "./manifest.service.js";
 import { PathResolverService } from "./path-resolver.service.js";
 
 export interface SyncOptions {
@@ -21,6 +26,13 @@ export interface SyncOptions {
 	skipCascade?: boolean; // Skip cascade analysis (can be slow for large repos)
 	embeddings?: boolean; // Generate embeddings for documents (default: false)
 	skipEmbeddings?: boolean; // Explicitly skip embeddings even if enabled
+}
+
+/**
+ * Extended DocumentChange with embedding tracking (internal use)
+ */
+interface DocumentChangeWithEmbedding extends DocumentChange {
+	embeddingGenerated?: boolean;
 }
 
 /**
@@ -51,48 +63,8 @@ const ENTITY_TYPES = [
  * Shared function used by both sync and validate commands.
  * Returns array of validation errors. Empty array means validation passed.
  */
-export function validateDocuments(
-	docs: ParsedDocument[],
-): Array<{ path: string; error: string }> {
-	const errors: Array<{ path: string; error: string }> = [];
-
-	// Build entity index (name -> documents defining it)
-	const entityIndex = new Map<string, Set<string>>();
-	for (const doc of docs) {
-		for (const entity of doc.entities) {
-			if (!entityIndex.has(entity.name)) {
-				entityIndex.set(entity.name, new Set());
-			}
-			entityIndex.get(entity.name)!.add(doc.path);
-		}
-	}
-
-	// Validate relationships
-	for (const doc of docs) {
-		for (const rel of doc.relationships) {
-			// Check source exists (unless it's the document itself via 'this' replacement)
-			if (rel.source !== doc.path && !entityIndex.has(rel.source)) {
-				errors.push({
-					path: doc.path,
-					error: `Relationship source "${rel.source}" not found in any document`,
-				});
-			}
-
-			// Check target exists (could be entity or document path)
-			const isDocPath = rel.target.endsWith(".md");
-			const isKnownEntity = entityIndex.has(rel.target);
-			const isSelfReference = rel.target === doc.path;
-
-			if (!isDocPath && !isKnownEntity && !isSelfReference) {
-				errors.push({
-					path: doc.path,
-					error: `Relationship target "${rel.target}" not found as entity`,
-				});
-			}
-		}
-	}
-
-	return errors;
+export function validateDocuments(docs: ParsedDocument[]): ValidationError[] {
+	return validateDocumentsPure(docs);
 }
 
 export interface SyncResult {
@@ -210,7 +182,7 @@ export class SyncService {
 			}
 
 			// Phase 2: Collect unique entities from all parsed documents
-			const uniqueEntities = this.collectUniqueEntities(docsToSync);
+			const uniqueEntities = collectUniqueEntities(docsToSync);
 
 			if (options.verbose) {
 				this.logger.log(
@@ -284,7 +256,7 @@ export class SyncService {
 					}
 
 					// Count embeddings generated
-					if ((change as any).embeddingGenerated) {
+					if ((change as DocumentChangeWithEmbedding).embeddingGenerated) {
 						result.embeddingsGenerated++;
 					}
 				} catch (error) {
@@ -346,7 +318,7 @@ export class SyncService {
 				changes.push({
 					path: docPath,
 					changeType,
-					reason: this.getChangeReason(changeType),
+					reason: getChangeReason(changeType),
 				});
 
 				// Remove from tracked set (remaining will be deletions)
@@ -396,11 +368,11 @@ export class SyncService {
 		await this.graph.deleteDocumentRelationships(doc.path);
 
 		// Create/update Document node
-		const documentProps: Record<string, any> = {
+		const documentProps: EntityProperties = {
 			name: doc.path,
-			title: doc.title,
+			title: doc.title ?? "",
 			contentHash: doc.contentHash,
-			tags: doc.tags,
+			tags: doc.tags ?? [],
 		};
 
 		// Add optional fields
@@ -430,7 +402,7 @@ export class SyncService {
 		) {
 			try {
 				// Compose rich embedding text from multiple fields
-				const textForEmbedding = this.composeEmbeddingText(doc);
+				const textForEmbedding = composeDocumentEmbeddingText(doc);
 				if (textForEmbedding.trim()) {
 					const embedding =
 						await this.embeddingService.generateEmbedding(textForEmbedding);
@@ -461,7 +433,7 @@ export class SyncService {
 			entityTypeMap.set(entity.name, entity.type);
 
 			if (!skipEntityCreation) {
-				const entityProps: Record<string, any> = {
+				const entityProps: EntityProperties = {
 					name: entity.name,
 				};
 				if (entity.description) {
@@ -637,7 +609,8 @@ export class SyncService {
 					preloadedDoc !== undefined,
 				);
 				// Track if embedding was generated for result counting
-				(change as any).embeddingGenerated = embeddingGenerated;
+				(change as DocumentChangeWithEmbedding).embeddingGenerated =
+					embeddingGenerated;
 
 				// Update manifest
 				this.manifest.updateEntry(
@@ -663,14 +636,6 @@ export class SyncService {
 		}
 
 		return cascadeWarnings;
-	}
-
-	/**
-	 * Clear the entire graph (for force mode)
-	 */
-	private async clearGraph(): Promise<void> {
-		await this.graph.query("MATCH (n) DETACH DELETE n");
-		this.logger.log("Graph cleared");
 	}
 
 	/**
@@ -706,55 +671,6 @@ export class SyncService {
 	}
 
 	/**
-	 * Compose rich text for embedding from multiple document fields
-	 * Format: "Title: X | Topic: Y | Tags: a, b, c | Entities: d, e, f | Summary"
-	 */
-	private composeEmbeddingText(doc: ParsedDocument): string {
-		const parts: string[] = [];
-
-		if (doc.title) {
-			parts.push(`Title: ${doc.title}`);
-		}
-
-		if (doc.topic) {
-			parts.push(`Topic: ${doc.topic}`);
-		}
-
-		if (doc.tags && doc.tags.length > 0) {
-			parts.push(`Tags: ${doc.tags.join(", ")}`);
-		}
-
-		if (doc.entities && doc.entities.length > 0) {
-			const entityNames = doc.entities.map((e) => e.name).join(", ");
-			parts.push(`Entities: ${entityNames}`);
-		}
-
-		if (doc.summary) {
-			parts.push(doc.summary);
-		} else {
-			parts.push(doc.content.slice(0, 500));
-		}
-
-		return parts.join(" | ");
-	}
-
-	/**
-	 * Get human-readable reason for change type
-	 */
-	private getChangeReason(changeType: ChangeType): string {
-		switch (changeType) {
-			case "new":
-				return "New document";
-			case "updated":
-				return "Content or frontmatter changed";
-			case "deleted":
-				return "File no longer exists";
-			case "unchanged":
-				return "No changes detected";
-		}
-	}
-
-	/**
 	 * Retrieve the old document from manifest cache for cascade analysis.
 	 * This constructs a ParsedDocument from the cached manifest entry.
 	 */
@@ -787,44 +703,6 @@ export class SyncService {
 	}
 
 	/**
-	 * Collect unique entities from all parsed documents with in-code deduplication.
-	 * Key: "type:name" for deduplication
-	 * When same entity appears in multiple docs, keep the longest description.
-	 */
-	private collectUniqueEntities(
-		docs: ParsedDocument[],
-	): Map<string, UniqueEntity> {
-		const entities = new Map<string, UniqueEntity>();
-
-		for (const doc of docs) {
-			for (const entity of doc.entities) {
-				const key = `${entity.type}:${entity.name}`;
-				if (!entities.has(key)) {
-					entities.set(key, {
-						type: entity.type,
-						name: entity.name,
-						description: entity.description,
-						documentPaths: [doc.path],
-					});
-				} else {
-					// Merge: keep longest description, track all doc paths
-					const existing = entities.get(key)!;
-					existing.documentPaths.push(doc.path);
-					if (
-						entity.description &&
-						(!existing.description ||
-							entity.description.length > existing.description.length)
-					) {
-						existing.description = entity.description;
-					}
-				}
-			}
-		}
-
-		return entities;
-	}
-
-	/**
 	 * Create entity nodes and generate embeddings.
 	 * Called once per unique entity (deduplicated in code).
 	 */
@@ -836,7 +714,7 @@ export class SyncService {
 
 		for (const [_key, entity] of entities) {
 			// Create node (single MERGE per entity)
-			const entityProps: Record<string, any> = {
+			const entityProps: EntityProperties = {
 				name: entity.name,
 			};
 			if (entity.description) {
@@ -852,7 +730,7 @@ export class SyncService {
 				this.embeddingService
 			) {
 				try {
-					const text = this.composeEntityEmbeddingText(entity);
+					const text = composeEntityEmbeddingText(entity);
 					const embedding = await this.embeddingService.generateEmbedding(text);
 					await this.graph.updateNodeEmbedding(
 						entity.type,
@@ -874,18 +752,6 @@ export class SyncService {
 		}
 
 		return embeddingsGenerated;
-	}
-
-	/**
-	 * Compose embedding text for an entity.
-	 * Format: "Type: Name. Description (if available)"
-	 */
-	private composeEntityEmbeddingText(entity: UniqueEntity): string {
-		const parts = [`${entity.type}: ${entity.name}`];
-		if (entity.description) {
-			parts.push(entity.description);
-		}
-		return parts.join(". ");
 	}
 
 	/**

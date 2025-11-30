@@ -133,7 +133,7 @@ export const FrontmatterSchema = z
  * - Any additional custom fields via index signature
  */
 export type FrontmatterData = z.infer<typeof FrontmatterSchema> & {
-	[key: string]: any;
+	[key: string]: unknown;
 };
 
 export interface ParsedDocument {
@@ -214,7 +214,7 @@ export function parseFrontmatter(content: string): ParsedDocument {
  * Helper function to normalize data parsed by gray-matter
  * Converts Date objects back to YYYY-MM-DD strings for backward compatibility
  */
-function normalizeData(data: any): any {
+function normalizeData(data: unknown): unknown {
 	if (data instanceof Date) {
 		return data.toISOString().split("T")[0];
 	}
@@ -224,8 +224,10 @@ function normalizeData(data: any): any {
 	}
 
 	if (data !== null && typeof data === "object") {
-		const normalized: any = {};
-		for (const [key, value] of Object.entries(data)) {
+		const normalized: Record<string, unknown> = {};
+		for (const [key, value] of Object.entries(
+			data as Record<string, unknown>,
+		)) {
 			normalized[key] = normalizeData(value);
 		}
 		return normalized;
@@ -296,7 +298,7 @@ export function validateFrontmatter(frontmatter: FrontmatterData | null): {
  * @param value - The value to check
  * @returns true if the value should be quoted
  */
-function needsQuoting(value: any): boolean {
+function needsQuoting(value: unknown): boolean {
 	// Null and booleans don't need quoting
 	if (value === null || typeof value === "boolean") {
 		return false;
@@ -352,7 +354,7 @@ function needsQuoting(value: any): boolean {
  * Generate YAML value (helper for generateFrontmatter)
  * Recursively handles objects and arrays of objects
  */
-function generateYamlValue(value: any, indent: number = 0): string {
+function generateYamlValue(value: unknown, indent: number = 0): string {
 	const indentStr = " ".repeat(indent);
 
 	if (value === null) {
@@ -396,7 +398,7 @@ function generateYamlValue(value: any, indent: number = 0): string {
 				}
 				return objLines.join("\n");
 			});
-			return "\n" + items.join("\n");
+			return `\n${items.join("\n")}`;
 		} else {
 			// Format as inline array for primitives
 			const quotedItems = value.map((item) => {
@@ -420,7 +422,7 @@ function generateYamlValue(value: any, indent: number = 0): string {
 				objLines.push(`${indentStr}  ${k}: ${yamlVal}`);
 			}
 		}
-		return "\n" + objLines.join("\n");
+		return `\n${objLines.join("\n")}`;
 	}
 
 	return String(value);

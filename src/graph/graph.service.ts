@@ -38,13 +38,13 @@ export class GraphService implements OnModuleDestroy {
 		// Prevent multiple simultaneous connection attempts
 		if (this.connecting) {
 			await this.connecting;
-			return this.redis!;
+			return this.redis as unknown as Redis;
 		}
 
 		this.connecting = this.connect();
 		await this.connecting;
 		this.connecting = null;
-		return this.redis!;
+		return this.redis as unknown as Redis;
 	}
 
 	async connect(): Promise<void> {
@@ -91,7 +91,7 @@ export class GraphService implements OnModuleDestroy {
 
 	async query(
 		cypher: string,
-		_params?: Record<string, any>,
+		_params?: Record<string, unknown>,
 	): Promise<CypherResult> {
 		try {
 			const redis = await this.ensureConnected();
@@ -125,7 +125,7 @@ export class GraphService implements OnModuleDestroy {
 	 */
 	async upsertNode(
 		label: string,
-		properties: Record<string, any>,
+		properties: Record<string, unknown>,
 	): Promise<void> {
 		try {
 			const { name, ...otherProps } = properties;
@@ -173,7 +173,7 @@ export class GraphService implements OnModuleDestroy {
 		relation: string,
 		targetLabel: string,
 		targetName: string,
-		properties?: Record<string, any>,
+		properties?: Record<string, unknown>,
 	): Promise<void> {
 		try {
 			const escapedSourceLabel = this.escapeCypher(sourceLabel);
@@ -241,8 +241,7 @@ export class GraphService implements OnModuleDestroy {
 		try {
 			const escapedPath = this.escapeCypher(documentPath);
 
-			const cypher =
-				`MATCH ()-[r { documentPath: '${escapedPath}' }]-() ` + `DELETE r`;
+			const cypher = `MATCH ()-[r { documentPath: '${escapedPath}' }]-() DELETE r`;
 
 			await this.query(cypher);
 		} catch (error) {
@@ -256,7 +255,7 @@ export class GraphService implements OnModuleDestroy {
 	/**
 	 * Find nodes by label with optional limit
 	 */
-	async findNodesByLabel(label: string, limit?: number): Promise<any[]> {
+	async findNodesByLabel(label: string, limit?: number): Promise<unknown[]> {
 		try {
 			const escapedLabel = this.escapeCypher(label);
 			const limitClause = limit ? ` LIMIT ${limit}` : "";
@@ -276,7 +275,7 @@ export class GraphService implements OnModuleDestroy {
 	/**
 	 * Find all relationships for a node by name
 	 */
-	async findRelationships(nodeName: string): Promise<any[]> {
+	async findRelationships(nodeName: string): Promise<unknown[]> {
 		try {
 			const escapedName = this.escapeCypher(nodeName);
 
@@ -472,7 +471,7 @@ export class GraphService implements OnModuleDestroy {
 	/**
 	 * Escape and format a value for Cypher
 	 */
-	private escapeCypherValue(value: any): string {
+	private escapeCypherValue(value: unknown): string {
 		if (value === null || value === undefined) {
 			return "null";
 		}

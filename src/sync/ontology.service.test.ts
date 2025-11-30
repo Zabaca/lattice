@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "bun:test";
+import type { DocumentParserService } from "./document-parser.service.js";
 import { ParsedDocument } from "./document-parser.service.js";
 import { OntologyService } from "./ontology.service.js";
 
@@ -6,12 +7,12 @@ describe("OntologyService", () => {
 	let service: OntologyService;
 
 	// Mock DocumentParserService
-	const mockParserService = {
+	const mockParserService: Partial<DocumentParserService> = {
 		parseAllDocuments: async () => [],
 	};
 
 	beforeEach(() => {
-		service = new OntologyService(mockParserService as any);
+		service = new OntologyService(mockParserService as DocumentParserService);
 	});
 
 	describe("deriveFromDocuments", () => {
@@ -107,9 +108,9 @@ describe("OntologyService", () => {
 
 			const ontology = service.deriveFromDocuments(docs);
 
-			expect(ontology.entityExamples["Entity1"]).toBeDefined();
-			expect(ontology.entityExamples["Entity1"].type).toBe("Person");
-			expect(ontology.entityExamples["Entity1"].documents).toEqual([
+			expect(ontology.entityExamples.Entity1).toBeDefined();
+			expect(ontology.entityExamples.Entity1.type).toBe("Person");
+			expect(ontology.entityExamples.Entity1.documents).toEqual([
 				"doc1.md",
 				"doc2.md",
 			]);
@@ -174,8 +175,8 @@ describe("OntologyService", () => {
 
 			const ontology = service.deriveFromDocuments(docs);
 
-			expect(ontology.entityExamples["Entity1"].documents).toEqual(["doc1.md"]);
-			expect(ontology.entityExamples["Entity1"].documents.length).toBe(1);
+			expect(ontology.entityExamples.Entity1.documents).toEqual(["doc1.md"]);
+			expect(ontology.entityExamples.Entity1.documents.length).toBe(1);
 		});
 	});
 });

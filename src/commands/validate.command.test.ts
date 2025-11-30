@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it } from "bun:test";
-import {
-	DocumentParserService,
-	ParsedDocument,
-} from "../sync/document-parser.service.js";
+import type { ParsedDocument } from "../sync/document-parser.service.js";
+
+interface ValidationIssue {
+	type: string;
+	message: string;
+}
 
 describe("ValidateCommand", () => {
 	let mockDocs: ParsedDocument[];
@@ -61,7 +63,7 @@ describe("ValidateCommand", () => {
 		mockDocs[1].entities[0].type = "Tool";
 
 		// Run validation logic
-		const issues: any[] = [];
+		const issues: ValidationIssue[] = [];
 		const entityTypes = new Map<string, string>();
 
 		for (const doc of mockDocs) {
@@ -92,14 +94,16 @@ describe("ValidateCommand", () => {
 		});
 
 		const entityIndex = new Map<string, Set<string>>();
-		const issues: any[] = [];
+		const issues: ValidationIssue[] = [];
 
 		for (const doc of mockDocs) {
 			for (const entity of doc.entities) {
-				if (!entityIndex.has(entity.name)) {
-					entityIndex.set(entity.name, new Set());
+				let paths = entityIndex.get(entity.name);
+				if (!paths) {
+					paths = new Set();
+					entityIndex.set(entity.name, paths);
 				}
-				entityIndex.get(entity.name)!.add(doc.path);
+				paths.add(doc.path);
 			}
 		}
 
@@ -134,7 +138,7 @@ describe("ValidateCommand", () => {
 			relationships: [],
 		});
 
-		const issues: any[] = [];
+		const issues: ValidationIssue[] = [];
 
 		for (const doc of mockDocs) {
 			if (doc.entities.length === 0 && !doc.path.includes("README")) {
@@ -153,7 +157,7 @@ describe("ValidateCommand", () => {
 		// Clear relationships for first doc
 		mockDocs[0].relationships = [];
 
-		const issues: any[] = [];
+		const issues: ValidationIssue[] = [];
 
 		for (const doc of mockDocs) {
 			if (doc.entities.length > 0) {
@@ -175,14 +179,16 @@ describe("ValidateCommand", () => {
 	it("should pass validation for consistent data", () => {
 		const entityIndex = new Map<string, Set<string>>();
 		const entityTypes = new Map<string, string>();
-		const issues: any[] = [];
+		const issues: ValidationIssue[] = [];
 
 		for (const doc of mockDocs) {
 			for (const entity of doc.entities) {
-				if (!entityIndex.has(entity.name)) {
-					entityIndex.set(entity.name, new Set());
+				let paths = entityIndex.get(entity.name);
+				if (!paths) {
+					paths = new Set();
+					entityIndex.set(entity.name, paths);
 				}
-				entityIndex.get(entity.name)!.add(doc.path);
+				paths.add(doc.path);
 
 				if (
 					entityTypes.has(entity.name) &&

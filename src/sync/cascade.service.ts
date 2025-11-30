@@ -69,8 +69,7 @@ export class CascadeService {
 
 	constructor(
 		private readonly graph: GraphService,
-		// Parser is available for future use (e.g., reading document content for deeper analysis)
-		private readonly _parser: DocumentParserService,
+		readonly _parser: DocumentParserService,
 	) {}
 
 	/**

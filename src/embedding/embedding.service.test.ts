@@ -3,9 +3,9 @@ import { EmbeddingService } from "./embedding.service.js";
 import { MockEmbeddingProvider } from "./providers/mock.provider.js";
 
 // Mock ConfigService for testing
-const createMockConfigService = (overrides: Record<string, any> = {}) => ({
-	get: mock((key: string, defaultValue?: any) => {
-		const config: Record<string, any> = {
+const createMockConfigService = (overrides: Record<string, unknown> = {}) => ({
+	get: mock((key: string, defaultValue?: unknown) => {
+		const config: Record<string, unknown> = {
 			EMBEDDING_PROVIDER: "mock",
 			EMBEDDING_DIMENSIONS: 1536,
 			EMBEDDING_MODEL: "text-embedding-3-small",
@@ -15,9 +15,11 @@ const createMockConfigService = (overrides: Record<string, any> = {}) => ({
 	}),
 });
 
+type MockConfigService = ReturnType<typeof createMockConfigService>;
+
 describe("EmbeddingService", () => {
 	let service: EmbeddingService;
-	let mockConfigService: any;
+	let mockConfigService: MockConfigService;
 
 	beforeEach(() => {
 		mockConfigService = createMockConfigService();

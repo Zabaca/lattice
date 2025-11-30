@@ -1,7 +1,25 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync } from "fs";
-import { rm } from "fs/promises";
+import { existsSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { ManifestService } from "./manifest.service.js";
+
+type ManifestServiceWithPrivates = ManifestService & {
+	manifestPath: string;
+	manifest: {
+		version: string;
+		lastSync: string;
+		documents: Record<
+			string,
+			{
+				contentHash: string;
+				frontmatterHash: string;
+				lastSynced: string;
+				entityCount: number;
+				relationshipCount: number;
+			}
+		>;
+	};
+};
 
 describe("ManifestService", () => {
 	let service: ManifestService;
@@ -10,7 +28,8 @@ describe("ManifestService", () => {
 	beforeEach(() => {
 		service = new ManifestService();
 		// Override default path for testing
-		(service as any).manifestPath = testManifestPath;
+		(service as unknown as ManifestServiceWithPrivates).manifestPath =
+			testManifestPath;
 	});
 
 	afterEach(async () => {
@@ -82,7 +101,8 @@ describe("ManifestService", () => {
 
 			// Create new service instance
 			const service2 = new ManifestService();
-			(service2 as any).manifestPath = testManifestPath;
+			(service2 as unknown as ManifestServiceWithPrivates).manifestPath =
+				testManifestPath;
 
 			const loadedManifest = await service2.load();
 
@@ -115,7 +135,7 @@ describe("ManifestService", () => {
 				entityCount: 5,
 				relationshipCount: 3,
 			};
-			(service as any).manifest = manifest;
+			(service as unknown as ManifestServiceWithPrivates).manifest = manifest;
 
 			const changeType = service.detectChange(
 				"docs/test.md",
@@ -135,7 +155,7 @@ describe("ManifestService", () => {
 				entityCount: 5,
 				relationshipCount: 3,
 			};
-			(service as any).manifest = manifest;
+			(service as unknown as ManifestServiceWithPrivates).manifest = manifest;
 
 			const changeType = service.detectChange(
 				"docs/test.md",
@@ -155,7 +175,7 @@ describe("ManifestService", () => {
 				entityCount: 5,
 				relationshipCount: 3,
 			};
-			(service as any).manifest = manifest;
+			(service as unknown as ManifestServiceWithPrivates).manifest = manifest;
 
 			const changeType = service.detectChange(
 				"docs/test.md",
@@ -173,7 +193,8 @@ describe("ManifestService", () => {
 
 			service.updateEntry("docs/test.md", "hash1", "fmhash1", 5, 3);
 
-			const entry = (service as any).manifest.documents["docs/test.md"];
+			const entry = (service as unknown as ManifestServiceWithPrivates).manifest
+				.documents["docs/test.md"];
 
 			expect(entry).toBeDefined();
 			expect(entry.contentHash).toBe("hash1");
@@ -189,7 +210,8 @@ describe("ManifestService", () => {
 			service.updateEntry("docs/test.md", "hash1", "fmhash1", 5, 3);
 			service.updateEntry("docs/test.md", "hash2", "fmhash2", 10, 7);
 
-			const entry = (service as any).manifest.documents["docs/test.md"];
+			const entry = (service as unknown as ManifestServiceWithPrivates).manifest
+				.documents["docs/test.md"];
 
 			expect(entry.contentHash).toBe("hash2");
 			expect(entry.entityCount).toBe(10);
@@ -201,12 +223,18 @@ describe("ManifestService", () => {
 			await service.load();
 
 			service.updateEntry("docs/test.md", "hash1", "fmhash1", 5, 3);
-			expect((service as any).manifest.documents["docs/test.md"]).toBeDefined();
+			expect(
+				(service as unknown as ManifestServiceWithPrivates).manifest.documents[
+					"docs/test.md"
+				],
+			).toBeDefined();
 
 			service.removeEntry("docs/test.md");
 
 			expect(
-				(service as any).manifest.documents["docs/test.md"],
+				(service as unknown as ManifestServiceWithPrivates).manifest.documents[
+					"docs/test.md"
+				],
 			).toBeUndefined();
 		});
 

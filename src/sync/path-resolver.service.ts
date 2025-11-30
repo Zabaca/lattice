@@ -1,6 +1,6 @@
-import { Injectable, Logger } from "@nestjs/common";
-import { existsSync } from "fs";
-import { isAbsolute, resolve } from "path";
+import { existsSync } from "node:fs";
+import { isAbsolute, resolve } from "node:path";
+import { Injectable } from "@nestjs/common";
 import { DocumentParserService } from "./document-parser.service.js";
 
 export interface PathResolutionOptions {
@@ -23,8 +23,6 @@ export interface PathResolutionOptions {
  */
 @Injectable()
 export class PathResolverService {
-	private readonly logger = new Logger(PathResolverService.name);
-
 	constructor(private readonly parser: DocumentParserService) {}
 
 	/**
@@ -130,7 +128,7 @@ export class PathResolverService {
 		const normalizedPath = absolutePath.replace(/\/$/, "");
 		const normalizedDocs = docsPath.replace(/\/$/, "");
 		return (
-			normalizedPath.startsWith(normalizedDocs + "/") ||
+			normalizedPath.startsWith(`${normalizedDocs}/`) ||
 			normalizedPath === normalizedDocs
 		);
 	}

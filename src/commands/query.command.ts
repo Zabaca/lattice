@@ -49,7 +49,7 @@ export class SearchCommand extends CommandRunner {
 				);
 				results = labelResults.map((r) => ({
 					name: r.name,
-					label: options.label!,
+					label: options.label as string,
 					title: r.title,
 					score: r.score,
 				}));
@@ -82,7 +82,7 @@ export class SearchCommand extends CommandRunner {
 				if (result.description && result.label !== "Document") {
 					const desc =
 						result.description.length > 80
-							? result.description.slice(0, 80) + "..."
+							? `${result.description.slice(0, 80)}...`
 							: result.description;
 					console.log(`   ${desc}`);
 				}
@@ -158,36 +158,48 @@ export class RelsCommand extends CommandRunner {
 			const incoming: string[] = [];
 			const outgoing: string[] = [];
 
-			results.forEach((row: any) => {
-				const [source, rel, target] = row;
+			for (const row of results as unknown[][]) {
+				const [source, rel, target] = row as [
+					[string, unknown][],
+					[string, unknown][],
+					[string, unknown][],
+				];
 				// FalkorDB returns arrays of tuples, convert to objects
-				const sourceObj = Object.fromEntries(source);
-				const targetObj = Object.fromEntries(target);
-				const relObj = Object.fromEntries(rel);
+				const sourceObj = Object.fromEntries(source) as Record<string, unknown>;
+				const targetObj = Object.fromEntries(target) as Record<string, unknown>;
+				const relObj = Object.fromEntries(rel) as Record<string, unknown>;
 
-				const sourceProps = Object.fromEntries(sourceObj.properties || []);
-				const targetProps = Object.fromEntries(targetObj.properties || []);
+				const sourceProps = Object.fromEntries(
+					(sourceObj.properties as [string, unknown][]) || [],
+				) as Record<string, unknown>;
+				const targetProps = Object.fromEntries(
+					(targetObj.properties as [string, unknown][]) || [],
+				) as Record<string, unknown>;
 
-				const sourceName = sourceProps.name || "unknown";
-				const targetName = targetProps.name || "unknown";
-				const relType = relObj.type || "UNKNOWN";
+				const sourceName = (sourceProps.name as string) || "unknown";
+				const targetName = (targetProps.name as string) || "unknown";
+				const relType = (relObj.type as string) || "UNKNOWN";
 
 				if (sourceName === name) {
 					outgoing.push(`  -[${relType}]-> ${targetName}`);
 				} else {
 					incoming.push(`  <-[${relType}]- ${sourceName}`);
 				}
-			});
+			}
 
 			if (outgoing.length > 0) {
 				console.log("Outgoing:");
-				outgoing.forEach((r) => console.log(r));
+				for (const r of outgoing) {
+					console.log(r);
+				}
 			}
 
 			if (incoming.length > 0) {
 				if (outgoing.length > 0) console.log();
 				console.log("Incoming:");
-				incoming.forEach((r) => console.log(r));
+				for (const r of incoming) {
+					console.log(r);
+				}
 			}
 			console.log();
 

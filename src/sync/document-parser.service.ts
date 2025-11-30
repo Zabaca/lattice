@@ -1,8 +1,8 @@
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { Injectable, Logger } from "@nestjs/common";
-import { createHash } from "crypto";
-import { readFile } from "fs/promises";
 import { glob } from "glob";
-import { resolve } from "path";
 import { DocsConfigSchema } from "../schemas/config.schemas.js";
 import {
 	Entity,
@@ -36,7 +36,7 @@ export interface ParsedDocument {
 /**
  * Get the project root from environment or default
  */
-function getProjectRoot(): string {
+function _getProjectRoot(): string {
 	if (process.env.PROJECT_ROOT) {
 		return process.env.PROJECT_ROOT;
 	}
@@ -178,16 +178,17 @@ export class DocumentParserService {
 	 * Extract and validate entities from frontmatter
 	 * Throws error if entities exist but have invalid schema
 	 */
-	private extractEntities(frontmatter: any, docPath: string): Entity[] {
-		if (!frontmatter?.entities || !Array.isArray(frontmatter.entities)) {
+	private extractEntities(frontmatter: unknown, docPath: string): Entity[] {
+		const fm = frontmatter as Record<string, unknown>;
+		if (!fm?.entities || !Array.isArray(fm.entities)) {
 			return [];
 		}
 
 		const validEntities: Entity[] = [];
 		const errors: string[] = [];
 
-		for (let i = 0; i < frontmatter.entities.length; i++) {
-			const e = frontmatter.entities[i];
+		for (let i = 0; i < fm.entities.length; i++) {
+			const e = fm.entities[i];
 			const result = EntitySchema.safeParse(e);
 			if (result.success) {
 				validEntities.push(result.data);
@@ -213,13 +214,11 @@ export class DocumentParserService {
 	 * Throws error if relationships exist but have invalid schema
 	 */
 	private extractRelationships(
-		frontmatter: any,
+		frontmatter: unknown,
 		docPath: string,
 	): Relationship[] {
-		if (
-			!frontmatter?.relationships ||
-			!Array.isArray(frontmatter.relationships)
-		) {
+		const fm = frontmatter as Record<string, unknown>;
+		if (!fm?.relationships || !Array.isArray(fm.relationships)) {
 			return [];
 		}
 
@@ -228,8 +227,8 @@ export class DocumentParserService {
 
 		const validRelationTypes = RelationTypeSchema.options;
 
-		for (let i = 0; i < frontmatter.relationships.length; i++) {
-			const r = frontmatter.relationships[i];
+		for (let i = 0; i < fm.relationships.length; i++) {
+			const r = fm.relationships[i];
 			const result = RelationshipSchema.safeParse(r);
 			if (result.success) {
 				const rel = result.data;
@@ -276,12 +275,15 @@ export class DocumentParserService {
 	/**
 	 * Extract graph metadata
 	 */
-	private extractGraphMetadata(frontmatter: any): GraphMetadata | undefined {
-		if (!frontmatter?.graph) {
+	private extractGraphMetadata(
+		frontmatter: unknown,
+	): GraphMetadata | undefined {
+		const fm = frontmatter as Record<string, unknown>;
+		if (!fm?.graph) {
 			return undefined;
 		}
 
-		const result = GraphMetadataSchema.safeParse(frontmatter.graph);
+		const result = GraphMetadataSchema.safeParse(fm.graph);
 		return result.success ? result.data : undefined;
 	}
 

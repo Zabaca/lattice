@@ -59,6 +59,7 @@
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.2.6",
+		"@tkoehlerlg/bun-mock-extended": "^1.0.0",
 		"@types/bun": "latest",
 		"typescript": "^5.0.0"
 	}

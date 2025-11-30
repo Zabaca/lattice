@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
+import { beforeEach, describe, expect, it, mock } from "bun:test";
 import { GraphService } from "../graph/graph.service.js";
 import { CascadeService } from "./cascade.service.js";
 import {
@@ -463,13 +463,13 @@ describe("SyncService", () => {
 			// Note: detectChanges parses documents first. Errors during detection
 			// are captured and the doc is still treated as 'new' for retry.
 			// The second parse attempt in sync() may also fail.
-			let parseCallCount = 0;
+			let _parseCallCount = 0;
 			mockParser.discoverDocuments.mockResolvedValue([
 				"docs/good.md",
 				"docs/bad.md",
 			]);
 			mockParser.parseDocument.mockImplementation(async (path: string) => {
-				parseCallCount++;
+				_parseCallCount++;
 				if (path === "docs/bad.md") {
 					throw new Error("Parse error");
 				}

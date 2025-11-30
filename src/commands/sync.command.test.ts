@@ -4,14 +4,15 @@ import type {
 	SyncResult,
 	SyncService,
 } from "../sync/sync.service.js";
+import type { ConsoleSpy, ProcessExitSpy } from "../testing/mock-types.js";
 import { SyncCommand } from "./sync.command.js";
 
 describe("SyncCommand", () => {
 	let command: SyncCommand;
-	let mockSyncService: any;
-	let consoleLogSpy: any;
-	let consoleErrorSpy: any;
-	let processExitSpy: any;
+	let mockSyncService: Partial<SyncService>;
+	let consoleLogSpy: ConsoleSpy;
+	let _consoleErrorSpy: ConsoleSpy;
+	let processExitSpy: ProcessExitSpy;
 
 	beforeEach(() => {
 		mockSyncService = {
@@ -37,16 +38,17 @@ describe("SyncCommand", () => {
 					],
 					cascadeWarnings: [],
 					embeddingsGenerated: options.embeddings ? 3 : 0,
+					entityEmbeddingsGenerated: 0,
 				}),
 			),
 		};
 
 		command = new SyncCommand(mockSyncService as SyncService);
 
-		consoleLogSpy = spyOn(console, "log");
-		consoleErrorSpy = spyOn(console, "error");
-		processExitSpy = spyOn(process, "exit");
-		(processExitSpy as any).mockImplementation(() => {
+		consoleLogSpy = spyOn(console, "log") as ConsoleSpy;
+		_consoleErrorSpy = spyOn(console, "error") as ConsoleSpy;
+		processExitSpy = spyOn(process, "exit") as unknown as ProcessExitSpy;
+		processExitSpy.mockImplementation(() => {
 			throw new Error("PROCESS_EXIT_CALLED");
 		});
 	});
@@ -55,7 +57,7 @@ describe("SyncCommand", () => {
 		it("should sync with default options", async () => {
 			try {
 				await command.run([], {});
-			} catch (e) {
+			} catch (_e) {
 				// Expected - process.exit mock throws
 			}
 
@@ -69,11 +71,11 @@ describe("SyncCommand", () => {
 		it("should print results correctly", async () => {
 			try {
 				await command.run([], {});
-			} catch (e) {
+			} catch (_e) {
 				// Expected - process.exit mock throws
 			}
 
-			const logs = consoleLogSpy.mock.calls.map((call: any) => call[0]);
+			const logs = consoleLogSpy.mock.calls.map((call) => call[0]);
 			expect(logs.join("\n")).toContain("Graph Sync");
 			expect(logs.join("\n")).toContain("Sync Results");
 			expect(logs.join("\n")).toContain("Added: 5");
@@ -84,11 +86,11 @@ describe("SyncCommand", () => {
 		it("should handle force mode with warning", async () => {
 			try {
 				await command.run([], { force: true });
-			} catch (e) {
+			} catch (_e) {
 				// Expected - process.exit mock throws
 			}
 
-			const logs = consoleLogSpy.mock.calls.map((call: any) => call[0]);
+			const logs = consoleLogSpy.mock.calls.map((call) => call[0]);
 			expect(logs.join("\n")).toContain("Force mode");
 			expect(logs.join("\n")).toContain("cleared and rebuilt");
 		});
@@ -96,11 +98,11 @@ describe("SyncCommand", () => {
 		it("should handle dry-run mode with message", async () => {
 			try {
 				await command.run([], { dryRun: true });
-			} catch (e) {
+			} catch (_e) {
 				// Expected - process.exit mock throws
 			}
 
-			const logs = consoleLogSpy.mock.calls.map((call: any) => call[0]);
+			const logs = consoleLogSpy.mock.calls.map((call) => call[0]);
 			expect(logs.join("\n")).toContain("Dry run mode");
 			expect(logs.join("\n")).toContain("No changes will be applied");
 		});
@@ -108,18 +110,18 @@ describe("SyncCommand", () => {
 		it("should handle diff option as alias for dry-run", async () => {
 			try {
 				await command.run([], { diff: true });
-			} catch (e) {
+			} catch (_e) {
 				// Expected - process.exit mock throws
 			}
 
-			const logs = consoleLogSpy.mock.calls.map((call: any) => call[0]);
+			const logs = consoleLogSpy.mock.calls.map((call) => call[0]);
 			expect(logs.join("\n")).toContain("Dry run mode");
 		});
 
 		it("should pass options correctly to SyncService", async () => {
 			try {
 				await command.run([], { force: true, verbose: true });
-			} catch (e) {
+			} catch (_e) {
 				// Expected - process.exit mock throws
 			}
 
@@ -132,7 +134,7 @@ describe("SyncCommand", () => {
 		it("should handle specific paths", async () => {
 			try {
 				await command.run(["docs/topic/file.md", "docs/other/"], {});
-			} catch (e) {
+			} catch (_e) {
 				// Expected - process.exit mock throws
 			}
 
@@ -163,11 +165,11 @@ describe("SyncCommand", () => {
 
 			try {
 				await command.run([], {});
-			} catch (e) {
+			} catch (_e) {
 				// Expected - process.exit mock throws
 			}
 
-			const logs = consoleLogSpy.mock.calls.map((call: any) => call[0]);
+			const logs = consoleLogSpy.mock.calls.map((call) => call[0]);
 			expect(logs.join("\n")).toContain("Errors");
 			expect(logs.join("\n")).toContain("Parse error");
 		});
@@ -175,22 +177,22 @@ describe("SyncCommand", () => {
 		it("should show suggestion to run without --dry-run", async () => {
 			try {
 				await command.run([], { dryRun: true });
-			} catch (e) {
+			} catch (_e) {
 				// Expected - process.exit mock throws
 			}
 
-			const logs = consoleLogSpy.mock.calls.map((call: any) => call[0]);
+			const logs = consoleLogSpy.mock.calls.map((call) => call[0]);
 			expect(logs.join("\n")).toContain("Run without --dry-run");
 		});
 
 		it("should reject watch + dry-run combination", async () => {
 			try {
 				await command.run([], { watch: true, dryRun: true });
-			} catch (e) {
+			} catch (_e) {
 				// Expected - process.exit mock throws
 			}
 
-			const logs = consoleLogSpy.mock.calls.map((call: any) => call[0]);
+			const logs = consoleLogSpy.mock.calls.map((call) => call[0]);
 			expect(logs.join("\n")).toContain(
 				"Watch mode is not compatible with --dry-run",
 			);
@@ -199,11 +201,11 @@ describe("SyncCommand", () => {
 		it("should reject watch + force combination", async () => {
 			try {
 				await command.run([], { watch: true, force: true });
-			} catch (e) {
+			} catch (_e) {
 				// Expected - process.exit mock throws
 			}
 
-			const logs = consoleLogSpy.mock.calls.map((call: any) => call[0]);
+			const logs = consoleLogSpy.mock.calls.map((call) => call[0]);
 			expect(logs.join("\n")).toContain(
 				"Watch mode is not compatible with --force",
 			);
@@ -214,7 +216,7 @@ describe("SyncCommand", () => {
 		it("should enable embeddings by default", async () => {
 			try {
 				await command.run([], {});
-			} catch (e) {
+			} catch (_e) {
 				// Expected - process.exit mock throws
 			}
 
@@ -226,7 +228,7 @@ describe("SyncCommand", () => {
 		it("should disable embeddings when embeddings option is false", async () => {
 			try {
 				await command.run([], { embeddings: false });
-			} catch (e) {
+			} catch (_e) {
 				// Expected - process.exit mock throws
 			}
 
@@ -238,11 +240,11 @@ describe("SyncCommand", () => {
 		it("should display embeddings count in results when > 0", async () => {
 			try {
 				await command.run([], {});
-			} catch (e) {
+			} catch (_e) {
 				// Expected - process.exit mock throws
 			}
 
-			const logs = consoleLogSpy.mock.calls.map((call: any) => call[0]);
+			const logs = consoleLogSpy.mock.calls.map((call) => call[0]);
 			expect(logs.join("\n")).toContain("Embeddings: 3");
 		});
 
@@ -252,14 +254,14 @@ describe("SyncCommand", () => {
 
 			try {
 				await command.run([], { embeddings: false });
-			} catch (e) {
+			} catch (_e) {
 				// Expected - process.exit mock throws
 			}
 
 			// Only check logs from this test run
 			const newLogs = consoleLogSpy.mock.calls
 				.slice(callsBefore)
-				.map((call: any) => call[0]);
+				.map((call) => call[0]);
 			const joinedLogs = newLogs.join("\n");
 			expect(joinedLogs).not.toContain("Embeddings:");
 		});
@@ -267,11 +269,11 @@ describe("SyncCommand", () => {
 		it("should show message when embeddings are disabled", async () => {
 			try {
 				await command.run([], { embeddings: false });
-			} catch (e) {
+			} catch (_e) {
 				// Expected - process.exit mock throws
 			}
 
-			const logs = consoleLogSpy.mock.calls.map((call: any) => call[0]);
+			const logs = consoleLogSpy.mock.calls.map((call) => call[0]);
 			expect(logs.join("\n")).toContain("Embedding generation disabled");
 		});
 	});

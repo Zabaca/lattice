@@ -1,14 +1,15 @@
 import { beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
 import type { EmbeddingService } from "../embedding/embedding.service.js";
 import type { GraphService } from "../graph/graph.service.js";
+import type { ConsoleSpy, ProcessExitSpy } from "../testing/mock-types.js";
 import { CypherCommand, RelsCommand, SearchCommand } from "./query.command.js";
 
 describe("Query Commands", () => {
-	let mockGraphService: any;
-	let mockEmbeddingService: any;
-	let consoleLogSpy: any;
-	let consoleErrorSpy: any;
-	let processExitSpy: any;
+	let mockGraphService: Partial<GraphService>;
+	let mockEmbeddingService: Partial<EmbeddingService>;
+	let consoleLogSpy: ConsoleSpy;
+	let _consoleErrorSpy: ConsoleSpy;
+	let processExitSpy: ProcessExitSpy;
 
 	beforeEach(() => {
 		mockGraphService = {
@@ -21,10 +22,10 @@ describe("Query Commands", () => {
 			generateEmbedding: mock(async () => [0.1, 0.2, 0.3]),
 		};
 
-		consoleLogSpy = spyOn(console, "log");
-		consoleErrorSpy = spyOn(console, "error");
-		processExitSpy = spyOn(process, "exit");
-		(processExitSpy as any).mockImplementation(() => {
+		consoleLogSpy = spyOn(console, "log") as ConsoleSpy;
+		_consoleErrorSpy = spyOn(console, "error") as ConsoleSpy;
+		processExitSpy = spyOn(process, "exit") as unknown as ProcessExitSpy;
+		processExitSpy.mockImplementation(() => {
 			throw new Error("PROCESS_EXIT_CALLED");
 		});
 	});
@@ -42,11 +43,11 @@ describe("Query Commands", () => {
 
 			try {
 				await command.run(["test query"], {});
-			} catch (e) {
+			} catch (_e) {
 				// Expected - process.exit mock throws
 			}
 
-			const logs = consoleLogSpy.mock.calls.map((call: any) => call[0]);
+			const logs = consoleLogSpy.mock.calls.map((call) => call[0]);
 			const output = logs.join("\n");
 			expect(
 				output.includes("Semantic Search Results") ||
@@ -66,7 +67,7 @@ describe("Query Commands", () => {
 
 			try {
 				await command.run(["typescript"], { label: "Technology" });
-			} catch (e) {
+			} catch (_e) {
 				// Expected - process.exit mock throws
 			}
 
@@ -86,11 +87,11 @@ describe("Query Commands", () => {
 
 			try {
 				await command.run(["nonexistent query"], {});
-			} catch (e) {
+			} catch (_e) {
 				// Expected - process.exit mock throws
 			}
 
-			const logs = consoleLogSpy.mock.calls.map((call: any) => call[0]);
+			const logs = consoleLogSpy.mock.calls.map((call) => call[0]);
 			expect(logs.join("\n")).toContain("No results found");
 		});
 
@@ -111,11 +112,11 @@ describe("Query Commands", () => {
 
 			try {
 				await command.run(["graph database"], {});
-			} catch (e) {
+			} catch (_e) {
 				// Expected - process.exit mock throws
 			}
 
-			const logs = consoleLogSpy.mock.calls.map((call: any) => call[0]);
+			const logs = consoleLogSpy.mock.calls.map((call) => call[0]);
 			expect(logs.join("\n")).toContain("FalkorDB");
 			expect(logs.join("\n")).toContain("Similarity:");
 		});
@@ -130,11 +131,11 @@ describe("Query Commands", () => {
 
 			try {
 				await command.run(["test"], { label: "NonexistentType" });
-			} catch (e) {
+			} catch (_e) {
 				// Expected - process.exit mock throws
 			}
 
-			const logs = consoleLogSpy.mock.calls.map((call: any) => call[0]);
+			const logs = consoleLogSpy.mock.calls.map((call) => call[0]);
 			expect(logs.join("\n")).toContain("Try without --label");
 		});
 
@@ -177,11 +178,11 @@ describe("Query Commands", () => {
 
 			try {
 				await command.run(["FalkorDB"]);
-			} catch (e) {
+			} catch (_e) {
 				// Expected - process.exit mock throws
 			}
 
-			const logs = consoleLogSpy.mock.calls.map((call: any) => call[0]);
+			const logs = consoleLogSpy.mock.calls.map((call) => call[0]);
 			expect(logs.join("\n")).toContain('Relationships for "FalkorDB"');
 		});
 
@@ -192,11 +193,11 @@ describe("Query Commands", () => {
 
 			try {
 				await command.run(["NonexistentNode"]);
-			} catch (e) {
+			} catch (_e) {
 				// Expected - process.exit mock throws
 			}
 
-			const logs = consoleLogSpy.mock.calls.map((call: any) => call[0]);
+			const logs = consoleLogSpy.mock.calls.map((call) => call[0]);
 			expect(logs.join("\n")).toContain("No relationships found");
 		});
 	});
@@ -211,11 +212,11 @@ describe("Query Commands", () => {
 
 			try {
 				await command.run(["MATCH (n) RETURN n LIMIT 1"]);
-			} catch (e) {
+			} catch (_e) {
 				// Expected - process.exit mock throws
 			}
 
-			const logs = consoleLogSpy.mock.calls.map((call: any) => call[0]);
+			const logs = consoleLogSpy.mock.calls.map((call) => call[0]);
 			expect(logs.join("\n")).toContain("Cypher Query Results");
 		});
 	});

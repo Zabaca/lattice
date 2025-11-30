@@ -6,12 +6,12 @@ import { GraphService } from "./graph.service.js";
 // Simple mock implementation
 class MockRedis {
 	private callMock = {
-		calls: [] as any[],
-		resolvedValue: null as any,
-		rejectedError: null as any,
+		calls: [] as unknown[][],
+		resolvedValue: null as unknown,
+		rejectedError: null as Error | null,
 	};
 
-	async call(...args: any[]): Promise<any> {
+	async call(...args: unknown[]): Promise<unknown> {
 		this.callMock.calls.push(args);
 		if (this.callMock.rejectedError) {
 			throw this.callMock.rejectedError;
@@ -27,7 +27,7 @@ class MockRedis {
 		return;
 	}
 
-	setMockResolvedValue(value: any) {
+	setMockResolvedValue(value: unknown) {
 		this.callMock.resolvedValue = value;
 		this.callMock.rejectedError = null;
 	}
@@ -43,11 +43,15 @@ class MockRedis {
 	clearMockCalls() {
 		this.callMock.calls = [];
 	}
+
+	on(_event: string, _callback: (err: Error) => void): this {
+		return this;
+	}
 }
 
 class MockConfigService {
-	get(key: string, defaultValue?: any): any {
-		const config: Record<string, any> = {
+	get(key: string, defaultValue?: unknown): unknown {
+		const config: Record<string, unknown> = {
 			FALKORDB_HOST: "localhost",
 			FALKORDB_PORT: 6379,
 			GRAPH_NAME: "research_knowledge",
@@ -64,13 +68,18 @@ describe("GraphService", () => {
 	beforeEach(() => {
 		mockRedis = new MockRedis();
 		mockConfigService = new MockConfigService();
-		graphService = new GraphService(mockConfigService as any as ConfigService);
-		(graphService as any).redis = mockRedis as any as Redis;
+		graphService = new GraphService(
+			mockConfigService as unknown as ConfigService,
+		);
+		(graphService as unknown as { redis: Redis }).redis =
+			mockRedis as unknown as Redis;
 	});
 
 	describe("Connection Management", () => {
 		it("should initialize with config from environment", () => {
-			expect((graphService as any).config).toEqual({
+			expect(
+				(graphService as unknown as { config: Record<string, unknown> }).config,
+			).toEqual({
 				host: "localhost",
 				port: 6379,
 				graphName: "research_knowledge",
@@ -80,10 +89,12 @@ describe("GraphService", () => {
 		it("should use default values when environment variables are not set", () => {
 			const customConfigService = new MockConfigService();
 			const service = new GraphService(
-				customConfigService as any as ConfigService,
+				customConfigService as unknown as ConfigService,
 			);
 
-			expect((service as any).config).toEqual({
+			expect(
+				(service as unknown as { config: Record<string, unknown> }).config,
+			).toEqual({
 				host: "localhost",
 				port: 6379,
 				graphName: "research_knowledge",

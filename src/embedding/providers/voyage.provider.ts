@@ -5,91 +5,88 @@
  * Supports batch embedding and Matryoshka dimensions.
  */
 
-import type { EmbeddingProvider } from '../embedding.types';
+import { VoyageEmbeddingResponseSchema } from "../../schemas/embedding.schemas.js";
+import type { EmbeddingProvider } from "../embedding.types";
 
 export interface VoyageEmbeddingConfig {
-  apiKey?: string;
-  model?: string;
-  dimensions?: number;
-  inputType?: 'document' | 'query';
+	apiKey?: string;
+	model?: string;
+	dimensions?: number;
+	inputType?: "document" | "query";
 }
 
 export class VoyageEmbeddingProvider implements EmbeddingProvider {
-  readonly name = 'voyage';
-  readonly dimensions: number;
-  private model: string;
-  private apiKey: string;
-  private inputType: 'document' | 'query';
-  private baseUrl = 'https://api.voyageai.com/v1';
+	readonly name = "voyage";
+	readonly dimensions: number;
+	private model: string;
+	private apiKey: string;
+	private inputType: "document" | "query";
+	private baseUrl = "https://api.voyageai.com/v1";
 
-  constructor(config?: VoyageEmbeddingConfig) {
-    const apiKey = config?.apiKey || process.env.VOYAGE_API_KEY;
-    if (!apiKey) {
-      throw new Error(
-        'Voyage API key is required. Set VOYAGE_API_KEY environment variable or pass apiKey in config.'
-      );
-    }
+	constructor(config?: VoyageEmbeddingConfig) {
+		const apiKey = config?.apiKey || process.env.VOYAGE_API_KEY;
+		if (!apiKey) {
+			throw new Error(
+				"Voyage API key is required. Set VOYAGE_API_KEY environment variable or pass apiKey in config.",
+			);
+		}
 
-    this.apiKey = apiKey;
-    this.model = config?.model || 'voyage-3.5-lite';
-    this.dimensions = config?.dimensions || 512;
-    this.inputType = config?.inputType || 'document';
-  }
+		this.apiKey = apiKey;
+		this.model = config?.model || "voyage-3.5-lite";
+		this.dimensions = config?.dimensions || 512;
+		this.inputType = config?.inputType || "document";
+	}
 
-  /**
-   * Generate an embedding for a single text string
-   */
-  async generateEmbedding(text: string): Promise<number[]> {
-    const embeddings = await this.generateEmbeddings([text]);
-    return embeddings[0];
-  }
+	/**
+	 * Generate an embedding for a single text string
+	 */
+	async generateEmbedding(text: string): Promise<number[]> {
+		const embeddings = await this.generateEmbeddings([text]);
+		return embeddings[0];
+	}
 
-  /**
-   * Generate embeddings for multiple texts (batch)
-   * Voyage API supports up to 1000 texts per request
-   */
-  async generateEmbeddings(texts: string[]): Promise<number[][]> {
-    if (!texts || texts.length === 0) {
-      return [];
-    }
+	/**
+	 * Generate embeddings for multiple texts (batch)
+	 * Voyage API supports up to 1000 texts per request
+	 */
+	async generateEmbeddings(texts: string[]): Promise<number[][]> {
+		if (!texts || texts.length === 0) {
+			return [];
+		}
 
-    try {
-      const response = await fetch(`${this.baseUrl}/embeddings`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${this.apiKey}`,
-        },
-        body: JSON.stringify({
-          model: this.model,
-          input: texts,
-          output_dimension: this.dimensions,
-          input_type: this.inputType,
-        }),
-      });
+		try {
+			const response = await fetch(`${this.baseUrl}/embeddings`, {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Authorization: `Bearer ${this.apiKey}`,
+				},
+				body: JSON.stringify({
+					model: this.model,
+					input: texts,
+					output_dimension: this.dimensions,
+					input_type: this.inputType,
+				}),
+			});
 
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({}));
-        throw new Error(
-          `Voyage API error: ${response.status} ${JSON.stringify(error)}`
-        );
-      }
+			if (!response.ok) {
+				const error = await response.json().catch(() => ({}));
+				throw new Error(
+					`Voyage API error: ${response.status} ${JSON.stringify(error)}`,
+				);
+			}
 
-      const data = (await response.json()) as {
-        object: string;
-        data: Array<{ object: string; embedding: number[]; index: number }>;
-        model: string;
-        usage: { total_tokens: number };
-      };
+			// Validate response with Zod schema (fail-fast on invalid API response)
+			const data = VoyageEmbeddingResponseSchema.parse(await response.json());
 
-      // Sort by index to maintain order and extract embeddings
-      const sortedData = data.data.sort((a, b) => a.index - b.index);
-      return sortedData.map((item) => item.embedding);
-    } catch (error) {
-      if (error instanceof Error) {
-        throw new Error(`Failed to generate embeddings: ${error.message}`);
-      }
-      throw error;
-    }
-  }
+			// Sort by index to maintain order and extract embeddings
+			const sortedData = data.data.sort((a, b) => a.index - b.index);
+			return sortedData.map((item) => item.embedding);
+		} catch (error) {
+			if (error instanceof Error) {
+				throw new Error(`Failed to generate embeddings: ${error.message}`);
+			}
+			throw error;
+		}
+	}
 }

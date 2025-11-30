@@ -16,9 +16,7 @@ export type EntityType = z.infer<typeof EntityTypeSchema>;
 // Relationship type schema - simplified ontology
 // Only REFERENCES is user-declarable in frontmatter
 // APPEARS_IN is auto-generated when entities appear in documents
-export const RelationTypeSchema = z.enum([
-	"REFERENCES",
-]);
+export const RelationTypeSchema = z.enum(["REFERENCES"]);
 export type RelationType = z.infer<typeof RelationTypeSchema>;
 
 // Entity definition from frontmatter

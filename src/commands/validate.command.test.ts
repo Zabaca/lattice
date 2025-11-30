@@ -1,61 +1,64 @@
-import { describe, it, expect, beforeEach } from 'bun:test';
-import { DocumentParserService, ParsedDocument } from '../sync/document-parser.service.js';
+import { beforeEach, describe, expect, it } from "bun:test";
+import {
+	DocumentParserService,
+	ParsedDocument,
+} from "../sync/document-parser.service.js";
 
-describe('ValidateCommand', () => {
+describe("ValidateCommand", () => {
 	let mockDocs: ParsedDocument[];
 
 	beforeEach(() => {
 		mockDocs = [
 			{
-				path: 'docs/typescript/basics.md',
-				title: 'TypeScript Basics',
-				content: 'Content',
-				contentHash: 'hash1',
-				frontmatterHash: 'fmhash1',
+				path: "docs/typescript/basics.md",
+				title: "TypeScript Basics",
+				content: "Content",
+				contentHash: "hash1",
+				frontmatterHash: "fmhash1",
 				tags: [],
 				entities: [
 					{
-						name: 'TypeScript',
-						type: 'Technology',
-						description: 'Programming language',
+						name: "TypeScript",
+						type: "Technology",
+						description: "Programming language",
 					},
 				],
 				relationships: [
 					{
-						source: 'docs/typescript/basics.md',
-						relation: 'DOCUMENTS',
-						target: 'TypeScript',
+						source: "docs/typescript/basics.md",
+						relation: "DOCUMENTS",
+						target: "TypeScript",
 					},
 				],
 			},
 			{
-				path: 'docs/typescript/advanced.md',
-				title: 'Advanced TypeScript',
-				content: 'Content',
-				contentHash: 'hash2',
-				frontmatterHash: 'fmhash2',
+				path: "docs/typescript/advanced.md",
+				title: "Advanced TypeScript",
+				content: "Content",
+				contentHash: "hash2",
+				frontmatterHash: "fmhash2",
 				tags: [],
 				entities: [
 					{
-						name: 'TypeScript',
-						type: 'Technology',
-						description: 'Language features',
+						name: "TypeScript",
+						type: "Technology",
+						description: "Language features",
 					},
 				],
 				relationships: [
 					{
-						source: 'docs/typescript/advanced.md',
-						relation: 'DOCUMENTS',
-						target: 'TypeScript',
+						source: "docs/typescript/advanced.md",
+						relation: "DOCUMENTS",
+						target: "TypeScript",
 					},
 				],
 			},
 		];
 	});
 
-	it('should detect entity type inconsistencies', () => {
+	it("should detect entity type inconsistencies", () => {
 		// Modify second document to have inconsistent entity type
-		mockDocs[1].entities[0].type = 'Tool';
+		mockDocs[1].entities[0].type = "Tool";
 
 		// Run validation logic
 		const issues: any[] = [];
@@ -68,7 +71,7 @@ describe('ValidateCommand', () => {
 					entityTypes.get(entity.name) !== entity.type
 				) {
 					issues.push({
-						type: 'warning',
+						type: "warning",
 						message: `Entity "${entity.name}" has inconsistent types`,
 					});
 				}
@@ -77,15 +80,15 @@ describe('ValidateCommand', () => {
 		}
 
 		expect(issues.length).toBe(1);
-		expect(issues[0].type).toBe('warning');
+		expect(issues[0].type).toBe("warning");
 	});
 
-	it('should detect missing entity references in relationships', () => {
+	it("should detect missing entity references in relationships", () => {
 		// Add relationship to non-existent entity
 		mockDocs[0].relationships.push({
-			source: 'docs/typescript/basics.md',
-			relation: 'USES',
-			target: 'NonExistentEntity',
+			source: "docs/typescript/basics.md",
+			relation: "USES",
+			target: "NonExistentEntity",
 		});
 
 		const entityIndex = new Map<string, Set<string>>();
@@ -102,12 +105,12 @@ describe('ValidateCommand', () => {
 
 		for (const doc of mockDocs) {
 			for (const rel of doc.relationships) {
-				const isDocPath = rel.target.endsWith('.md');
+				const isDocPath = rel.target.endsWith(".md");
 				const isKnownEntity = entityIndex.has(rel.target);
 
 				if (!isDocPath && !isKnownEntity) {
 					issues.push({
-						type: 'warning',
+						type: "warning",
 						message: `Relationship target "${rel.target}" not found`,
 					});
 				}
@@ -115,17 +118,17 @@ describe('ValidateCommand', () => {
 		}
 
 		expect(issues.length).toBe(1);
-		expect(issues[0].message).toContain('NonExistentEntity');
+		expect(issues[0].message).toContain("NonExistentEntity");
 	});
 
-	it('should warn about documents without entities', () => {
+	it("should warn about documents without entities", () => {
 		// Add document without entities
 		mockDocs.push({
-			path: 'docs/typescript/examples.md',
-			title: 'TypeScript Examples',
-			content: 'Content',
-			contentHash: 'hash3',
-			frontmatterHash: 'fmhash3',
+			path: "docs/typescript/examples.md",
+			title: "TypeScript Examples",
+			content: "Content",
+			contentHash: "hash3",
+			frontmatterHash: "fmhash3",
 			tags: [],
 			entities: [],
 			relationships: [],
@@ -134,19 +137,19 @@ describe('ValidateCommand', () => {
 		const issues: any[] = [];
 
 		for (const doc of mockDocs) {
-			if (doc.entities.length === 0 && !doc.path.includes('README')) {
+			if (doc.entities.length === 0 && !doc.path.includes("README")) {
 				issues.push({
-					type: 'warning',
+					type: "warning",
 					message: `Document has no entities defined`,
 				});
 			}
 		}
 
 		expect(issues.length).toBe(1);
-		expect(issues[0].type).toBe('warning');
+		expect(issues[0].type).toBe("warning");
 	});
 
-	it('should warn about entities without DOCUMENTS relationship', () => {
+	it("should warn about entities without DOCUMENTS relationship", () => {
 		// Clear relationships for first doc
 		mockDocs[0].relationships = [];
 
@@ -155,11 +158,11 @@ describe('ValidateCommand', () => {
 		for (const doc of mockDocs) {
 			if (doc.entities.length > 0) {
 				const hasDocumentsRel = doc.relationships.some(
-					(r) => r.relation === 'DOCUMENTS'
+					(r) => r.relation === "DOCUMENTS",
 				);
 				if (!hasDocumentsRel) {
 					issues.push({
-						type: 'warning',
+						type: "warning",
 						message: `Document has entities but no DOCUMENTS relationship`,
 					});
 				}
@@ -169,7 +172,7 @@ describe('ValidateCommand', () => {
 		expect(issues.length).toBe(1);
 	});
 
-	it('should pass validation for consistent data', () => {
+	it("should pass validation for consistent data", () => {
 		const entityIndex = new Map<string, Set<string>>();
 		const entityTypes = new Map<string, string>();
 		const issues: any[] = [];
@@ -186,7 +189,7 @@ describe('ValidateCommand', () => {
 					entityTypes.get(entity.name) !== entity.type
 				) {
 					issues.push({
-						type: 'warning',
+						type: "warning",
 						message: `Inconsistent type for ${entity.name}`,
 					});
 				}
@@ -196,31 +199,31 @@ describe('ValidateCommand', () => {
 
 		for (const doc of mockDocs) {
 			for (const rel of doc.relationships) {
-				const isDocPath = rel.target.endsWith('.md');
+				const isDocPath = rel.target.endsWith(".md");
 				const isKnownEntity = entityIndex.has(rel.target);
 
 				if (!isDocPath && !isKnownEntity) {
 					issues.push({
-						type: 'warning',
+						type: "warning",
 						message: `Relationship target not found`,
 					});
 				}
 			}
 
-			if (doc.entities.length === 0 && !doc.path.includes('README')) {
+			if (doc.entities.length === 0 && !doc.path.includes("README")) {
 				issues.push({
-					type: 'warning',
+					type: "warning",
 					message: `Document has no entities`,
 				});
 			}
 
 			if (doc.entities.length > 0) {
 				const hasDocumentsRel = doc.relationships.some(
-					(r) => r.relation === 'DOCUMENTS'
+					(r) => r.relation === "DOCUMENTS",
 				);
 				if (!hasDocumentsRel) {
 					issues.push({
-						type: 'warning',
+						type: "warning",
 						message: `No DOCUMENTS relationship`,
 					});
 				}

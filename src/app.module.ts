@@ -1,19 +1,19 @@
-import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
-import { GraphModule } from './graph/graph.module.js';
-import { SyncModule } from './sync/sync.module.js';
-import { EmbeddingModule } from './embedding/embedding.module.js';
-import { QueryModule } from './query/query.module.js';
+import { Module } from "@nestjs/common";
+import { ConfigModule } from "@nestjs/config";
 import {
-	SyncCommand,
-	StatusCommand,
-	SearchCommand,
-	RelsCommand,
 	CypherCommand,
-	ValidateCommand,
-	OntologyCommand,
 	InitCommand,
-} from './commands/index.js';
+	OntologyCommand,
+	RelsCommand,
+	SearchCommand,
+	StatusCommand,
+	SyncCommand,
+	ValidateCommand,
+} from "./commands/index.js";
+import { EmbeddingModule } from "./embedding/embedding.module.js";
+import { GraphModule } from "./graph/graph.module.js";
+import { QueryModule } from "./query/query.module.js";
+import { SyncModule } from "./sync/sync.module.js";
 
 @Module({
 	imports: [

@@ -1,8 +1,8 @@
 import { Module } from "@nestjs/common";
-import { QueryService } from "./query.service.js";
-import { GraphModule } from "../graph/graph.module.js";
 import { EmbeddingModule } from "../embedding/embedding.module.js";
+import { GraphModule } from "../graph/graph.module.js";
 import { GraphService } from "../graph/graph.service.js";
+import { QueryService } from "./query.service.js";
 
 @Module({
 	imports: [GraphModule, EmbeddingModule],

@@ -1,11 +1,11 @@
-import { Injectable } from '@nestjs/common';
-import { Command, CommandRunner } from 'nest-commander';
-import { OntologyService } from '../sync/ontology.service.js';
+import { Injectable } from "@nestjs/common";
+import { Command, CommandRunner } from "nest-commander";
+import { OntologyService } from "../sync/ontology.service.js";
 
 @Injectable()
 @Command({
-	name: 'ontology',
-	description: 'Derive and display ontology from all documents',
+	name: "ontology",
+	description: "Derive and display ontology from all documents",
 })
 export class OntologyCommand extends CommandRunner {
 	constructor(private readonly ontologyService: OntologyService) {
@@ -19,7 +19,7 @@ export class OntologyCommand extends CommandRunner {
 			process.exit(0);
 		} catch (error) {
 			console.error(
-				'\n❌ Ontology derivation failed:',
+				"\n❌ Ontology derivation failed:",
 				error instanceof Error ? error.message : String(error),
 			);
 			process.exit(1);

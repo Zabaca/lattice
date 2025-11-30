@@ -1,10 +1,10 @@
-import { Injectable } from '@nestjs/common';
-import { Command, CommandRunner, Option } from 'nest-commander';
-import { DocumentParserService } from '../sync/document-parser.service.js';
-import { validateDocuments } from '../sync/sync.service.js';
+import { Injectable } from "@nestjs/common";
+import { Command, CommandRunner, Option } from "nest-commander";
+import { DocumentParserService } from "../sync/document-parser.service.js";
+import { validateDocuments } from "../sync/sync.service.js";
 
 interface ValidationIssue {
-	type: 'error';
+	type: "error";
 	path: string;
 	message: string;
 	suggestion?: string;
@@ -16,8 +16,8 @@ interface ValidateCommandOptions {
 
 @Injectable()
 @Command({
-	name: 'validate',
-	description: 'Validate entity references and relationships across documents',
+	name: "validate",
+	description: "Validate entity references and relationships across documents",
 })
 export class ValidateCommand extends CommandRunner {
 	constructor(private readonly parserService: DocumentParserService) {
@@ -26,15 +26,16 @@ export class ValidateCommand extends CommandRunner {
 
 	async run(_inputs: string[], options: ValidateCommandOptions): Promise<void> {
 		try {
-			console.log('Validating entities and relationships...\n');
+			console.log("Validating entities and relationships...\n");
 
-			const { docs, errors: schemaErrors } = await this.parserService.parseAllDocumentsWithErrors();
+			const { docs, errors: schemaErrors } =
+				await this.parserService.parseAllDocumentsWithErrors();
 			const issues: ValidationIssue[] = [];
 
 			// Add schema errors (invalid frontmatter format)
 			for (const schemaError of schemaErrors) {
 				issues.push({
-					type: 'error',
+					type: "error",
 					path: schemaError.path,
 					message: schemaError.error,
 				});
@@ -55,10 +56,10 @@ export class ValidateCommand extends CommandRunner {
 			const validationErrors = validateDocuments(docs);
 			for (const err of validationErrors) {
 				issues.push({
-					type: 'error',
+					type: "error",
 					path: err.path,
 					message: err.error,
-					suggestion: 'Add entity definition or fix the reference',
+					suggestion: "Add entity definition or fix the reference",
 				});
 			}
 
@@ -74,27 +75,27 @@ export class ValidateCommand extends CommandRunner {
 					if (options.fix && i.suggestion) {
 						console.log(`    Suggestion: ${i.suggestion}`);
 					}
-					console.log('');
+					console.log("");
 				});
 			}
 
 			if (issues.length === 0) {
-				console.log('All validations passed!');
+				console.log("All validations passed!");
 			}
 
 			process.exit(issues.length > 0 ? 1 : 0);
 		} catch (error) {
 			console.error(
-				'Validation failed:',
-				error instanceof Error ? error.message : String(error)
+				"Validation failed:",
+				error instanceof Error ? error.message : String(error),
 			);
 			process.exit(1);
 		}
 	}
 
 	@Option({
-		flags: '--fix',
-		description: 'Show suggestions for common issues',
+		flags: "--fix",
+		description: "Show suggestions for common issues",
 	})
 	parseFix(): boolean {
 		return true;

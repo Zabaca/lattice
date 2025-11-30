@@ -1,7 +1,7 @@
-import { Injectable } from '@nestjs/common';
-import { Command, CommandRunner, Option } from 'nest-commander';
-import { SyncService } from '../sync/sync.service.js';
-import { ManifestService } from '../sync/manifest.service.js';
+import { Injectable } from "@nestjs/common";
+import { Command, CommandRunner, Option } from "nest-commander";
+import { ManifestService } from "../sync/manifest.service.js";
+import { SyncService } from "../sync/sync.service.js";
 
 interface StatusCommandOptions {
 	verbose?: boolean;
@@ -9,8 +9,8 @@ interface StatusCommandOptions {
 
 @Injectable()
 @Command({
-	name: 'status',
-	description: 'Show documents that need syncing (new or updated)',
+	name: "status",
+	description: "Show documents that need syncing (new or updated)",
 })
 export class StatusCommand extends CommandRunner {
 	constructor(
@@ -29,14 +29,15 @@ export class StatusCommand extends CommandRunner {
 			const changes = await this.syncService.detectChanges();
 
 			// Group by change type
-			const newDocs = changes.filter((c) => c.changeType === 'new');
-			const updatedDocs = changes.filter((c) => c.changeType === 'updated');
-			const deletedDocs = changes.filter((c) => c.changeType === 'deleted');
-			const unchangedDocs = changes.filter((c) => c.changeType === 'unchanged');
+			const newDocs = changes.filter((c) => c.changeType === "new");
+			const updatedDocs = changes.filter((c) => c.changeType === "updated");
+			const deletedDocs = changes.filter((c) => c.changeType === "deleted");
+			const unchangedDocs = changes.filter((c) => c.changeType === "unchanged");
 
-			const pendingCount = newDocs.length + updatedDocs.length + deletedDocs.length;
+			const pendingCount =
+				newDocs.length + updatedDocs.length + deletedDocs.length;
 
-			console.log('\n📊 Graph Status\n');
+			console.log("\n📊 Graph Status\n");
 
 			// Show new documents
 			if (newDocs.length > 0) {
@@ -76,25 +77,25 @@ export class StatusCommand extends CommandRunner {
 
 			// Summary
 			if (pendingCount === 0) {
-				console.log('✅ All documents are in sync\n');
+				console.log("✅ All documents are in sync\n");
 			} else {
 				console.log(`Total: ${pendingCount} document(s) need syncing`);
-				console.log('💡 Run `lattice sync` to apply changes\n');
+				console.log("💡 Run `lattice sync` to apply changes\n");
 			}
 
 			process.exit(0);
 		} catch (error) {
 			console.error(
-				'Error:',
-				error instanceof Error ? error.message : String(error)
+				"Error:",
+				error instanceof Error ? error.message : String(error),
 			);
 			process.exit(1);
 		}
 	}
 
 	@Option({
-		flags: '-v, --verbose',
-		description: 'Show all documents including unchanged',
+		flags: "-v, --verbose",
+		description: "Show all documents including unchanged",
 	})
 	parseVerbose(): boolean {
 		return true;

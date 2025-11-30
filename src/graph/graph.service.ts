@@ -1,10 +1,11 @@
-import { Injectable, OnModuleDestroy, Logger } from "@nestjs/common";
+import { Injectable, Logger, OnModuleDestroy } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import Redis from "ioredis";
-import type {
-	FalkorDBConfig,
-	CypherResult,
-} from "./graph.types.js";
+import {
+	FalkorDBConfigSchema,
+	type FalkorDBConfig,
+} from "../schemas/config.schemas.js";
+import type { CypherResult } from "./graph.types.js";
 
 @Injectable()
 export class GraphService implements OnModuleDestroy {
@@ -14,17 +15,12 @@ export class GraphService implements OnModuleDestroy {
 	private connecting: Promise<void> | null = null;
 
 	constructor(private configService: ConfigService) {
-		this.config = {
-			host: this.configService.get<string>(
-				"FALKORDB_HOST",
-				"localhost"
-			),
-			port: this.configService.get<number>("FALKORDB_PORT", 6379),
-			graphName: this.configService.get<string>(
-				"GRAPH_NAME",
-				"research_knowledge"
-			),
-		};
+		// Validate config with Zod schema (fail-fast on invalid config)
+		this.config = FalkorDBConfigSchema.parse({
+			host: this.configService.get<string>("FALKORDB_HOST"),
+			port: this.configService.get<string>("FALKORDB_PORT"),
+			graphName: this.configService.get<string>("GRAPH_NAME"),
+		});
 	}
 
 	async onModuleDestroy(): Promise<void> {
@@ -75,12 +71,12 @@ export class GraphService implements OnModuleDestroy {
 			// Test connection
 			await this.redis.ping();
 			this.logger.log(
-				`Connected to FalkorDB at ${this.config.host}:${this.config.port}`
+				`Connected to FalkorDB at ${this.config.host}:${this.config.port}`,
 			);
 		} catch (error) {
 			this.redis = null;
 			this.logger.error(
-				`Failed to connect to FalkorDB: ${error instanceof Error ? error.message : String(error)}`
+				`Failed to connect to FalkorDB: ${error instanceof Error ? error.message : String(error)}`,
 			);
 			throw error;
 		}
@@ -93,13 +89,16 @@ export class GraphService implements OnModuleDestroy {
 		}
 	}
 
-	async query(cypher: string, _params?: Record<string, any>): Promise<CypherResult> {
+	async query(
+		cypher: string,
+		_params?: Record<string, any>,
+	): Promise<CypherResult> {
 		try {
 			const redis = await this.ensureConnected();
 			const result = await redis.call(
 				"GRAPH.QUERY",
 				this.config.graphName,
-				cypher
+				cypher,
 			);
 
 			// FalkorDB returns: [headers, rows, stats]
@@ -108,12 +107,14 @@ export class GraphService implements OnModuleDestroy {
 			// - result[2] = execution stats
 			const resultArray = Array.isArray(result) ? result : [];
 			return {
-				resultSet: (Array.isArray(resultArray[1]) ? resultArray[1] : []) as unknown[][],
+				resultSet: (Array.isArray(resultArray[1])
+					? resultArray[1]
+					: []) as unknown[][],
 				stats: this.parseStats(result),
 			};
 		} catch (error) {
 			this.logger.error(
-				`Cypher query failed: ${error instanceof Error ? error.message : String(error)}`
+				`Cypher query failed: ${error instanceof Error ? error.message : String(error)}`,
 			);
 			throw error;
 		}
@@ -122,7 +123,10 @@ export class GraphService implements OnModuleDestroy {
 	/**
 	 * Upsert a node (MERGE by name + type)
 	 */
-	async upsertNode(label: string, properties: Record<string, any>): Promise<void> {
+	async upsertNode(
+		label: string,
+		properties: Record<string, any>,
+	): Promise<void> {
 		try {
 			const { name, ...otherProps } = properties;
 
@@ -152,7 +156,7 @@ export class GraphService implements OnModuleDestroy {
 			await this.query(cypher);
 		} catch (error) {
 			this.logger.error(
-				`Failed to upsert node: ${error instanceof Error ? error.message : String(error)}`
+				`Failed to upsert node: ${error instanceof Error ? error.message : String(error)}`,
 			);
 			throw error;
 		}
@@ -169,7 +173,7 @@ export class GraphService implements OnModuleDestroy {
 		relation: string,
 		targetLabel: string,
 		targetName: string,
-		properties?: Record<string, any>
+		properties?: Record<string, any>,
 	): Promise<void> {
 		try {
 			const escapedSourceLabel = this.escapeCypher(sourceLabel);
@@ -181,7 +185,8 @@ export class GraphService implements OnModuleDestroy {
 			// Build relationship property assignments if provided
 			let relPropAssignments = "";
 			if (properties && Object.keys(properties).length > 0) {
-				relPropAssignments = ` SET ` +
+				relPropAssignments =
+					` SET ` +
 					Object.entries(properties)
 						.map(([key, value]) => {
 							const escapedKey = this.escapeCypher(key);
@@ -202,7 +207,7 @@ export class GraphService implements OnModuleDestroy {
 			await this.query(cypher);
 		} catch (error) {
 			this.logger.error(
-				`Failed to upsert relationship: ${error instanceof Error ? error.message : String(error)}`
+				`Failed to upsert relationship: ${error instanceof Error ? error.message : String(error)}`,
 			);
 			throw error;
 		}
@@ -223,7 +228,7 @@ export class GraphService implements OnModuleDestroy {
 			await this.query(cypher);
 		} catch (error) {
 			this.logger.error(
-				`Failed to delete node: ${error instanceof Error ? error.message : String(error)}`
+				`Failed to delete node: ${error instanceof Error ? error.message : String(error)}`,
 			);
 			throw error;
 		}
@@ -237,13 +242,12 @@ export class GraphService implements OnModuleDestroy {
 			const escapedPath = this.escapeCypher(documentPath);
 
 			const cypher =
-				`MATCH ()-[r { documentPath: '${escapedPath}' }]-() ` +
-				`DELETE r`;
+				`MATCH ()-[r { documentPath: '${escapedPath}' }]-() ` + `DELETE r`;
 
 			await this.query(cypher);
 		} catch (error) {
 			this.logger.error(
-				`Failed to delete document relationships: ${error instanceof Error ? error.message : String(error)}`
+				`Failed to delete document relationships: ${error instanceof Error ? error.message : String(error)}`,
 			);
 			throw error;
 		}
@@ -257,14 +261,13 @@ export class GraphService implements OnModuleDestroy {
 			const escapedLabel = this.escapeCypher(label);
 			const limitClause = limit ? ` LIMIT ${limit}` : "";
 
-			const cypher =
-				`MATCH (n:\`${escapedLabel}\`) RETURN n${limitClause}`;
+			const cypher = `MATCH (n:\`${escapedLabel}\`) RETURN n${limitClause}`;
 
 			const result = await this.query(cypher);
 			return (result.resultSet || []).map((row) => row[0]);
 		} catch (error) {
 			this.logger.error(
-				`Failed to find nodes by label: ${error instanceof Error ? error.message : String(error)}`
+				`Failed to find nodes by label: ${error instanceof Error ? error.message : String(error)}`,
 			);
 			return [];
 		}
@@ -285,7 +288,7 @@ export class GraphService implements OnModuleDestroy {
 			return result.resultSet || [];
 		} catch (error) {
 			this.logger.error(
-				`Failed to find relationships: ${error instanceof Error ? error.message : String(error)}`
+				`Failed to find relationships: ${error instanceof Error ? error.message : String(error)}`,
 			);
 			return [];
 		}
@@ -298,7 +301,7 @@ export class GraphService implements OnModuleDestroy {
 	async createVectorIndex(
 		label: string,
 		property: string,
-		dimensions: number
+		dimensions: number,
 	): Promise<void> {
 		try {
 			const escapedLabel = this.escapeCypher(label);
@@ -309,11 +312,14 @@ export class GraphService implements OnModuleDestroy {
 			const cypher = `CREATE VECTOR INDEX FOR (n:\`${escapedLabel}\`) ON (n.\`${escapedProperty}\`) OPTIONS { dimension: ${dimensions}, similarityFunction: 'cosine' }`;
 
 			await this.query(cypher);
-			this.logger.log(`Created vector index on ${label}.${property} with ${dimensions} dimensions`);
+			this.logger.log(
+				`Created vector index on ${label}.${property} with ${dimensions} dimensions`,
+			);
 		} catch (error) {
 			// Index might already exist, that's okay
-			const errorMessage = error instanceof Error ? error.message : String(error);
-			if (!errorMessage.includes('already indexed')) {
+			const errorMessage =
+				error instanceof Error ? error.message : String(error);
+			if (!errorMessage.includes("already indexed")) {
 				this.logger.error(`Failed to create vector index: ${errorMessage}`);
 				throw error;
 			}
@@ -327,14 +333,14 @@ export class GraphService implements OnModuleDestroy {
 	async updateNodeEmbedding(
 		label: string,
 		name: string,
-		embedding: number[]
+		embedding: number[],
 	): Promise<void> {
 		try {
 			const escapedLabel = this.escapeCypher(label);
 			const escapedName = this.escapeCypher(name);
 
 			// FalkorDB stores vectors as arrays
-			const vectorStr = `[${embedding.join(', ')}]`;
+			const vectorStr = `[${embedding.join(", ")}]`;
 
 			const cypher =
 				`MATCH (n:\`${escapedLabel}\` { name: '${escapedName}' }) ` +
@@ -343,7 +349,7 @@ export class GraphService implements OnModuleDestroy {
 			await this.query(cypher);
 		} catch (error) {
 			this.logger.error(
-				`Failed to update node embedding: ${error instanceof Error ? error.message : String(error)}`
+				`Failed to update node embedding: ${error instanceof Error ? error.message : String(error)}`,
 			);
 			throw error;
 		}
@@ -355,11 +361,11 @@ export class GraphService implements OnModuleDestroy {
 	async vectorSearch(
 		label: string,
 		queryVector: number[],
-		k: number = 10
+		k: number = 10,
 	): Promise<Array<{ name: string; title?: string; score: number }>> {
 		try {
 			const escapedLabel = this.escapeCypher(label);
-			const vectorStr = `[${queryVector.join(', ')}]`;
+			const vectorStr = `[${queryVector.join(", ")}]`;
 
 			// FalkorDB KNN vector search using vec.queryNodes
 			// FalkorDB returns distance (lower = better), normalize to similarity (higher = better)
@@ -379,7 +385,7 @@ export class GraphService implements OnModuleDestroy {
 			}));
 		} catch (error) {
 			this.logger.error(
-				`Vector search failed: ${error instanceof Error ? error.message : String(error)}`
+				`Vector search failed: ${error instanceof Error ? error.message : String(error)}`,
 			);
 			throw error;
 		}
@@ -391,16 +397,39 @@ export class GraphService implements OnModuleDestroy {
 	 */
 	async vectorSearchAll(
 		queryVector: number[],
-		k: number = 10
-	): Promise<Array<{ name: string; label: string; title?: string; description?: string; score: number }>> {
-		const allLabels = ['Document', 'Concept', 'Process', 'Tool', 'Technology', 'Organization', 'Topic', 'Person'];
-		const allResults: Array<{ name: string; label: string; title?: string; description?: string; score: number }> = [];
+		k: number = 10,
+	): Promise<
+		Array<{
+			name: string;
+			label: string;
+			title?: string;
+			description?: string;
+			score: number;
+		}>
+	> {
+		const allLabels = [
+			"Document",
+			"Concept",
+			"Process",
+			"Tool",
+			"Technology",
+			"Organization",
+			"Topic",
+			"Person",
+		];
+		const allResults: Array<{
+			name: string;
+			label: string;
+			title?: string;
+			description?: string;
+			score: number;
+		}> = [];
 
 		// Query each label's vector index
 		for (const label of allLabels) {
 			try {
 				const escapedLabel = this.escapeCypher(label);
-				const vectorStr = `[${queryVector.join(', ')}]`;
+				const vectorStr = `[${queryVector.join(", ")}]`;
 
 				// FalkorDB returns distance (lower = better), normalize to similarity (higher = better)
 				const cypher =
@@ -420,14 +449,14 @@ export class GraphService implements OnModuleDestroy {
 				allResults.push(...labelResults);
 			} catch (error) {
 				// Some labels might not have indices, skip them
-				this.logger.debug(`Vector search for ${label} skipped: ${error instanceof Error ? error.message : String(error)}`);
+				this.logger.debug(
+					`Vector search for ${label} skipped: ${error instanceof Error ? error.message : String(error)}`,
+				);
 			}
 		}
 
 		// Sort by score descending and return top k
-		return allResults
-			.sort((a, b) => b.score - a.score)
-			.slice(0, k);
+		return allResults.sort((a, b) => b.score - a.score).slice(0, k);
 	}
 
 	/**
@@ -503,16 +532,12 @@ export class GraphService implements OnModuleDestroy {
 			stats.nodesDeleted = parseInt(nodeDeletedMatch[1], 10);
 		}
 
-		const relCreatedMatch = statsStr.match(
-			/Relationships created: (\d+)/
-		);
+		const relCreatedMatch = statsStr.match(/Relationships created: (\d+)/);
 		if (relCreatedMatch) {
 			stats.relationshipsCreated = parseInt(relCreatedMatch[1], 10);
 		}
 
-		const relDeletedMatch = statsStr.match(
-			/Relationships deleted: (\d+)/
-		);
+		const relDeletedMatch = statsStr.match(/Relationships deleted: (\d+)/);
 		if (relDeletedMatch) {
 			stats.relationshipsDeleted = parseInt(relDeletedMatch[1], 10);
 		}

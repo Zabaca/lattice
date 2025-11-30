@@ -1,0 +1,40 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.3.8/schema.json",
+	"vcs": {
+		"enabled": true,
+		"clientKind": "git",
+		"useIgnoreFile": true
+	},
+	"formatter": {
+		"enabled": true,
+		"indentStyle": "tab"
+	},
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"recommended": true,
+			"correctness": {
+				"noUnusedFunctionParameters": "off"
+			},
+			"style": {
+				"useImportType": "off",
+				"noNonNullAssertion": "error"
+			},
+			"suspicious": {
+				"noImplicitAnyLet": "error",
+				"noExplicitAny": "error"
+			}
+		}
+	},
+	"javascript": {
+		"parser": {
+			"unsafeParameterDecoratorsEnabled": true
+		},
+		"formatter": {
+			"quoteStyle": "double"
+		}
+	},
+	"files": {
+		"includes": ["src/**/*.ts", "*.json"]
+	}
+}

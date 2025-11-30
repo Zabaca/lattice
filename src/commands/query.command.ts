@@ -1,7 +1,7 @@
-import { Injectable } from '@nestjs/common';
-import { Command, CommandRunner, Option } from 'nest-commander';
-import { GraphService } from '../graph/graph.service.js';
-import { EmbeddingService } from '../embedding/embedding.service.js';
+import { Injectable } from "@nestjs/common";
+import { Command, CommandRunner, Option } from "nest-commander";
+import { EmbeddingService } from "../embedding/embedding.service.js";
+import { GraphService } from "../graph/graph.service.js";
 
 // Search Command
 interface SearchCommandOptions {
@@ -11,9 +11,9 @@ interface SearchCommandOptions {
 
 @Injectable()
 @Command({
-	name: 'search',
-	arguments: '<query>',
-	description: 'Semantic search across the knowledge graph',
+	name: "search",
+	arguments: "<query>",
+	description: "Semantic search across the knowledge graph",
 })
 export class SearchCommand extends CommandRunner {
 	constructor(
@@ -25,18 +25,29 @@ export class SearchCommand extends CommandRunner {
 
 	async run(inputs: string[], options: SearchCommandOptions): Promise<void> {
 		const query = inputs[0];
-		const limit = Math.min(parseInt(options.limit || '20', 10), 100);
+		const limit = Math.min(parseInt(options.limit || "20", 10), 100);
 
 		try {
 			// Generate embedding for the query
-			const queryEmbedding = await this.embeddingService.generateEmbedding(query);
+			const queryEmbedding =
+				await this.embeddingService.generateEmbedding(query);
 
-			let results: Array<{ name: string; label: string; title?: string; description?: string; score: number }>;
+			let results: Array<{
+				name: string;
+				label: string;
+				title?: string;
+				description?: string;
+				score: number;
+			}>;
 
 			if (options.label) {
 				// Search within specific label
-				const labelResults = await this.graphService.vectorSearch(options.label, queryEmbedding, limit);
-				results = labelResults.map(r => ({
+				const labelResults = await this.graphService.vectorSearch(
+					options.label,
+					queryEmbedding,
+					limit,
+				);
+				results = labelResults.map((r) => ({
 					name: r.name,
 					label: options.label!,
 					title: r.title,
@@ -44,16 +55,21 @@ export class SearchCommand extends CommandRunner {
 				}));
 			} else {
 				// Search across all entity types
-				results = await this.graphService.vectorSearchAll(queryEmbedding, limit);
+				results = await this.graphService.vectorSearchAll(
+					queryEmbedding,
+					limit,
+				);
 			}
 
-			const labelSuffix = options.label ? ` (${options.label})` : '';
-			console.log(`\n=== Semantic Search Results for "${query}"${labelSuffix} ===\n`);
+			const labelSuffix = options.label ? ` (${options.label})` : "";
+			console.log(
+				`\n=== Semantic Search Results for "${query}"${labelSuffix} ===\n`,
+			);
 
 			if (results.length === 0) {
-				console.log('No results found.\n');
+				console.log("No results found.\n");
 				if (options.label) {
-					console.log('Tip: Try without --label to search all entity types.\n');
+					console.log("Tip: Try without --label to search all entity types.\n");
 				}
 				process.exit(0);
 			}
@@ -63,10 +79,11 @@ export class SearchCommand extends CommandRunner {
 				if (result.title) {
 					console.log(`   Title: ${result.title}`);
 				}
-				if (result.description && result.label !== 'Document') {
-					const desc = result.description.length > 80
-						? result.description.slice(0, 80) + '...'
-						: result.description;
+				if (result.description && result.label !== "Document") {
+					const desc =
+						result.description.length > 80
+							? result.description.slice(0, 80) + "..."
+							: result.description;
 					console.log(`   ${desc}`);
 				}
 				console.log(`   Similarity: ${(result.score * 100).toFixed(2)}%`);
@@ -76,11 +93,15 @@ export class SearchCommand extends CommandRunner {
 			process.exit(0);
 		} catch (error) {
 			const errorMsg = error instanceof Error ? error.message : String(error);
-			console.error('Error:', errorMsg);
+			console.error("Error:", errorMsg);
 
-			if (errorMsg.includes('no embeddings') || errorMsg.includes('vector')) {
-				console.log('\nNote: Semantic search requires embeddings to be generated first.');
-				console.log("Run 'lattice sync' to generate embeddings for documents.\n");
+			if (errorMsg.includes("no embeddings") || errorMsg.includes("vector")) {
+				console.log(
+					"\nNote: Semantic search requires embeddings to be generated first.",
+				);
+				console.log(
+					"Run 'lattice sync' to generate embeddings for documents.\n",
+				);
 			}
 
 			process.exit(1);
@@ -88,17 +109,17 @@ export class SearchCommand extends CommandRunner {
 	}
 
 	@Option({
-		flags: '-l, --label <label>',
-		description: 'Filter by entity label (e.g., Technology, Concept, Document)',
+		flags: "-l, --label <label>",
+		description: "Filter by entity label (e.g., Technology, Concept, Document)",
 	})
 	parseLabel(value: string): string {
 		return value;
 	}
 
 	@Option({
-		flags: '--limit <n>',
-		description: 'Limit results',
-		defaultValue: '20',
+		flags: "--limit <n>",
+		description: "Limit results",
+		defaultValue: "20",
 	})
 	parseLimit(value: string): string {
 		return value;
@@ -108,9 +129,9 @@ export class SearchCommand extends CommandRunner {
 // Rels Command
 @Injectable()
 @Command({
-	name: 'rels',
-	arguments: '<name>',
-	description: 'Show relationships for a node',
+	name: "rels",
+	arguments: "<name>",
+	description: "Show relationships for a node",
 })
 export class RelsCommand extends CommandRunner {
 	constructor(private readonly graphService: GraphService) {
@@ -130,7 +151,7 @@ export class RelsCommand extends CommandRunner {
 			console.log(`\n=== Relationships for "${name}" ===\n`);
 
 			if (results.length === 0) {
-				console.log('No relationships found.\n');
+				console.log("No relationships found.\n");
 				process.exit(0);
 			}
 
@@ -147,9 +168,9 @@ export class RelsCommand extends CommandRunner {
 				const sourceProps = Object.fromEntries(sourceObj.properties || []);
 				const targetProps = Object.fromEntries(targetObj.properties || []);
 
-				const sourceName = sourceProps.name || 'unknown';
-				const targetName = targetProps.name || 'unknown';
-				const relType = relObj.type || 'UNKNOWN';
+				const sourceName = sourceProps.name || "unknown";
+				const targetName = targetProps.name || "unknown";
+				const relType = relObj.type || "UNKNOWN";
 
 				if (sourceName === name) {
 					outgoing.push(`  -[${relType}]-> ${targetName}`);
@@ -159,13 +180,13 @@ export class RelsCommand extends CommandRunner {
 			});
 
 			if (outgoing.length > 0) {
-				console.log('Outgoing:');
+				console.log("Outgoing:");
 				outgoing.forEach((r) => console.log(r));
 			}
 
 			if (incoming.length > 0) {
 				if (outgoing.length > 0) console.log();
-				console.log('Incoming:');
+				console.log("Incoming:");
 				incoming.forEach((r) => console.log(r));
 			}
 			console.log();
@@ -173,8 +194,8 @@ export class RelsCommand extends CommandRunner {
 			process.exit(0);
 		} catch (error) {
 			console.error(
-				'Error:',
-				error instanceof Error ? error.message : String(error)
+				"Error:",
+				error instanceof Error ? error.message : String(error),
 			);
 			process.exit(1);
 		}
@@ -184,9 +205,9 @@ export class RelsCommand extends CommandRunner {
 // Cypher Command
 @Injectable()
 @Command({
-	name: 'cypher',
-	arguments: '<query>',
-	description: 'Execute raw Cypher query',
+	name: "cypher",
+	arguments: "<query>",
+	description: "Execute raw Cypher query",
 })
 export class CypherCommand extends CommandRunner {
 	constructor(private readonly graphService: GraphService) {
@@ -199,18 +220,17 @@ export class CypherCommand extends CommandRunner {
 		try {
 			const result = await this.graphService.query(query);
 
-			console.log('\n=== Cypher Query Results ===\n');
+			console.log("\n=== Cypher Query Results ===\n");
 			console.log(JSON.stringify(result, null, 2));
 			console.log();
 
 			process.exit(0);
 		} catch (error) {
 			console.error(
-				'Error:',
-				error instanceof Error ? error.message : String(error)
+				"Error:",
+				error instanceof Error ? error.message : String(error),
 			);
 			process.exit(1);
 		}
 	}
 }
-

@@ -1,16 +1,23 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { ManifestService, ChangeType, DocumentChange } from './manifest.service.js';
-import { DocumentParserService, ParsedDocument } from './document-parser.service.js';
-import { GraphService } from '../graph/graph.service.js';
-import { CascadeService, CascadeAnalysis } from './cascade.service.js';
-import { PathResolverService } from './path-resolver.service.js';
-import { EmbeddingService } from '../embedding/embedding.service.js';
+import { Injectable, Logger } from "@nestjs/common";
+import { EmbeddingService } from "../embedding/embedding.service.js";
+import { GraphService } from "../graph/graph.service.js";
+import { CascadeAnalysis, CascadeService } from "./cascade.service.js";
+import {
+	DocumentParserService,
+	ParsedDocument,
+} from "./document-parser.service.js";
+import {
+	ChangeType,
+	DocumentChange,
+	ManifestService,
+} from "./manifest.service.js";
+import { PathResolverService } from "./path-resolver.service.js";
 
 export interface SyncOptions {
-	force?: boolean;      // Force re-sync: with paths, clears only those docs; without paths, rebuilds entire graph
-	dryRun?: boolean;     // Show changes without applying
-	verbose?: boolean;    // Detailed output
-	paths?: string[];     // Specific paths to sync (undefined = all)
+	force?: boolean; // Force re-sync: with paths, clears only those docs; without paths, rebuilds entire graph
+	dryRun?: boolean; // Show changes without applying
+	verbose?: boolean; // Detailed output
+	paths?: string[]; // Specific paths to sync (undefined = all)
 	skipCascade?: boolean; // Skip cascade analysis (can be slow for large repos)
 	embeddings?: boolean; // Generate embeddings for documents (default: false)
 	skipEmbeddings?: boolean; // Explicitly skip embeddings even if enabled
@@ -30,7 +37,13 @@ export interface UniqueEntity {
  * All entity types that should have embeddings (excludes Document)
  */
 const ENTITY_TYPES = [
-	'Topic', 'Technology', 'Concept', 'Tool', 'Process', 'Person', 'Organization'
+	"Topic",
+	"Technology",
+	"Concept",
+	"Tool",
+	"Process",
+	"Person",
+	"Organization",
 ];
 
 /**
@@ -38,7 +51,9 @@ const ENTITY_TYPES = [
  * Shared function used by both sync and validate commands.
  * Returns array of validation errors. Empty array means validation passed.
  */
-export function validateDocuments(docs: ParsedDocument[]): Array<{ path: string; error: string }> {
+export function validateDocuments(
+	docs: ParsedDocument[],
+): Array<{ path: string; error: string }> {
 	const errors: Array<{ path: string; error: string }> = [];
 
 	// Build entity index (name -> documents defining it)
@@ -64,7 +79,7 @@ export function validateDocuments(docs: ParsedDocument[]): Array<{ path: string;
 			}
 
 			// Check target exists (could be entity or document path)
-			const isDocPath = rel.target.endsWith('.md');
+			const isDocPath = rel.target.endsWith(".md");
 			const isKnownEntity = entityIndex.has(rel.target);
 			const isSelfReference = rel.target === doc.path;
 
@@ -140,13 +155,17 @@ export class SyncService {
 				if (options.paths && options.paths.length > 0) {
 					// Force with specific paths: clear those entries from manifest
 					if (options.verbose) {
-						this.logger.log(`Force mode: marking ${options.paths.length} document(s) for re-sync`);
+						this.logger.log(
+							`Force mode: marking ${options.paths.length} document(s) for re-sync`,
+						);
 					}
 					await this.clearManifestEntries(options.paths);
 				} else {
 					// Force without paths: clear entire manifest to re-sync everything
 					if (options.verbose) {
-						this.logger.log('Force mode: clearing manifest to force full re-sync');
+						this.logger.log(
+							"Force mode: clearing manifest to force full re-sync",
+						);
 					}
 					await this.clearManifest();
 				}
@@ -161,13 +180,14 @@ export class SyncService {
 			const docsByPath = new Map<string, ParsedDocument>();
 
 			for (const change of changes) {
-				if (change.changeType === 'new' || change.changeType === 'updated') {
+				if (change.changeType === "new" || change.changeType === "updated") {
 					try {
 						const doc = await this.parser.parseDocument(change.path);
 						docsToSync.push(doc);
 						docsByPath.set(change.path, doc);
 					} catch (error) {
-						const errorMessage = error instanceof Error ? error.message : String(error);
+						const errorMessage =
+							error instanceof Error ? error.message : String(error);
 						result.errors.push({ path: change.path, error: errorMessage });
 						this.logger.warn(`Failed to parse ${change.path}: ${errorMessage}`);
 					}
@@ -182,7 +202,9 @@ export class SyncService {
 					result.errors.push(err);
 					this.logger.error(`Validation error in ${err.path}: ${err.error}`);
 				}
-				this.logger.error(`Sync aborted: ${validationErrors.length} validation error(s) found. Fix the errors and try again.`);
+				this.logger.error(
+					`Sync aborted: ${validationErrors.length} validation error(s) found. Fix the errors and try again.`,
+				);
 				result.duration = Date.now() - startTime;
 				return result;
 			}
@@ -191,17 +213,29 @@ export class SyncService {
 			const uniqueEntities = this.collectUniqueEntities(docsToSync);
 
 			if (options.verbose) {
-				this.logger.log(`Collected ${uniqueEntities.size} unique entities from ${docsToSync.length} documents`);
+				this.logger.log(
+					`Collected ${uniqueEntities.size} unique entities from ${docsToSync.length} documents`,
+				);
 			}
 
 			// Phase 3: Create vector indices if embeddings enabled
-			if (options.embeddings && !options.skipEmbeddings && this.embeddingService) {
+			if (
+				options.embeddings &&
+				!options.skipEmbeddings &&
+				this.embeddingService
+			) {
 				// Document index
 				try {
 					const dimensions = this.embeddingService.getDimensions();
-					await this.graph.createVectorIndex('Document', 'embedding', dimensions);
+					await this.graph.createVectorIndex(
+						"Document",
+						"embedding",
+						dimensions,
+					);
 				} catch (error) {
-					this.logger.debug(`Vector index setup for Document: ${error instanceof Error ? error.message : String(error)}`);
+					this.logger.debug(
+						`Vector index setup for Document: ${error instanceof Error ? error.message : String(error)}`,
+					);
 				}
 
 				// Entity indices
@@ -210,10 +244,15 @@ export class SyncService {
 
 			// Phase 4: Sync entities with embeddings (one MERGE per unique entity)
 			if (!options.dryRun) {
-				result.entityEmbeddingsGenerated = await this.syncEntities(uniqueEntities, options);
+				result.entityEmbeddingsGenerated = await this.syncEntities(
+					uniqueEntities,
+					options,
+				);
 
 				if (options.verbose) {
-					this.logger.log(`Synced ${uniqueEntities.size} entities, generated ${result.entityEmbeddingsGenerated} embeddings`);
+					this.logger.log(
+						`Synced ${uniqueEntities.size} entities, generated ${result.entityEmbeddingsGenerated} embeddings`,
+					);
 				}
 			}
 
@@ -221,21 +260,25 @@ export class SyncService {
 			for (const change of changes) {
 				try {
 					const doc = docsByPath.get(change.path);
-					const cascadeWarnings = await this.processChange(change, options, doc);
+					const cascadeWarnings = await this.processChange(
+						change,
+						options,
+						doc,
+					);
 					result.cascadeWarnings.push(...cascadeWarnings);
 
 					// Update result counts
 					switch (change.changeType) {
-						case 'new':
+						case "new":
 							result.added++;
 							break;
-						case 'updated':
+						case "updated":
 							result.updated++;
 							break;
-						case 'deleted':
+						case "deleted":
 							result.deleted++;
 							break;
-						case 'unchanged':
+						case "unchanged":
 							result.unchanged++;
 							break;
 					}
@@ -245,7 +288,8 @@ export class SyncService {
 						result.embeddingsGenerated++;
 					}
 				} catch (error) {
-					const errorMessage = error instanceof Error ? error.message : String(error);
+					const errorMessage =
+						error instanceof Error ? error.message : String(error);
 					result.errors.push({ path: change.path, error: errorMessage });
 					this.logger.warn(`Error processing ${change.path}: ${errorMessage}`);
 				}
@@ -255,11 +299,11 @@ export class SyncService {
 			if (!options.dryRun) {
 				await this.manifest.save();
 			}
-
 		} catch (error) {
-			const errorMessage = error instanceof Error ? error.message : String(error);
+			const errorMessage =
+				error instanceof Error ? error.message : String(error);
 			this.logger.error(`Sync failed: ${errorMessage}`);
-			result.errors.push({ path: 'sync', error: errorMessage });
+			result.errors.push({ path: "sync", error: errorMessage });
 		}
 
 		result.duration = Date.now() - startTime;
@@ -283,7 +327,7 @@ export class SyncService {
 				requireInDocs: true,
 			});
 			const pathSet = new Set(normalizedPaths);
-			allDocPaths = allDocPaths.filter(p => pathSet.has(p));
+			allDocPaths = allDocPaths.filter((p) => pathSet.has(p));
 		}
 
 		// Get tracked paths from manifest
@@ -308,11 +352,12 @@ export class SyncService {
 				// Remove from tracked set (remaining will be deletions)
 				trackedPaths.delete(docPath);
 			} catch (error) {
-				const errorMessage = error instanceof Error ? error.message : String(error);
+				const errorMessage =
+					error instanceof Error ? error.message : String(error);
 				this.logger.warn(`Failed to parse ${docPath}: ${errorMessage}`);
 				changes.push({
 					path: docPath,
-					changeType: 'new', // Treat parse errors as new for retry
+					changeType: "new", // Treat parse errors as new for retry
 					reason: `Parse error: ${errorMessage}`,
 				});
 				trackedPaths.delete(docPath);
@@ -324,8 +369,8 @@ export class SyncService {
 			for (const deletedPath of trackedPaths) {
 				changes.push({
 					path: deletedPath,
-					changeType: 'deleted',
-					reason: 'File no longer exists',
+					changeType: "deleted",
+					reason: "File no longer exists",
 				});
 			}
 		}
@@ -341,7 +386,11 @@ export class SyncService {
 	 * @param options - Sync options
 	 * @param skipEntityCreation - Skip entity node creation (entities already synced)
 	 */
-	async syncDocument(doc: ParsedDocument, options: SyncOptions = {}, skipEntityCreation = false): Promise<boolean> {
+	async syncDocument(
+		doc: ParsedDocument,
+		options: SyncOptions = {},
+		skipEntityCreation = false,
+	): Promise<boolean> {
 		// First, remove any existing relationships for this document
 		// This ensures clean update on changes
 		await this.graph.deleteDocumentRelationships(doc.path);
@@ -370,31 +419,41 @@ export class SyncService {
 			}
 		}
 
-		await this.graph.upsertNode('Document', documentProps);
+		await this.graph.upsertNode("Document", documentProps);
 
 		// Generate and store embedding if requested
 		let embeddingGenerated = false;
-		if (options.embeddings && !options.skipEmbeddings && this.embeddingService) {
+		if (
+			options.embeddings &&
+			!options.skipEmbeddings &&
+			this.embeddingService
+		) {
 			try {
 				// Compose rich embedding text from multiple fields
 				const textForEmbedding = this.composeEmbeddingText(doc);
 				if (textForEmbedding.trim()) {
-					const embedding = await this.embeddingService.generateEmbedding(textForEmbedding);
-					await this.graph.updateNodeEmbedding('Document', doc.path, embedding);
+					const embedding =
+						await this.embeddingService.generateEmbedding(textForEmbedding);
+					await this.graph.updateNodeEmbedding("Document", doc.path, embedding);
 					embeddingGenerated = true;
 					this.logger.debug(`Generated embedding for ${doc.path}`);
 				}
 			} catch (error) {
-				const errorMessage = error instanceof Error ? error.message : String(error);
-				this.logger.warn(`Failed to generate embedding for ${doc.path}: ${errorMessage}`);
+				const errorMessage =
+					error instanceof Error ? error.message : String(error);
+				this.logger.warn(
+					`Failed to generate embedding for ${doc.path}: ${errorMessage}`,
+				);
 			}
 		}
 
 		// Build entity type lookup for relationship resolution
 		const entityTypeMap = new Map<string, string>();
-		entityTypeMap.set(doc.path, 'Document'); // Document itself can be a relationship source
+		entityTypeMap.set(doc.path, "Document"); // Document itself can be a relationship source
 
-		this.logger.debug(`syncDocument: ${doc.path} has ${doc.entities.length} entities, skipEntityCreation=${skipEntityCreation}`);
+		this.logger.debug(
+			`syncDocument: ${doc.path} has ${doc.entities.length} entities, skipEntityCreation=${skipEntityCreation}`,
+		);
 
 		// Create entity nodes (skip if entities were pre-synced in entities-first flow)
 		for (const entity of doc.entities) {
@@ -412,12 +471,14 @@ export class SyncService {
 			}
 
 			// Create APPEARS_IN relationship from entity to document (always create)
-			this.logger.debug(`Creating APPEARS_IN: ${entity.type}:${entity.name} -> Document:${doc.path}`);
+			this.logger.debug(
+				`Creating APPEARS_IN: ${entity.type}:${entity.name} -> Document:${doc.path}`,
+			);
 			await this.graph.upsertRelationship(
 				entity.type,
 				entity.name,
-				'APPEARS_IN',
-				'Document',
+				"APPEARS_IN",
+				"Document",
 				doc.path,
 				{ documentPath: doc.path },
 			);
@@ -426,17 +487,17 @@ export class SyncService {
 		// Create user-defined relationships
 		for (const rel of doc.relationships) {
 			// Handle special case: source is "this" (refers to the document itself)
-			if (rel.source === 'this') {
+			if (rel.source === "this") {
 				const targetType = entityTypeMap.get(rel.target);
 				if (!targetType) {
 					this.logger.warn(
-						`Unknown target entity "${rel.target}" in relationship, document: ${doc.path}`
+						`Unknown target entity "${rel.target}" in relationship, document: ${doc.path}`,
 					);
 					continue;
 				}
 				// Create Document → Entity relationship
 				await this.graph.upsertRelationship(
-					'Document',
+					"Document",
 					doc.path,
 					rel.relation,
 					targetType,
@@ -447,11 +508,11 @@ export class SyncService {
 			}
 
 			// Handle special case: target is a document path (ends with .md)
-			if (rel.target.endsWith('.md')) {
+			if (rel.target.endsWith(".md")) {
 				const sourceType = entityTypeMap.get(rel.source);
 				if (!sourceType) {
 					this.logger.warn(
-						`Unknown source entity "${rel.source}" in relationship, document: ${doc.path}`
+						`Unknown source entity "${rel.source}" in relationship, document: ${doc.path}`,
 					);
 					continue;
 				}
@@ -460,7 +521,7 @@ export class SyncService {
 					sourceType,
 					rel.source,
 					rel.relation,
-					'Document',
+					"Document",
 					rel.target,
 					{ documentPath: doc.path },
 				);
@@ -473,14 +534,14 @@ export class SyncService {
 
 			if (!sourceType) {
 				this.logger.warn(
-					`Unknown source entity "${rel.source}" in relationship, document: ${doc.path}`
+					`Unknown source entity "${rel.source}" in relationship, document: ${doc.path}`,
 				);
 				continue;
 			}
 
 			if (!targetType) {
 				this.logger.warn(
-					`Unknown target entity "${rel.target}" in relationship, document: ${doc.path}`
+					`Unknown target entity "${rel.target}" in relationship, document: ${doc.path}`,
 				);
 				continue;
 			}
@@ -506,7 +567,7 @@ export class SyncService {
 		await this.graph.deleteDocumentRelationships(path);
 
 		// Then remove the Document node
-		await this.graph.deleteNode('Document', path);
+		await this.graph.deleteNode("Document", path);
 
 		// Note: We don't remove entity nodes as they may be referenced by other documents
 	}
@@ -536,36 +597,45 @@ export class SyncService {
 		}
 
 		switch (change.changeType) {
-			case 'new':
-			case 'updated': {
+			case "new":
+			case "updated": {
 				// Use preloaded doc if available (entities-first flow), otherwise parse
-				const doc = preloadedDoc || await this.parser.parseDocument(change.path);
+				const doc =
+					preloadedDoc || (await this.parser.parseDocument(change.path));
 
 				// For UPDATED documents, analyze cascade impact
-				if (change.changeType === 'updated' && !options.skipCascade) {
+				if (change.changeType === "updated" && !options.skipCascade) {
 					try {
 						const oldDoc = await this.getOldDocumentFromManifest(change.path);
 						if (oldDoc) {
-							const cascadeAnalyses = await this.cascade.analyzeDocumentChange(oldDoc, doc);
+							const cascadeAnalyses = await this.cascade.analyzeDocumentChange(
+								oldDoc,
+								doc,
+							);
 							if (cascadeAnalyses.length > 0) {
 								cascadeWarnings.push(...cascadeAnalyses);
-								cascadeAnalyses.forEach(cascade => {
+								cascadeAnalyses.forEach((cascade) => {
 									this.logger.debug(
-										`Cascade detected: ${cascade.trigger} in ${cascade.sourceDocument}`
+										`Cascade detected: ${cascade.trigger} in ${cascade.sourceDocument}`,
 									);
 								});
 							}
 						}
 					} catch (error) {
-						const errorMessage = error instanceof Error ? error.message : String(error);
+						const errorMessage =
+							error instanceof Error ? error.message : String(error);
 						this.logger.warn(
-							`Failed to analyze cascade impacts for ${change.path}: ${errorMessage}`
+							`Failed to analyze cascade impacts for ${change.path}: ${errorMessage}`,
 						);
 					}
 				}
 
 				// Sync document with skipEntityCreation since entities were pre-synced
-				const embeddingGenerated = await this.syncDocument(doc, options, preloadedDoc !== undefined);
+				const embeddingGenerated = await this.syncDocument(
+					doc,
+					options,
+					preloadedDoc !== undefined,
+				);
 				// Track if embedding was generated for result counting
 				(change as any).embeddingGenerated = embeddingGenerated;
 
@@ -580,14 +650,14 @@ export class SyncService {
 				break;
 			}
 
-			case 'deleted': {
+			case "deleted": {
 				// Remove from graph and manifest
 				await this.removeDocument(change.path);
 				this.manifest.removeEntry(change.path);
 				break;
 			}
 
-			case 'unchanged':
+			case "unchanged":
 				// Nothing to do
 				break;
 		}
@@ -599,8 +669,8 @@ export class SyncService {
 	 * Clear the entire graph (for force mode)
 	 */
 	private async clearGraph(): Promise<void> {
-		await this.graph.query('MATCH (n) DETACH DELETE n');
-		this.logger.log('Graph cleared');
+		await this.graph.query("MATCH (n) DETACH DELETE n");
+		this.logger.log("Graph cleared");
 	}
 
 	/**
@@ -614,7 +684,7 @@ export class SyncService {
 		for (const path of Object.keys(manifest.documents)) {
 			this.manifest.removeEntry(path);
 		}
-		this.logger.log('Manifest cleared');
+		this.logger.log("Manifest cleared");
 	}
 
 	/**
@@ -651,11 +721,11 @@ export class SyncService {
 		}
 
 		if (doc.tags && doc.tags.length > 0) {
-			parts.push(`Tags: ${doc.tags.join(', ')}`);
+			parts.push(`Tags: ${doc.tags.join(", ")}`);
 		}
 
 		if (doc.entities && doc.entities.length > 0) {
-			const entityNames = doc.entities.map(e => e.name).join(', ');
+			const entityNames = doc.entities.map((e) => e.name).join(", ");
 			parts.push(`Entities: ${entityNames}`);
 		}
 
@@ -665,7 +735,7 @@ export class SyncService {
 			parts.push(doc.content.slice(0, 500));
 		}
 
-		return parts.join(' | ');
+		return parts.join(" | ");
 	}
 
 	/**
@@ -673,14 +743,14 @@ export class SyncService {
 	 */
 	private getChangeReason(changeType: ChangeType): string {
 		switch (changeType) {
-			case 'new':
-				return 'New document';
-			case 'updated':
-				return 'Content or frontmatter changed';
-			case 'deleted':
-				return 'File no longer exists';
-			case 'unchanged':
-				return 'No changes detected';
+			case "new":
+				return "New document";
+			case "updated":
+				return "Content or frontmatter changed";
+			case "deleted":
+				return "File no longer exists";
+			case "unchanged":
+				return "No changes detected";
 		}
 	}
 
@@ -688,7 +758,9 @@ export class SyncService {
 	 * Retrieve the old document from manifest cache for cascade analysis.
 	 * This constructs a ParsedDocument from the cached manifest entry.
 	 */
-	private async getOldDocumentFromManifest(path: string): Promise<ParsedDocument | null> {
+	private async getOldDocumentFromManifest(
+		path: string,
+	): Promise<ParsedDocument | null> {
 		try {
 			// Get the manifest (should already be loaded)
 			const manifest = await this.manifest.load();
@@ -707,7 +779,9 @@ export class SyncService {
 				return null;
 			}
 		} catch (error) {
-			this.logger.warn(`Failed to retrieve old document for ${path}: ${error instanceof Error ? error.message : String(error)}`);
+			this.logger.warn(
+				`Failed to retrieve old document for ${path}: ${error instanceof Error ? error.message : String(error)}`,
+			);
 			return null;
 		}
 	}
@@ -717,7 +791,9 @@ export class SyncService {
 	 * Key: "type:name" for deduplication
 	 * When same entity appears in multiple docs, keep the longest description.
 	 */
-	private collectUniqueEntities(docs: ParsedDocument[]): Map<string, UniqueEntity> {
+	private collectUniqueEntities(
+		docs: ParsedDocument[],
+	): Map<string, UniqueEntity> {
 		const entities = new Map<string, UniqueEntity>();
 
 		for (const doc of docs) {
@@ -734,7 +810,11 @@ export class SyncService {
 					// Merge: keep longest description, track all doc paths
 					const existing = entities.get(key)!;
 					existing.documentPaths.push(doc.path);
-					if (entity.description && (!existing.description || entity.description.length > existing.description.length)) {
+					if (
+						entity.description &&
+						(!existing.description ||
+							entity.description.length > existing.description.length)
+					) {
 						existing.description = entity.description;
 					}
 				}
@@ -766,16 +846,29 @@ export class SyncService {
 			await this.graph.upsertNode(entity.type, entityProps);
 
 			// Generate embedding if enabled
-			if (options.embeddings && !options.skipEmbeddings && this.embeddingService) {
+			if (
+				options.embeddings &&
+				!options.skipEmbeddings &&
+				this.embeddingService
+			) {
 				try {
 					const text = this.composeEntityEmbeddingText(entity);
 					const embedding = await this.embeddingService.generateEmbedding(text);
-					await this.graph.updateNodeEmbedding(entity.type, entity.name, embedding);
+					await this.graph.updateNodeEmbedding(
+						entity.type,
+						entity.name,
+						embedding,
+					);
 					embeddingsGenerated++;
-					this.logger.debug(`Generated embedding for ${entity.type}:${entity.name}`);
+					this.logger.debug(
+						`Generated embedding for ${entity.type}:${entity.name}`,
+					);
 				} catch (error) {
-					const errorMessage = error instanceof Error ? error.message : String(error);
-					this.logger.warn(`Failed to generate embedding for ${entity.type}:${entity.name}: ${errorMessage}`);
+					const errorMessage =
+						error instanceof Error ? error.message : String(error);
+					this.logger.warn(
+						`Failed to generate embedding for ${entity.type}:${entity.name}: ${errorMessage}`,
+					);
 				}
 			}
 		}
@@ -792,7 +885,7 @@ export class SyncService {
 		if (entity.description) {
 			parts.push(entity.description);
 		}
-		return parts.join('. ');
+		return parts.join(". ");
 	}
 
 	/**
@@ -806,10 +899,12 @@ export class SyncService {
 
 		for (const entityType of ENTITY_TYPES) {
 			try {
-				await this.graph.createVectorIndex(entityType, 'embedding', dimensions);
+				await this.graph.createVectorIndex(entityType, "embedding", dimensions);
 			} catch (error) {
 				// Index creation failures are non-fatal (might already exist)
-				this.logger.debug(`Vector index setup for ${entityType}: ${error instanceof Error ? error.message : String(error)}`);
+				this.logger.debug(
+					`Vector index setup for ${entityType}: ${error instanceof Error ? error.message : String(error)}`,
+				);
 			}
 		}
 	}

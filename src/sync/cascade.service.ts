@@ -1,25 +1,28 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { GraphService } from '../graph/graph.service.js';
-import { DocumentParserService, ParsedDocument } from './document-parser.service.js';
+import { Injectable, Logger } from "@nestjs/common";
+import { GraphService } from "../graph/graph.service.js";
+import {
+	DocumentParserService,
+	ParsedDocument,
+} from "./document-parser.service.js";
 
 /**
  * Types of changes that can trigger cascade detection
  */
 export type CascadeTrigger =
-	| 'entity_renamed'
-	| 'entity_deleted'
-	| 'entity_type_changed'
-	| 'relationship_changed'
-	| 'document_deleted';
+	| "entity_renamed"
+	| "entity_deleted"
+	| "entity_type_changed"
+	| "relationship_changed"
+	| "document_deleted";
 
 /**
  * Suggested actions for affected documents
  */
 export type SuggestedAction =
-	| 'update_reference'
-	| 'remove_reference'
-	| 'review_content'
-	| 'add_entity';
+	| "update_reference"
+	| "remove_reference"
+	| "review_content"
+	| "add_entity";
 
 /**
  * Represents a change to an entity that might affect other documents
@@ -39,7 +42,7 @@ export interface AffectedDocument {
 	path: string;
 	reason: string;
 	suggestedAction: SuggestedAction;
-	confidence: 'high' | 'medium' | 'low';
+	confidence: "high" | "medium" | "low";
 	affectedEntities: string[];
 }
 
@@ -78,35 +81,41 @@ export class CascadeService {
 		let summary: string;
 
 		switch (change.trigger) {
-			case 'entity_renamed':
+			case "entity_renamed":
 				affectedDocuments = await this.findAffectedByRename(
 					change.entityName,
-					change.newValue || '',
+					change.newValue || "",
 				);
 				summary = `Entity "${change.oldValue}" was renamed to "${change.newValue}"`;
 				break;
 
-			case 'entity_deleted':
-				affectedDocuments = await this.findAffectedByDeletion(change.entityName);
+			case "entity_deleted":
+				affectedDocuments = await this.findAffectedByDeletion(
+					change.entityName,
+				);
 				summary = `Entity "${change.entityName}" was deleted`;
 				break;
 
-			case 'entity_type_changed':
+			case "entity_type_changed":
 				affectedDocuments = await this.findAffectedByTypeChange(
 					change.entityName,
-					change.oldValue || '',
-					change.newValue || '',
+					change.oldValue || "",
+					change.newValue || "",
 				);
 				summary = `Entity "${change.entityName}" type changed from "${change.oldValue}" to "${change.newValue}"`;
 				break;
 
-			case 'relationship_changed':
-				affectedDocuments = await this.findAffectedByRelationshipChange(change.entityName);
+			case "relationship_changed":
+				affectedDocuments = await this.findAffectedByRelationshipChange(
+					change.entityName,
+				);
 				summary = `Relationship involving "${change.entityName}" was changed`;
 				break;
 
-			case 'document_deleted':
-				affectedDocuments = await this.findAffectedByDocumentDeletion(change.documentPath);
+			case "document_deleted":
+				affectedDocuments = await this.findAffectedByDocumentDeletion(
+					change.documentPath,
+				);
 				summary = `Document "${change.documentPath}" was deleted`;
 				break;
 
@@ -116,7 +125,7 @@ export class CascadeService {
 
 		// Filter out the source document from affected documents
 		affectedDocuments = affectedDocuments.filter(
-			doc => doc.path !== change.documentPath
+			(doc) => doc.path !== change.documentPath,
 		);
 
 		return {
@@ -135,17 +144,22 @@ export class CascadeService {
 	 * - Find entities in new doc that don't exist in old doc (by name)
 	 * - Match removed/added pairs by type to infer renames
 	 */
-	detectEntityRenames(oldDoc: ParsedDocument, newDoc: ParsedDocument): EntityChange[] {
+	detectEntityRenames(
+		oldDoc: ParsedDocument,
+		newDoc: ParsedDocument,
+	): EntityChange[] {
 		const changes: EntityChange[] = [];
 
-		const oldNames = new Set(oldDoc.entities.map(e => e.name));
-		const newNames = new Set(newDoc.entities.map(e => e.name));
+		const oldNames = new Set(oldDoc.entities.map((e) => e.name));
+		const newNames = new Set(newDoc.entities.map((e) => e.name));
 
 		// Find removed entities (in old but not in new)
-		const removedEntities = oldDoc.entities.filter(e => !newNames.has(e.name));
+		const removedEntities = oldDoc.entities.filter(
+			(e) => !newNames.has(e.name),
+		);
 
 		// Find added entities (in new but not in old)
-		const addedEntities = newDoc.entities.filter(e => !oldNames.has(e.name));
+		const addedEntities = newDoc.entities.filter((e) => !oldNames.has(e.name));
 
 		// Group by type for matching
 		const removedByType = new Map<string, typeof removedEntities>();
@@ -170,7 +184,7 @@ export class CascadeService {
 			const pairCount = Math.min(removed.length, added.length);
 			for (let i = 0; i < pairCount; i++) {
 				changes.push({
-					trigger: 'entity_renamed',
+					trigger: "entity_renamed",
 					entityName: removed[i].name,
 					oldValue: removed[i].name,
 					newValue: added[i].name,
@@ -188,20 +202,23 @@ export class CascadeService {
 	 * An entity is considered deleted if it exists in the old doc
 	 * but not in the new doc, and cannot be matched to a rename.
 	 */
-	detectEntityDeletions(oldDoc: ParsedDocument, newDoc: ParsedDocument): EntityChange[] {
+	detectEntityDeletions(
+		oldDoc: ParsedDocument,
+		newDoc: ParsedDocument,
+	): EntityChange[] {
 		const changes: EntityChange[] = [];
 
-		const newNames = new Set(newDoc.entities.map(e => e.name));
+		const newNames = new Set(newDoc.entities.map((e) => e.name));
 
 		// Get renames to exclude from deletions
 		const renames = this.detectEntityRenames(oldDoc, newDoc);
-		const renamedNames = new Set(renames.map(r => r.oldValue));
+		const renamedNames = new Set(renames.map((r) => r.oldValue));
 
 		// Find entities that were truly deleted (not renamed)
 		for (const entity of oldDoc.entities) {
 			if (!newNames.has(entity.name) && !renamedNames.has(entity.name)) {
 				changes.push({
-					trigger: 'entity_deleted',
+					trigger: "entity_deleted",
 					entityName: entity.name,
 					documentPath: oldDoc.path,
 				});
@@ -214,11 +231,14 @@ export class CascadeService {
 	/**
 	 * Detect entities whose type changed between document versions.
 	 */
-	detectEntityTypeChanges(oldDoc: ParsedDocument, newDoc: ParsedDocument): EntityChange[] {
+	detectEntityTypeChanges(
+		oldDoc: ParsedDocument,
+		newDoc: ParsedDocument,
+	): EntityChange[] {
 		const changes: EntityChange[] = [];
 
 		// Build lookup map for new entities by name
-		const newEntityMap = new Map(newDoc.entities.map(e => [e.name, e]));
+		const newEntityMap = new Map(newDoc.entities.map((e) => [e.name, e]));
 
 		// Check each old entity
 		for (const oldEntity of oldDoc.entities) {
@@ -226,7 +246,7 @@ export class CascadeService {
 
 			if (newEntity && newEntity.type !== oldEntity.type) {
 				changes.push({
-					trigger: 'entity_type_changed',
+					trigger: "entity_type_changed",
 					entityName: oldEntity.name,
 					oldValue: oldEntity.type,
 					newValue: newEntity.type,
@@ -261,13 +281,13 @@ export class CascadeService {
 			return (result.resultSet || []).map((row) => ({
 				path: row[0] as string,
 				reason: `References "${entityName}" in entities`,
-				suggestedAction: 'update_reference' as SuggestedAction,
-				confidence: 'high' as const,
+				suggestedAction: "update_reference" as SuggestedAction,
+				confidence: "high" as const,
 				affectedEntities: [entityName],
 			}));
 		} catch (error) {
 			this.logger.warn(
-				`Failed to find documents affected by rename: ${error instanceof Error ? error.message : String(error)}`
+				`Failed to find documents affected by rename: ${error instanceof Error ? error.message : String(error)}`,
 			);
 			return [];
 		}
@@ -276,7 +296,9 @@ export class CascadeService {
 	/**
 	 * Find documents affected by an entity deletion.
 	 */
-	async findAffectedByDeletion(entityName: string): Promise<AffectedDocument[]> {
+	async findAffectedByDeletion(
+		entityName: string,
+	): Promise<AffectedDocument[]> {
 		try {
 			const escapedName = this.escapeForCypher(entityName);
 			const query = `
@@ -289,13 +311,13 @@ export class CascadeService {
 			return (result.resultSet || []).map((row) => ({
 				path: row[0] as string,
 				reason: `References deleted entity "${entityName}"`,
-				suggestedAction: 'review_content' as SuggestedAction,
-				confidence: 'high' as const,
+				suggestedAction: "review_content" as SuggestedAction,
+				confidence: "high" as const,
 				affectedEntities: [entityName],
 			}));
 		} catch (error) {
 			this.logger.warn(
-				`Failed to find documents affected by deletion: ${error instanceof Error ? error.message : String(error)}`
+				`Failed to find documents affected by deletion: ${error instanceof Error ? error.message : String(error)}`,
 			);
 			return [];
 		}
@@ -321,13 +343,13 @@ export class CascadeService {
 			return (result.resultSet || []).map((row) => ({
 				path: row[0] as string,
 				reason: `References "${entityName}" with type "${oldType}" (now "${newType}")`,
-				suggestedAction: 'review_content' as SuggestedAction,
-				confidence: 'medium' as const,
+				suggestedAction: "review_content" as SuggestedAction,
+				confidence: "medium" as const,
 				affectedEntities: [entityName],
 			}));
 		} catch (error) {
 			this.logger.warn(
-				`Failed to find documents affected by type change: ${error instanceof Error ? error.message : String(error)}`
+				`Failed to find documents affected by type change: ${error instanceof Error ? error.message : String(error)}`,
 			);
 			return [];
 		}
@@ -336,7 +358,9 @@ export class CascadeService {
 	/**
 	 * Find documents affected by a relationship change.
 	 */
-	async findAffectedByRelationshipChange(entityName: string): Promise<AffectedDocument[]> {
+	async findAffectedByRelationshipChange(
+		entityName: string,
+	): Promise<AffectedDocument[]> {
 		try {
 			const escapedName = this.escapeForCypher(entityName);
 			const query = `
@@ -349,13 +373,13 @@ export class CascadeService {
 			return (result.resultSet || []).map((row) => ({
 				path: row[0] as string,
 				reason: `Has relationship with "${entityName}"`,
-				suggestedAction: 'review_content' as SuggestedAction,
-				confidence: 'medium' as const,
+				suggestedAction: "review_content" as SuggestedAction,
+				confidence: "medium" as const,
 				affectedEntities: [entityName],
 			}));
 		} catch (error) {
 			this.logger.warn(
-				`Failed to find documents affected by relationship change: ${error instanceof Error ? error.message : String(error)}`
+				`Failed to find documents affected by relationship change: ${error instanceof Error ? error.message : String(error)}`,
 			);
 			return [];
 		}
@@ -365,7 +389,9 @@ export class CascadeService {
 	 * Find documents affected by a document deletion.
 	 * This finds documents that link to the deleted document.
 	 */
-	async findAffectedByDocumentDeletion(documentPath: string): Promise<AffectedDocument[]> {
+	async findAffectedByDocumentDeletion(
+		documentPath: string,
+	): Promise<AffectedDocument[]> {
 		try {
 			const escapedPath = this.escapeForCypher(documentPath);
 			const query = `
@@ -378,13 +404,13 @@ export class CascadeService {
 			return (result.resultSet || []).map((row) => ({
 				path: row[0] as string,
 				reason: `Links to deleted document "${documentPath}"`,
-				suggestedAction: 'remove_reference' as SuggestedAction,
-				confidence: 'high' as const,
+				suggestedAction: "remove_reference" as SuggestedAction,
+				confidence: "high" as const,
 				affectedEntities: [],
 			}));
 		} catch (error) {
 			this.logger.warn(
-				`Failed to find documents affected by document deletion: ${error instanceof Error ? error.message : String(error)}`
+				`Failed to find documents affected by document deletion: ${error instanceof Error ? error.message : String(error)}`,
 			);
 			return [];
 		}
@@ -442,54 +468,61 @@ export class CascadeService {
 	 */
 	formatWarnings(analyses: CascadeAnalysis[]): string {
 		if (analyses.length === 0) {
-			return '';
+			return "";
 		}
 
 		const lines: string[] = [];
-		lines.push('\n=== Cascade Impact Detected ===\n');
+		lines.push("\n=== Cascade Impact Detected ===\n");
 
 		for (const analysis of analyses) {
 			lines.push(analysis.summary);
 			lines.push(`  Source: ${analysis.sourceDocument}`);
-			lines.push('');
+			lines.push("");
 
 			if (analysis.affectedDocuments.length > 0) {
-				lines.push(`  Affected documents (${analysis.affectedDocuments.length}):`);
+				lines.push(
+					`  Affected documents (${analysis.affectedDocuments.length}):`,
+				);
 
 				for (const doc of analysis.affectedDocuments) {
 					lines.push(`    [${doc.confidence}] ${doc.path}`);
 					lines.push(`      ${doc.reason}`);
-					lines.push(`      -> Suggested: ${this.formatSuggestedAction(doc.suggestedAction, analysis)}`);
+					lines.push(
+						`      -> Suggested: ${this.formatSuggestedAction(doc.suggestedAction, analysis)}`,
+					);
 				}
 			}
-			lines.push('');
+			lines.push("");
 		}
 
-		return lines.join('\n');
+		return lines.join("\n");
 	}
 
 	/**
 	 * Format a suggested action for display.
 	 */
-	private formatSuggestedAction(action: SuggestedAction, analysis: CascadeAnalysis): string {
+	private formatSuggestedAction(
+		action: SuggestedAction,
+		analysis: CascadeAnalysis,
+	): string {
 		switch (action) {
-			case 'update_reference':
-				if (analysis.trigger === 'entity_renamed') {
+			case "update_reference":
+				if (analysis.trigger === "entity_renamed") {
 					// Extract new name from summary
 					const match = analysis.summary.match(/renamed to "([^"]+)"/);
-					const newName = match ? match[1] : 'new name';
+					const newName = match ? match[1] : "new name";
 					return `Update reference to "${newName}"`;
 				}
-				return 'Update reference';
+				return "Update reference";
 
-			case 'remove_reference':
-				return 'Remove broken reference';
+			case "remove_reference":
+				return "Remove broken reference";
 
-			case 'review_content':
-				return 'Review content for consistency';
+			case "review_content":
+				return "Review content for consistency";
 
-			case 'add_entity':
-				return 'Consider adding entity definition';
+			case "add_entity":
+				return "Consider adding entity definition";
 
 			default:
 				return action;
@@ -501,7 +534,7 @@ export class CascadeService {
 	 */
 	private escapeForCypher(value: string): string {
 		return value
-			.replace(/\\/g, '\\\\')
+			.replace(/\\/g, "\\\\")
 			.replace(/'/g, "\\'")
 			.replace(/"/g, '\\"');
 	}

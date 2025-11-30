@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach } from 'bun:test';
-import { OntologyService } from './ontology.service.js';
-import { ParsedDocument } from './document-parser.service.js';
+import { beforeEach, describe, expect, it } from "bun:test";
+import { ParsedDocument } from "./document-parser.service.js";
+import { OntologyService } from "./ontology.service.js";
 
-describe('OntologyService', () => {
+describe("OntologyService", () => {
 	let service: OntologyService;
 
 	// Mock DocumentParserService
@@ -14,8 +14,8 @@ describe('OntologyService', () => {
 		service = new OntologyService(mockParserService as any);
 	});
 
-	describe('deriveFromDocuments', () => {
-		it('should handle empty documents', () => {
+	describe("deriveFromDocuments", () => {
+		it("should handle empty documents", () => {
 			const docs: ParsedDocument[] = [];
 			const ontology = service.deriveFromDocuments(docs);
 
@@ -29,18 +29,18 @@ describe('OntologyService', () => {
 			expect(ontology.documentsWithoutEntities).toBe(0);
 		});
 
-		it('should derive entity types from documents', () => {
+		it("should derive entity types from documents", () => {
 			const docs: ParsedDocument[] = [
 				{
-					path: 'doc1.md',
-					title: 'Doc 1',
-					content: 'content',
-					contentHash: 'hash1',
-					frontmatterHash: 'hash2',
+					path: "doc1.md",
+					title: "Doc 1",
+					content: "content",
+					contentHash: "hash1",
+					frontmatterHash: "hash2",
 					entities: [
-						{ name: 'Entity1', type: 'Person' },
-						{ name: 'Entity2', type: 'Organization' },
-						{ name: 'Entity3', type: 'Person' },
+						{ name: "Entity1", type: "Person" },
+						{ name: "Entity2", type: "Organization" },
+						{ name: "Entity3", type: "Person" },
 					],
 					relationships: [],
 					tags: [],
@@ -49,26 +49,26 @@ describe('OntologyService', () => {
 
 			const ontology = service.deriveFromDocuments(docs);
 
-			expect(ontology.entityTypes).toEqual(['Organization', 'Person']);
+			expect(ontology.entityTypes).toEqual(["Organization", "Person"]);
 			expect(ontology.entityCounts).toEqual({ Person: 2, Organization: 1 });
 			expect(ontology.totalEntities).toBe(3);
 			expect(ontology.documentsWithEntities).toBe(1);
 			expect(ontology.documentsWithoutEntities).toBe(0);
 		});
 
-		it('should derive relationship types from documents', () => {
+		it("should derive relationship types from documents", () => {
 			const docs: ParsedDocument[] = [
 				{
-					path: 'doc1.md',
-					title: 'Doc 1',
-					content: 'content',
-					contentHash: 'hash1',
-					frontmatterHash: 'hash2',
+					path: "doc1.md",
+					title: "Doc 1",
+					content: "content",
+					contentHash: "hash1",
+					frontmatterHash: "hash2",
 					entities: [],
 					relationships: [
-						{ source: 'Entity1', target: 'Entity2', relation: 'WORKS_FOR' },
-						{ source: 'Entity2', target: 'Entity3', relation: 'OWNS' },
-						{ source: 'Entity1', target: 'Entity3', relation: 'WORKS_FOR' },
+						{ source: "Entity1", target: "Entity2", relation: "WORKS_FOR" },
+						{ source: "Entity2", target: "Entity3", relation: "OWNS" },
+						{ source: "Entity1", target: "Entity3", relation: "WORKS_FOR" },
 					],
 					tags: [],
 				},
@@ -76,30 +76,30 @@ describe('OntologyService', () => {
 
 			const ontology = service.deriveFromDocuments(docs);
 
-			expect(ontology.relationshipTypes).toEqual(['OWNS', 'WORKS_FOR']);
+			expect(ontology.relationshipTypes).toEqual(["OWNS", "WORKS_FOR"]);
 			expect(ontology.relationshipCounts).toEqual({ WORKS_FOR: 2, OWNS: 1 });
 			expect(ontology.totalRelationships).toBe(3);
 		});
 
-		it('should track entity examples and document references', () => {
+		it("should track entity examples and document references", () => {
 			const docs: ParsedDocument[] = [
 				{
-					path: 'doc1.md',
-					title: 'Doc 1',
-					content: 'content',
-					contentHash: 'hash1',
-					frontmatterHash: 'hash2',
-					entities: [{ name: 'Entity1', type: 'Person' }],
+					path: "doc1.md",
+					title: "Doc 1",
+					content: "content",
+					contentHash: "hash1",
+					frontmatterHash: "hash2",
+					entities: [{ name: "Entity1", type: "Person" }],
 					relationships: [],
 					tags: [],
 				},
 				{
-					path: 'doc2.md',
-					title: 'Doc 2',
-					content: 'content',
-					contentHash: 'hash3',
-					frontmatterHash: 'hash4',
-					entities: [{ name: 'Entity1', type: 'Person' }],
+					path: "doc2.md",
+					title: "Doc 2",
+					content: "content",
+					contentHash: "hash3",
+					frontmatterHash: "hash4",
+					entities: [{ name: "Entity1", type: "Person" }],
 					relationships: [],
 					tags: [],
 				},
@@ -107,39 +107,42 @@ describe('OntologyService', () => {
 
 			const ontology = service.deriveFromDocuments(docs);
 
-			expect(ontology.entityExamples['Entity1']).toBeDefined();
-			expect(ontology.entityExamples['Entity1'].type).toBe('Person');
-			expect(ontology.entityExamples['Entity1'].documents).toEqual(['doc1.md', 'doc2.md']);
+			expect(ontology.entityExamples["Entity1"]).toBeDefined();
+			expect(ontology.entityExamples["Entity1"].type).toBe("Person");
+			expect(ontology.entityExamples["Entity1"].documents).toEqual([
+				"doc1.md",
+				"doc2.md",
+			]);
 		});
 
-		it('should count documents with and without entities', () => {
+		it("should count documents with and without entities", () => {
 			const docs: ParsedDocument[] = [
 				{
-					path: 'doc1.md',
-					title: 'Doc 1',
-					content: 'content',
-					contentHash: 'hash1',
-					frontmatterHash: 'hash2',
-					entities: [{ name: 'Entity1', type: 'Person' }],
+					path: "doc1.md",
+					title: "Doc 1",
+					content: "content",
+					contentHash: "hash1",
+					frontmatterHash: "hash2",
+					entities: [{ name: "Entity1", type: "Person" }],
 					relationships: [],
 					tags: [],
 				},
 				{
-					path: 'doc2.md',
-					title: 'Doc 2',
-					content: 'content',
-					contentHash: 'hash3',
-					frontmatterHash: 'hash4',
+					path: "doc2.md",
+					title: "Doc 2",
+					content: "content",
+					contentHash: "hash3",
+					frontmatterHash: "hash4",
 					entities: [],
 					relationships: [],
 					tags: [],
 				},
 				{
-					path: 'doc3.md',
-					title: 'Doc 3',
-					content: 'content',
-					contentHash: 'hash5',
-					frontmatterHash: 'hash6',
+					path: "doc3.md",
+					title: "Doc 3",
+					content: "content",
+					contentHash: "hash5",
+					frontmatterHash: "hash6",
 					entities: [],
 					relationships: [],
 					tags: [],
@@ -152,17 +155,17 @@ describe('OntologyService', () => {
 			expect(ontology.documentsWithoutEntities).toBe(2);
 		});
 
-		it('should handle duplicate entity names avoiding duplicate documents', () => {
+		it("should handle duplicate entity names avoiding duplicate documents", () => {
 			const docs: ParsedDocument[] = [
 				{
-					path: 'doc1.md',
-					title: 'Doc 1',
-					content: 'content',
-					contentHash: 'hash1',
-					frontmatterHash: 'hash2',
+					path: "doc1.md",
+					title: "Doc 1",
+					content: "content",
+					contentHash: "hash1",
+					frontmatterHash: "hash2",
 					entities: [
-						{ name: 'Entity1', type: 'Person' },
-						{ name: 'Entity1', type: 'Person' },
+						{ name: "Entity1", type: "Person" },
+						{ name: "Entity1", type: "Person" },
 					],
 					relationships: [],
 					tags: [],
@@ -171,8 +174,8 @@ describe('OntologyService', () => {
 
 			const ontology = service.deriveFromDocuments(docs);
 
-			expect(ontology.entityExamples['Entity1'].documents).toEqual(['doc1.md']);
-			expect(ontology.entityExamples['Entity1'].documents.length).toBe(1);
+			expect(ontology.entityExamples["Entity1"].documents).toEqual(["doc1.md"]);
+			expect(ontology.entityExamples["Entity1"].documents.length).toBe(1);
 		});
 	});
 });

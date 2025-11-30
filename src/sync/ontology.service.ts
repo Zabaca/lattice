@@ -1,5 +1,8 @@
-import { Injectable } from '@nestjs/common';
-import { DocumentParserService, ParsedDocument } from './document-parser.service.js';
+import { Injectable } from "@nestjs/common";
+import {
+	DocumentParserService,
+	ParsedDocument,
+} from "./document-parser.service.js";
 
 export interface DerivedOntology {
 	// Entity types in use
@@ -46,7 +49,10 @@ export class OntologyService {
 		const relationshipTypeSet = new Set<string>();
 		const entityCounts: Record<string, number> = {};
 		const relationshipCounts: Record<string, number> = {};
-		const entityExamples: Record<string, { type: string; documents: string[] }> = {};
+		const entityExamples: Record<
+			string,
+			{ type: string; documents: string[] }
+		> = {};
 
 		let documentsWithEntities = 0;
 		let documentsWithoutEntities = 0;
@@ -76,7 +82,8 @@ export class OntologyService {
 			// Process relationships
 			for (const rel of doc.relationships) {
 				relationshipTypeSet.add(rel.relation);
-				relationshipCounts[rel.relation] = (relationshipCounts[rel.relation] || 0) + 1;
+				relationshipCounts[rel.relation] =
+					(relationshipCounts[rel.relation] || 0) + 1;
 				totalRelationships++;
 			}
 		}
@@ -96,24 +103,24 @@ export class OntologyService {
 
 	// Print ontology summary
 	printSummary(ontology: DerivedOntology): void {
-		console.log('\nDerived Ontology Summary\n');
+		console.log("\nDerived Ontology Summary\n");
 		console.log(
 			`Documents: ${ontology.documentsWithEntities} with entities, ${ontology.documentsWithoutEntities} without`,
 		);
 		console.log(`Unique Entities: ${ontology.totalEntities}`);
 		console.log(`Total Relationships: ${ontology.totalRelationships}`);
 
-		console.log('\nEntity Types:');
+		console.log("\nEntity Types:");
 		for (const type of ontology.entityTypes) {
 			console.log(`  ${type}: ${ontology.entityCounts[type]} instances`);
 		}
 
-		console.log('\nRelationship Types:');
+		console.log("\nRelationship Types:");
 		for (const type of ontology.relationshipTypes) {
 			console.log(`  ${type}: ${ontology.relationshipCounts[type]} instances`);
 		}
 
-		console.log('\nTop Entities (by document count):');
+		console.log("\nTop Entities (by document count):");
 		const sorted = Object.entries(ontology.entityExamples)
 			.sort((a, b) => b[1].documents.length - a[1].documents.length)
 			.slice(0, 10);

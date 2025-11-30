@@ -7,21 +7,21 @@
  * - Research document validation
  */
 
-import { z } from 'zod';
-import matter from 'gray-matter';
+import matter from "gray-matter";
+import { z } from "zod";
 
 /**
  * Entity type enum
  */
 export const EntityTypeSchema = z.enum([
-  'Topic',
-  'Technology',
-  'Concept',
-  'Tool',
-  'Process',
-  'Person',
-  'Organization',
-  'Document',
+	"Topic",
+	"Technology",
+	"Concept",
+	"Tool",
+	"Process",
+	"Person",
+	"Organization",
+	"Document",
 ]);
 export type EntityType = z.infer<typeof EntityTypeSchema>;
 
@@ -30,18 +30,16 @@ export type EntityType = z.infer<typeof EntityTypeSchema>;
  * Simplified ontology: only REFERENCES is user-declarable
  * APPEARS_IN is auto-generated when entities appear in documents
  */
-export const RelationTypeSchema = z.enum([
-  'REFERENCES',
-]);
+export const RelationTypeSchema = z.enum(["REFERENCES"]);
 export type RelationType = z.infer<typeof RelationTypeSchema>;
 
 /**
  * Entity definition
  */
 export const EntitySchema = z.object({
-  name: z.string().min(1),
-  type: EntityTypeSchema,
-  description: z.string().optional(),
+	name: z.string().min(1),
+	type: EntityTypeSchema,
+	description: z.string().optional(),
 });
 export type Entity = z.infer<typeof EntitySchema>;
 
@@ -49,9 +47,9 @@ export type Entity = z.infer<typeof EntitySchema>;
  * Relationship definition
  */
 export const RelationshipSchema = z.object({
-  source: z.string().min(1), // Entity name or 'this' for current doc
-  relation: RelationTypeSchema,
-  target: z.string().min(1), // Entity name or relative path
+	source: z.string().min(1), // Entity name or 'this' for current doc
+	relation: RelationTypeSchema,
+	target: z.string().min(1), // Entity name or relative path
 });
 export type Relationship = z.infer<typeof RelationshipSchema>;
 
@@ -59,8 +57,8 @@ export type Relationship = z.infer<typeof RelationshipSchema>;
  * Graph metadata
  */
 export const GraphMetadataSchema = z.object({
-  importance: z.enum(['high', 'medium', 'low']).optional(),
-  domain: z.string().optional(),
+	importance: z.enum(["high", "medium", "low"]).optional(),
+	domain: z.string().optional(),
 });
 export type GraphMetadata = z.infer<typeof GraphMetadataSchema>;
 
@@ -68,27 +66,27 @@ export type GraphMetadata = z.infer<typeof GraphMetadataSchema>;
  * Validate date string is in valid YYYY-MM-DD format and represents a real date
  */
 const validateDateFormat = (dateStr: string) => {
-  const match = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!match) return false;
+	const match = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+	if (!match) return false;
 
-  const [, yearStr, monthStr, dayStr] = match;
-  const year = parseInt(yearStr, 10);
-  const month = parseInt(monthStr, 10);
-  const day = parseInt(dayStr, 10);
+	const [, yearStr, monthStr, dayStr] = match;
+	const year = parseInt(yearStr, 10);
+	const month = parseInt(monthStr, 10);
+	const day = parseInt(dayStr, 10);
 
-  // Basic validation: month 1-12, day 1-31
-  if (month < 1 || month > 12) return false;
-  if (day < 1 || day > 31) return false;
+	// Basic validation: month 1-12, day 1-31
+	if (month < 1 || month > 12) return false;
+	if (day < 1 || day > 31) return false;
 
-  // More precise validation for specific months
-  const daysInMonth = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+	// More precise validation for specific months
+	const daysInMonth = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
-  // Check for leap year
-  if ((year % 4 === 0 && year % 100 !== 0) || (year % 400 === 0)) {
-    daysInMonth[1] = 29;
-  }
+	// Check for leap year
+	if ((year % 4 === 0 && year % 100 !== 0) || year % 400 === 0) {
+		daysInMonth[1] = 29;
+	}
 
-  return day <= daysInMonth[month - 1];
+	return day <= daysInMonth[month - 1];
 };
 
 /**
@@ -109,19 +107,23 @@ const validateDateFormat = (dateStr: string) => {
  *
  * Custom fields: Any additional fields are preserved through .passthrough()
  */
-export const FrontmatterSchema = z.object({
-  created: z.string()
-    .refine(validateDateFormat, 'Date must be in YYYY-MM-DD format'),
-  updated: z.string()
-    .refine(validateDateFormat, 'Date must be in YYYY-MM-DD format'),
-  status: z.enum(['draft', 'ongoing', 'complete']).optional(),
-  topic: z.string().optional(),
-  tags: z.array(z.string()).optional(),
-  summary: z.string().optional(),
-  entities: z.array(EntitySchema).optional(),
-  relationships: z.array(RelationshipSchema).optional(),
-  graph: GraphMetadataSchema.optional(),
-}).passthrough();
+export const FrontmatterSchema = z
+	.object({
+		created: z
+			.string()
+			.refine(validateDateFormat, "Date must be in YYYY-MM-DD format"),
+		updated: z
+			.string()
+			.refine(validateDateFormat, "Date must be in YYYY-MM-DD format"),
+		status: z.enum(["draft", "ongoing", "complete"]).optional(),
+		topic: z.string().optional(),
+		tags: z.array(z.string()).optional(),
+		summary: z.string().optional(),
+		entities: z.array(EntitySchema).optional(),
+		relationships: z.array(RelationshipSchema).optional(),
+		graph: GraphMetadataSchema.optional(),
+	})
+	.passthrough();
 
 /**
  * Inferred TypeScript type from FrontmatterSchema
@@ -131,13 +133,13 @@ export const FrontmatterSchema = z.object({
  * - Any additional custom fields via index signature
  */
 export type FrontmatterData = z.infer<typeof FrontmatterSchema> & {
-  [key: string]: any;
+	[key: string]: any;
 };
 
 export interface ParsedDocument {
-  frontmatter: FrontmatterData | null;
-  content: string;
-  raw: string;
+	frontmatter: FrontmatterData | null;
+	content: string;
+	raw: string;
 }
 
 /**
@@ -170,40 +172,42 @@ export interface ParsedDocument {
  * ```
  */
 export function parseFrontmatter(content: string): ParsedDocument {
-  try {
-    // Parse frontmatter using gray-matter
-    // Note: gray-matter uses js-yaml which auto-converts YYYY-MM-DD to Date objects
-    // We convert them back to strings to maintain backward compatibility
-    const { data, content: markdown } = matter(content);
+	try {
+		// Parse frontmatter using gray-matter
+		// Note: gray-matter uses js-yaml which auto-converts YYYY-MM-DD to Date objects
+		// We convert them back to strings to maintain backward compatibility
+		const { data, content: markdown } = matter(content);
 
-    // If no frontmatter was found, gray-matter returns empty object
-    if (Object.keys(data).length === 0) {
-      return {
-        frontmatter: null,
-        content: markdown.trim(),
-        raw: content,
-      };
-    }
+		// If no frontmatter was found, gray-matter returns empty object
+		if (Object.keys(data).length === 0) {
+			return {
+				frontmatter: null,
+				content: markdown.trim(),
+				raw: content,
+			};
+		}
 
-    // Convert Date objects back to YYYY-MM-DD strings for backward compatibility
-    const normalizedData = normalizeData(data);
+		// Convert Date objects back to YYYY-MM-DD strings for backward compatibility
+		const normalizedData = normalizeData(data);
 
-    // Validate with Zod schema (preserves custom fields via .passthrough())
-    const validated = FrontmatterSchema.safeParse(normalizedData);
+		// Validate with Zod schema (preserves custom fields via .passthrough())
+		const validated = FrontmatterSchema.safeParse(normalizedData);
 
-    // Return parsed data regardless of validation
-    // Validation errors can be checked separately using validateFrontmatter()
-    return {
-      frontmatter: validated.success ? validated.data : (normalizedData as FrontmatterData),
-      content: markdown.trim(),
-      raw: content,
-    };
-  } catch (error) {
-    // Re-throw YAML parsing errors - these should not be silent failures
-    // Callers need to know about malformed frontmatter to fix it
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    throw new Error(`YAML parsing error: ${errorMessage}`);
-  }
+		// Return parsed data regardless of validation
+		// Validation errors can be checked separately using validateFrontmatter()
+		return {
+			frontmatter: validated.success
+				? validated.data
+				: (normalizedData as FrontmatterData),
+			content: markdown.trim(),
+			raw: content,
+		};
+	} catch (error) {
+		// Re-throw YAML parsing errors - these should not be silent failures
+		// Callers need to know about malformed frontmatter to fix it
+		const errorMessage = error instanceof Error ? error.message : String(error);
+		throw new Error(`YAML parsing error: ${errorMessage}`);
+	}
 }
 
 /**
@@ -211,23 +215,23 @@ export function parseFrontmatter(content: string): ParsedDocument {
  * Converts Date objects back to YYYY-MM-DD strings for backward compatibility
  */
 function normalizeData(data: any): any {
-  if (data instanceof Date) {
-    return data.toISOString().split('T')[0];
-  }
+	if (data instanceof Date) {
+		return data.toISOString().split("T")[0];
+	}
 
-  if (Array.isArray(data)) {
-    return data.map(normalizeData);
-  }
+	if (Array.isArray(data)) {
+		return data.map(normalizeData);
+	}
 
-  if (data !== null && typeof data === 'object') {
-    const normalized: any = {};
-    for (const [key, value] of Object.entries(data)) {
-      normalized[key] = normalizeData(value);
-    }
-    return normalized;
-  }
+	if (data !== null && typeof data === "object") {
+		const normalized: any = {};
+		for (const [key, value] of Object.entries(data)) {
+			normalized[key] = normalizeData(value);
+		}
+		return normalized;
+	}
 
-  return data;
+	return data;
 }
 
 /**
@@ -252,32 +256,33 @@ function normalizeData(data: any): any {
  * ```
  */
 export function validateFrontmatter(frontmatter: FrontmatterData | null): {
-  valid: boolean;
-  errors: string[];
+	valid: boolean;
+	errors: string[];
 } {
-  const errors: string[] = [];
+	const errors: string[] = [];
 
-  if (!frontmatter) {
-    errors.push('No frontmatter found');
-    return { valid: false, errors };
-  }
+	if (!frontmatter) {
+		errors.push("No frontmatter found");
+		return { valid: false, errors };
+	}
 
-  // Use Zod schema for validation
-  const result = FrontmatterSchema.safeParse(frontmatter);
+	// Use Zod schema for validation
+	const result = FrontmatterSchema.safeParse(frontmatter);
 
-  if (!result.success) {
-    // Extract Zod validation errors and format with field path
-    result.error.errors.forEach((err) => {
-      const field = err.path.length > 0 ? err.path.join('.') : 'value';
-      const fieldLabel = field || 'value';
-      errors.push(`${fieldLabel}: ${err.message}`);
-    });
-  }
+	if (!result.success) {
+		// Extract Zod validation errors and format with field path
+		// Note: Zod v4 changed .errors to .issues
+		result.error.issues.forEach((err) => {
+			const field = err.path.length > 0 ? err.path.join(".") : "value";
+			const fieldLabel = field || "value";
+			errors.push(`${fieldLabel}: ${err.message}`);
+		});
+	}
 
-  return {
-    valid: errors.length === 0,
-    errors,
-  };
+	return {
+		valid: errors.length === 0,
+		errors,
+	};
 }
 
 /**
@@ -292,46 +297,55 @@ export function validateFrontmatter(frontmatter: FrontmatterData | null): {
  * @returns true if the value should be quoted
  */
 function needsQuoting(value: any): boolean {
-  // Null and booleans don't need quoting
-  if (value === null || typeof value === 'boolean') {
-    return false;
-  }
+	// Null and booleans don't need quoting
+	if (value === null || typeof value === "boolean") {
+		return false;
+	}
 
-  // Non-string primitives don't need quoting
-  if (typeof value !== 'string' && !Array.isArray(value)) {
-    return false;
-  }
+	// Non-string primitives don't need quoting
+	if (typeof value !== "string" && !Array.isArray(value)) {
+		return false;
+	}
 
-  // Arrays are handled separately
-  if (Array.isArray(value)) {
-    return false;
-  }
+	// Arrays are handled separately
+	if (Array.isArray(value)) {
+		return false;
+	}
 
-  const str = String(value);
+	const str = String(value);
 
-  // Empty strings need quoting
-  if (str === '') {
-    return true;
-  }
+	// Empty strings need quoting
+	if (str === "") {
+		return true;
+	}
 
-  // Strings with leading/trailing whitespace need quoting
-  if (str !== str.trim()) {
-    return true;
-  }
+	// Strings with leading/trailing whitespace need quoting
+	if (str !== str.trim()) {
+		return true;
+	}
 
-  // Strings containing special YAML characters need quoting
-  // This includes: colons, hashes, brackets, braces, etc.
-  if (/[:#\[\]{}!&*,|>'"?%@`\\]|^-|:\s/.test(str)) {
-    return true;
-  }
+	// Strings containing special YAML characters need quoting
+	// This includes: colons, hashes, brackets, braces, etc.
+	if (/[:#[\]{}!&*,|>'"?%@`\\]|^-|:\s/.test(str)) {
+		return true;
+	}
 
-  // YAML reserved words need quoting
-  const yamlReserved = ['null', 'true', 'false', 'yes', 'no', 'on', 'off', 'nil'];
-  if (yamlReserved.includes(str.toLowerCase())) {
-    return true;
-  }
+	// YAML reserved words need quoting
+	const yamlReserved = [
+		"null",
+		"true",
+		"false",
+		"yes",
+		"no",
+		"on",
+		"off",
+		"nil",
+	];
+	if (yamlReserved.includes(str.toLowerCase())) {
+		return true;
+	}
 
-  return false;
+	return false;
 }
 
 /**
@@ -339,73 +353,77 @@ function needsQuoting(value: any): boolean {
  * Recursively handles objects and arrays of objects
  */
 function generateYamlValue(value: any, indent: number = 0): string {
-  const indentStr = ' '.repeat(indent);
+	const indentStr = " ".repeat(indent);
 
-  if (value === null) {
-    return 'null';
-  }
+	if (value === null) {
+		return "null";
+	}
 
-  if (typeof value === 'boolean') {
-    return String(value);
-  }
+	if (typeof value === "boolean") {
+		return String(value);
+	}
 
-  if (typeof value === 'number') {
-    return String(value);
-  }
+	if (typeof value === "number") {
+		return String(value);
+	}
 
-  if (typeof value === 'string') {
-    if (needsQuoting(value)) {
-      return `"${value.replace(/"/g, '\\"')}"`;
-    }
-    return value;
-  }
+	if (typeof value === "string") {
+		if (needsQuoting(value)) {
+			return `"${value.replace(/"/g, '\\"')}"`;
+		}
+		return value;
+	}
 
-  if (Array.isArray(value)) {
-    // Check if array contains objects
-    if (value.length > 0 && typeof value[0] === 'object' && !Array.isArray(value[0])) {
-      // Format as YAML block array with objects
-      const items = value.map((item) => {
-        const objLines = [`${indentStr}  - `];
-        let first = true;
-        for (const [k, v] of Object.entries(item)) {
-          const yamlVal = generateYamlValue(v, indent + 4);
-          if (first) {
-            objLines[0] += `${k}: ${yamlVal}`;
-            first = false;
-          } else {
-            objLines.push(`${indentStr}    ${k}: ${yamlVal}`);
-          }
-        }
-        return objLines.join('\n');
-      });
-      return '\n' + items.join('\n');
-    } else {
-      // Format as inline array for primitives
-      const quotedItems = value.map((item) => {
-        if (typeof item === 'string' && needsQuoting(item)) {
-          return `"${item.replace(/"/g, '\\"')}"`;
-        }
-        return String(item);
-      });
-      return `[${quotedItems.join(', ')}]`;
-    }
-  }
+	if (Array.isArray(value)) {
+		// Check if array contains objects
+		if (
+			value.length > 0 &&
+			typeof value[0] === "object" &&
+			!Array.isArray(value[0])
+		) {
+			// Format as YAML block array with objects
+			const items = value.map((item) => {
+				const objLines = [`${indentStr}  - `];
+				let first = true;
+				for (const [k, v] of Object.entries(item)) {
+					const yamlVal = generateYamlValue(v, indent + 4);
+					if (first) {
+						objLines[0] += `${k}: ${yamlVal}`;
+						first = false;
+					} else {
+						objLines.push(`${indentStr}    ${k}: ${yamlVal}`);
+					}
+				}
+				return objLines.join("\n");
+			});
+			return "\n" + items.join("\n");
+		} else {
+			// Format as inline array for primitives
+			const quotedItems = value.map((item) => {
+				if (typeof item === "string" && needsQuoting(item)) {
+					return `"${item.replace(/"/g, '\\"')}"`;
+				}
+				return String(item);
+			});
+			return `[${quotedItems.join(", ")}]`;
+		}
+	}
 
-  if (typeof value === 'object') {
-    // Format as YAML block object
-    const objLines: string[] = [];
-    for (const [k, v] of Object.entries(value)) {
-      const yamlVal = generateYamlValue(v, indent + 2);
-      if (yamlVal.startsWith('\n')) {
-        objLines.push(`${indentStr}  ${k}:${yamlVal}`);
-      } else {
-        objLines.push(`${indentStr}  ${k}: ${yamlVal}`);
-      }
-    }
-    return '\n' + objLines.join('\n');
-  }
+	if (typeof value === "object") {
+		// Format as YAML block object
+		const objLines: string[] = [];
+		for (const [k, v] of Object.entries(value)) {
+			const yamlVal = generateYamlValue(v, indent + 2);
+			if (yamlVal.startsWith("\n")) {
+				objLines.push(`${indentStr}  ${k}:${yamlVal}`);
+			} else {
+				objLines.push(`${indentStr}  ${k}: ${yamlVal}`);
+			}
+		}
+		return "\n" + objLines.join("\n");
+	}
 
-  return String(value);
+	return String(value);
 }
 
 /**
@@ -419,25 +437,25 @@ function generateYamlValue(value: any, indent: number = 0): string {
  * @returns YAML frontmatter string compatible with gray-matter
  */
 export function generateFrontmatter(data: FrontmatterData): string {
-  const lines = ['---'];
+	const lines = ["---"];
 
-  for (const [key, value] of Object.entries(data)) {
-    const yamlVal = generateYamlValue(value);
-    if (yamlVal.startsWith('\n')) {
-      lines.push(`${key}:${yamlVal}`);
-    } else {
-      lines.push(`${key}: ${yamlVal}`);
-    }
-  }
+	for (const [key, value] of Object.entries(data)) {
+		const yamlVal = generateYamlValue(value);
+		if (yamlVal.startsWith("\n")) {
+			lines.push(`${key}:${yamlVal}`);
+		} else {
+			lines.push(`${key}: ${yamlVal}`);
+		}
+	}
 
-  lines.push('---');
-  return lines.join('\n');
+	lines.push("---");
+	return lines.join("\n");
 }
 
 /**
  * Get current date in YYYY-MM-DD format
  */
 export function getCurrentDate(): string {
-  const now = new Date();
-  return now.toISOString().split('T')[0];
+	const now = new Date();
+	return now.toISOString().split("T")[0];
 }

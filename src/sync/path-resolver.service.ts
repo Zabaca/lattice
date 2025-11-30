@@ -1,7 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { resolve, isAbsolute } from 'path';
-import { existsSync } from 'fs';
-import { DocumentParserService } from './document-parser.service.js';
+import { Injectable, Logger } from "@nestjs/common";
+import { existsSync } from "fs";
+import { isAbsolute, resolve } from "path";
+import { DocumentParserService } from "./document-parser.service.js";
 
 export interface PathResolutionOptions {
 	/** If true, throw error when path doesn't exist (default: true) */
@@ -45,7 +45,10 @@ export class PathResolverService {
 	 *
 	 * @throws Error if path cannot be resolved or doesn't meet requirements
 	 */
-	resolveDocPath(userPath: string, options: PathResolutionOptions = {}): string {
+	resolveDocPath(
+		userPath: string,
+		options: PathResolutionOptions = {},
+	): string {
 		const { requireExists = true, requireInDocs = true } = options;
 
 		let resolvedPath: string;
@@ -62,7 +65,7 @@ export class PathResolverService {
 
 			// Special case: if path starts with "docs/", strip it and resolve from docs/
 			// This handles "docs/agents/file.md" when CWD is not under docs/
-			const docsPrefix = 'docs/';
+			const docsPrefix = "docs/";
 			const strippedFromDocs = userPath.startsWith(docsPrefix)
 				? resolve(this.getDocsPath(), userPath.slice(docsPrefix.length))
 				: null;
@@ -92,14 +95,14 @@ export class PathResolverService {
 		// Validate path is under docs/ if required
 		if (requireInDocs && !this.isUnderDocs(resolvedPath)) {
 			throw new Error(
-				`Path "${userPath}" resolves to "${resolvedPath}" which is outside the docs directory (${this.getDocsPath()})`
+				`Path "${userPath}" resolves to "${resolvedPath}" which is outside the docs directory (${this.getDocsPath()})`,
 			);
 		}
 
 		// Validate path exists if required
 		if (requireExists && !existsSync(resolvedPath)) {
 			throw new Error(
-				`Path "${userPath}" does not exist (resolved to: ${resolvedPath})`
+				`Path "${userPath}" does not exist (resolved to: ${resolvedPath})`,
 			);
 		}
 
@@ -111,8 +114,11 @@ export class PathResolverService {
 	 *
 	 * @throws Error if any path cannot be resolved
 	 */
-	resolveDocPaths(userPaths: string[], options: PathResolutionOptions = {}): string[] {
-		return userPaths.map(p => this.resolveDocPath(p, options));
+	resolveDocPaths(
+		userPaths: string[],
+		options: PathResolutionOptions = {},
+	): string[] {
+		return userPaths.map((p) => this.resolveDocPath(p, options));
 	}
 
 	/**
@@ -121,9 +127,12 @@ export class PathResolverService {
 	isUnderDocs(absolutePath: string): boolean {
 		const docsPath = this.getDocsPath();
 		// Normalize paths for comparison (ensure trailing slash doesn't affect comparison)
-		const normalizedPath = absolutePath.replace(/\/$/, '');
-		const normalizedDocs = docsPath.replace(/\/$/, '');
-		return normalizedPath.startsWith(normalizedDocs + '/') || normalizedPath === normalizedDocs;
+		const normalizedPath = absolutePath.replace(/\/$/, "");
+		const normalizedDocs = docsPath.replace(/\/$/, "");
+		return (
+			normalizedPath.startsWith(normalizedDocs + "/") ||
+			normalizedPath === normalizedDocs
+		);
 	}
 
 	/**

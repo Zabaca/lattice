@@ -1,18 +1,19 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { glob } from 'glob';
-import { readFile } from 'fs/promises';
-import { createHash } from 'crypto';
-import { resolve } from 'path';
+import { Injectable, Logger } from "@nestjs/common";
+import { createHash } from "crypto";
+import { readFile } from "fs/promises";
+import { glob } from "glob";
+import { resolve } from "path";
+import { DocsConfigSchema } from "../schemas/config.schemas.js";
 import {
-	parseFrontmatter,
 	Entity,
-	Relationship,
-	GraphMetadata,
 	EntitySchema,
-	RelationshipSchema,
+	GraphMetadata,
 	GraphMetadataSchema,
+	parseFrontmatter,
+	Relationship,
+	RelationshipSchema,
 	RelationTypeSchema,
-} from '../utils/frontmatter.js';
+} from "../utils/frontmatter.js";
 
 export interface ParsedDocument {
 	path: string;
@@ -48,12 +49,17 @@ export class DocumentParserService {
 	private docsPath: string;
 
 	constructor() {
+		// Validate config with Zod schema
+		const config = DocsConfigSchema.parse({
+			projectRoot: process.env.PROJECT_ROOT,
+			docsPath: process.env.DOCS_PATH,
+		});
+
 		// Use DOCS_PATH if absolute, otherwise resolve relative to project root
-		const docsPathEnv = process.env.DOCS_PATH || 'docs';
-		if (docsPathEnv.startsWith('/')) {
-			this.docsPath = docsPathEnv;
+		if (config.docsPath.startsWith("/")) {
+			this.docsPath = config.docsPath;
 		} else {
-			this.docsPath = resolve(getProjectRoot(), docsPathEnv);
+			this.docsPath = resolve(config.projectRoot, config.docsPath);
 		}
 	}
 
@@ -70,7 +76,7 @@ export class DocumentParserService {
 	async discoverDocuments(): Promise<string[]> {
 		const pattern = `${this.docsPath}/**/*.md`;
 		const files = await glob(pattern, {
-			ignore: ['**/node_modules/**', '**/.git/**'],
+			ignore: ["**/node_modules/**", "**/.git/**"],
 		});
 		return files.sort();
 	}
@@ -79,7 +85,7 @@ export class DocumentParserService {
 	 * Parse a single document
 	 */
 	async parseDocument(filePath: string): Promise<ParsedDocument> {
-		const content = await readFile(filePath, 'utf-8');
+		const content = await readFile(filePath, "utf-8");
 		const parsed = parseFrontmatter(content);
 
 		// Extract title from first H1 or filename
@@ -87,13 +93,18 @@ export class DocumentParserService {
 
 		// Compute hashes
 		const contentHash = this.computeHash(content);
-		const frontmatterHash = this.computeHash(JSON.stringify(parsed.frontmatter || {}));
+		const frontmatterHash = this.computeHash(
+			JSON.stringify(parsed.frontmatter || {}),
+		);
 
 		// Extract entities with validation
 		const entities = this.extractEntities(parsed.frontmatter, filePath);
 
 		// Extract relationships with validation
-		const relationships = this.extractRelationships(parsed.frontmatter, filePath);
+		const relationships = this.extractRelationships(
+			parsed.frontmatter,
+			filePath,
+		);
 
 		// Extract graph metadata
 		const graphMetadata = this.extractGraphMetadata(parsed.frontmatter);
@@ -159,8 +170,8 @@ export class DocumentParserService {
 		}
 
 		// Fallback to filename
-		const parts = filePath.split('/');
-		return parts[parts.length - 1].replace('.md', '');
+		const parts = filePath.split("/");
+		return parts[parts.length - 1].replace(".md", "");
 	}
 
 	/**
@@ -181,13 +192,16 @@ export class DocumentParserService {
 			if (result.success) {
 				validEntities.push(result.data);
 			} else {
-				const entityPreview = typeof e === 'string' ? `"${e}"` : JSON.stringify(e);
-				errors.push(`Entity[${i}]: ${entityPreview} - Expected object with {name, type}, got ${typeof e}`);
+				const entityPreview =
+					typeof e === "string" ? `"${e}"` : JSON.stringify(e);
+				errors.push(
+					`Entity[${i}]: ${entityPreview} - Expected object with {name, type}, got ${typeof e}`,
+				);
 			}
 		}
 
 		if (errors.length > 0) {
-			const errorMsg = `Invalid entity schema in ${docPath}:\n  ${errors.join('\n  ')}`;
+			const errorMsg = `Invalid entity schema in ${docPath}:\n  ${errors.join("\n  ")}`;
 			throw new Error(errorMsg);
 		}
 
@@ -198,8 +212,14 @@ export class DocumentParserService {
 	 * Extract and validate relationships, resolving 'this' to document path
 	 * Throws error if relationships exist but have invalid schema
 	 */
-	private extractRelationships(frontmatter: any, docPath: string): Relationship[] {
-		if (!frontmatter?.relationships || !Array.isArray(frontmatter.relationships)) {
+	private extractRelationships(
+		frontmatter: any,
+		docPath: string,
+	): Relationship[] {
+		if (
+			!frontmatter?.relationships ||
+			!Array.isArray(frontmatter.relationships)
+		) {
 			return [];
 		}
 
@@ -214,27 +234,31 @@ export class DocumentParserService {
 			if (result.success) {
 				const rel = result.data;
 				// Replace 'this' with document path
-				if (rel.source === 'this') {
+				if (rel.source === "this") {
 					rel.source = docPath;
 				}
-				if (rel.target === 'this') {
+				if (rel.target === "this") {
 					rel.target = docPath;
 				}
 				validRelationships.push(rel);
 			} else {
-				if (typeof r === 'string') {
-					errors.push(`Relationship[${i}]: "${r}" - Expected object with {source, relation, target}, got string`);
-				} else if (typeof r === 'object' && r !== null) {
+				if (typeof r === "string") {
+					errors.push(
+						`Relationship[${i}]: "${r}" - Expected object with {source, relation, target}, got string`,
+					);
+				} else if (typeof r === "object" && r !== null) {
 					// Check what's specifically wrong
 					const issues: string[] = [];
-					if (!r.source) issues.push('missing source');
-					if (!r.target) issues.push('missing target');
+					if (!r.source) issues.push("missing source");
+					if (!r.target) issues.push("missing target");
 					if (!r.relation) {
-						issues.push('missing relation');
+						issues.push("missing relation");
 					} else if (!validRelationTypes.includes(r.relation)) {
-						issues.push(`invalid relation "${r.relation}" (allowed: ${validRelationTypes.join(', ')})`);
+						issues.push(
+							`invalid relation "${r.relation}" (allowed: ${validRelationTypes.join(", ")})`,
+						);
 					}
-					errors.push(`Relationship[${i}]: ${issues.join(', ')}`);
+					errors.push(`Relationship[${i}]: ${issues.join(", ")}`);
 				} else {
 					errors.push(`Relationship[${i}]: Expected object, got ${typeof r}`);
 				}
@@ -242,7 +266,7 @@ export class DocumentParserService {
 		}
 
 		if (errors.length > 0) {
-			const errorMsg = `Invalid relationship schema in ${docPath}:\n  ${errors.join('\n  ')}`;
+			const errorMsg = `Invalid relationship schema in ${docPath}:\n  ${errors.join("\n  ")}`;
 			throw new Error(errorMsg);
 		}
 
@@ -265,6 +289,6 @@ export class DocumentParserService {
 	 * Compute SHA256 hash
 	 */
 	private computeHash(content: string): string {
-		return createHash('sha256').update(content).digest('hex');
+		return createHash("sha256").update(content).digest("hex");
 	}
 }

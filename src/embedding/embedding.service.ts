@@ -1,8 +1,8 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import {
-	EmbeddingConfigSchema,
 	type EmbeddingConfig,
+	EmbeddingConfigSchema,
 } from "../schemas/config.schemas.js";
 import type { EmbeddingProvider } from "./embedding.types";
 import { DEFAULT_EMBEDDING_CONFIG } from "./embedding.types";

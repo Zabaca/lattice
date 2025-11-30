@@ -2,8 +2,8 @@ import { Injectable, Logger, OnModuleDestroy } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import Redis from "ioredis";
 import {
-	FalkorDBConfigSchema,
 	type FalkorDBConfig,
+	FalkorDBConfigSchema,
 } from "../schemas/config.schemas.js";
 import type { CypherResult } from "./graph.types.js";
 

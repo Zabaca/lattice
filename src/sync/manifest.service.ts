@@ -4,9 +4,9 @@ import { existsSync } from "fs";
 import { readFile, writeFile } from "fs/promises";
 import { resolve } from "path";
 import {
-	SyncManifestSchema,
 	type ManifestEntry,
 	type SyncManifest,
+	SyncManifestSchema,
 } from "../schemas/manifest.schemas.js";
 
 // Re-export types for backwards compatibility

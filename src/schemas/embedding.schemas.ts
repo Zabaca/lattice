@@ -18,4 +18,6 @@ export const VoyageEmbeddingResponseSchema = z.object({
 	}),
 });
 
-export type VoyageEmbeddingResponse = z.infer<typeof VoyageEmbeddingResponseSchema>;
+export type VoyageEmbeddingResponse = z.infer<
+	typeof VoyageEmbeddingResponseSchema
+>;

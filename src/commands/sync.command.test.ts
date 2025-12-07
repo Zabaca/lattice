@@ -277,5 +277,4 @@ describe("SyncCommand", () => {
 			expect(logs.join("\n")).toContain("Embedding generation disabled");
 		});
 	});
-
 });

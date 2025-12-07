@@ -34,4 +34,6 @@ tmp/
 temp/
 *.tmp
 
+temporal-bridge.yamlfalkordb-export.json
+.lattice.*
 temporal-bridge.yaml

@@ -11,8 +11,9 @@ import {
 
 // Increase timeout for tests that load DuckPGQ extension from remote
 setDefaultTimeout(15000);
-import { ConfigService } from "@nestjs/config";
+
 import { existsSync, unlinkSync } from "node:fs";
+import { ConfigService } from "@nestjs/config";
 import { GraphService } from "./graph.service.js";
 
 // Test with real DuckDB instance (embedded, no external deps)
@@ -33,35 +34,38 @@ class TestConfigService {
 	}
 }
 
+/**
+ * @fileoverview Integration tests for GraphService with DuckDB
+ *
+ * These tests use a real DuckDB instance. Connection is established ONCE
+ * in beforeAll to avoid slow extension loading on every test.
+ * Tables are truncated between tests for isolation.
+ */
 describe("GraphService (DuckDB)", () => {
 	let graphService: GraphService;
 
-	beforeAll(() => {
-		// Clean up any existing test database
+	beforeAll(async () => {
+		// Clean up any existing test database and connect ONCE
 		if (existsSync(TEST_DB_PATH)) {
 			unlinkSync(TEST_DB_PATH);
 		}
+		const configService = new TestConfigService();
+		graphService = new GraphService(configService as unknown as ConfigService);
+		await graphService.connect(); // Load extensions ONCE - this is slow
 	});
 
-	afterAll(() => {
-		// Clean up test database
+	afterAll(async () => {
+		// Disconnect and clean up
+		await graphService.disconnect();
 		if (existsSync(TEST_DB_PATH)) {
 			unlinkSync(TEST_DB_PATH);
 		}
 	});
 
 	beforeEach(async () => {
-		// Clean the db file for fresh state each test
-		if (existsSync(TEST_DB_PATH)) {
-			unlinkSync(TEST_DB_PATH);
-		}
-		const configService = new TestConfigService();
-		graphService = new GraphService(configService as unknown as ConfigService);
-		await graphService.connect();
-	});
-
-	afterEach(async () => {
-		await graphService.disconnect();
+		// Clear data between tests, keep connection
+		await graphService.query("DELETE FROM relationships");
+		await graphService.query("DELETE FROM nodes");
 	});
 
 	describe("Connection Management", () => {
@@ -99,8 +103,14 @@ describe("GraphService (DuckDB)", () => {
 			const nodes = await graphService.findNodesByLabel("Technology");
 			expect(nodes.length).toBe(1);
 			// Verify the version was updated
-			const node = nodes[0] as { name: string; properties: { version: string } };
-			expect(node.properties?.version || (node as unknown as { version: string }).version).toBe("5.0");
+			const node = nodes[0] as {
+				name: string;
+				properties: { version: string };
+			};
+			expect(
+				node.properties?.version ||
+					(node as unknown as { version: string }).version,
+			).toBe("5.0");
 		});
 
 		it("should throw error if node has no name property", async () => {
@@ -143,7 +153,10 @@ describe("GraphService (DuckDB)", () => {
 		beforeEach(async () => {
 			// Set up test data
 			await graphService.upsertNode("Tool", { name: "Git", type: "vcs" });
-			await graphService.upsertNode("Tool", { name: "Docker", type: "container" });
+			await graphService.upsertNode("Tool", {
+				name: "Docker",
+				type: "container",
+			});
 			await graphService.upsertNode("Tool", { name: "Vim", type: "editor" });
 		});
 
@@ -296,7 +309,11 @@ describe("GraphService (DuckDB)", () => {
 
 		beforeEach(async () => {
 			// Create vector index
-			await graphService.createVectorIndex("Document", "embedding", EMBEDDING_DIM);
+			await graphService.createVectorIndex(
+				"Document",
+				"embedding",
+				EMBEDDING_DIM,
+			);
 		});
 
 		it("should create vector index without error", async () => {
@@ -324,9 +341,18 @@ describe("GraphService (DuckDB)", () => {
 
 		it("should return nodes ordered by similarity", async () => {
 			// Create documents with different embeddings
-			await graphService.upsertNode("Document", { name: "doc1.md", title: "Doc 1" });
-			await graphService.upsertNode("Document", { name: "doc2.md", title: "Doc 2" });
-			await graphService.upsertNode("Document", { name: "doc3.md", title: "Doc 3" });
+			await graphService.upsertNode("Document", {
+				name: "doc1.md",
+				title: "Doc 1",
+			});
+			await graphService.upsertNode("Document", {
+				name: "doc2.md",
+				title: "Doc 2",
+			});
+			await graphService.upsertNode("Document", {
+				name: "doc3.md",
+				title: "Doc 3",
+			});
 
 			const embedding1 = createEmbedding(1);
 			const embedding2 = createEmbedding(2);
@@ -338,7 +364,11 @@ describe("GraphService (DuckDB)", () => {
 
 			// Query with embedding similar to doc1
 			const queryVector = createEmbedding(1);
-			const results = await graphService.vectorSearch("Document", queryVector, 3);
+			const results = await graphService.vectorSearch(
+				"Document",
+				queryVector,
+				3,
+			);
 
 			expect(results.length).toBe(3);
 			expect(results[0].name).toBe("doc1.md"); // Most similar
@@ -347,15 +377,36 @@ describe("GraphService (DuckDB)", () => {
 
 		it("should search across all entity types", async () => {
 			// Create various entity types with embeddings
-			await graphService.createVectorIndex("Technology", "embedding", EMBEDDING_DIM);
+			await graphService.createVectorIndex(
+				"Technology",
+				"embedding",
+				EMBEDDING_DIM,
+			);
 
-			await graphService.upsertNode("Document", { name: "doc.md", title: "Doc" });
-			await graphService.upsertNode("Technology", { name: "DuckDB", description: "Database" });
+			await graphService.upsertNode("Document", {
+				name: "doc.md",
+				title: "Doc",
+			});
+			await graphService.upsertNode("Technology", {
+				name: "DuckDB",
+				description: "Database",
+			});
 
-			await graphService.updateNodeEmbedding("Document", "doc.md", createEmbedding(1));
-			await graphService.updateNodeEmbedding("Technology", "DuckDB", createEmbedding(1.1));
+			await graphService.updateNodeEmbedding(
+				"Document",
+				"doc.md",
+				createEmbedding(1),
+			);
+			await graphService.updateNodeEmbedding(
+				"Technology",
+				"DuckDB",
+				createEmbedding(1.1),
+			);
 
-			const results = await graphService.vectorSearchAll(createEmbedding(1), 10);
+			const results = await graphService.vectorSearchAll(
+				createEmbedding(1),
+				10,
+			);
 
 			expect(results.length).toBeGreaterThanOrEqual(2);
 			// Results should include both labels

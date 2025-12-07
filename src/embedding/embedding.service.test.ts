@@ -28,9 +28,7 @@ describe("EmbeddingService", () => {
 		it("returns normalized embedding (magnitude ≈ 1)", async () => {
 			const embedding = await service.generateEmbedding("test text");
 
-			const magnitude = Math.sqrt(
-				embedding.reduce((sum, v) => sum + v * v, 0),
-			);
+			const magnitude = Math.sqrt(embedding.reduce((sum, v) => sum + v * v, 0));
 			expect(magnitude).toBeCloseTo(1.0, 5);
 		});
 

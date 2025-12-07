@@ -1,6 +1,6 @@
+import { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
 import { Injectable, Logger, OnModuleDestroy } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { DuckDBInstance, DuckDBConnection } from "@duckdb/node-api";
 import type { CypherResult } from "./graph.types.js";
 
 @Injectable()
@@ -107,7 +107,10 @@ export class GraphService implements OnModuleDestroy {
 	}
 
 	private async initializeSchema(): Promise<void> {
-		const conn = this.connection!;
+		if (!this.connection) {
+			throw new Error("Cannot initialize schema: not connected");
+		}
+		const conn = this.connection;
 
 		// Create nodes table with composite primary key
 		// Note: embedding uses fixed-size array for VSS compatibility
@@ -388,7 +391,9 @@ export class GraphService implements OnModuleDestroy {
 				`);
 			} catch {
 				// Index might already exist, that's okay
-				this.logger.debug(`Vector index on ${label}.${property} already exists`);
+				this.logger.debug(
+					`Vector index on ${label}.${property} already exists`,
+				);
 			}
 
 			this.vectorIndexes.add(indexKey);
@@ -460,7 +465,11 @@ export class GraphService implements OnModuleDestroy {
 			`);
 
 			return reader.getRows().map((row) => {
-				const [name, title, similarity] = row as [string, string | null, number];
+				const [name, title, similarity] = row as [
+					string,
+					string | null,
+					number,
+				];
 				return {
 					name,
 					title: title || undefined,
@@ -490,16 +499,6 @@ export class GraphService implements OnModuleDestroy {
 			score: number;
 		}>
 	> {
-		const allLabels = [
-			"Document",
-			"Concept",
-			"Process",
-			"Tool",
-			"Technology",
-			"Organization",
-			"Topic",
-			"Person",
-		];
 		const allResults: Array<{
 			name: string;
 			label: string;

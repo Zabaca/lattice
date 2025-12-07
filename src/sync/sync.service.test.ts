@@ -3,7 +3,9 @@ import type { ParsedDocument } from "./document-parser.service.js";
 import { SyncService } from "./sync.service.js";
 
 // Helper to create a valid ParsedDocument for tests
-const createDoc = (overrides: Partial<ParsedDocument> = {}): ParsedDocument => ({
+const createDoc = (
+	overrides: Partial<ParsedDocument> = {},
+): ParsedDocument => ({
 	path: "docs/test.md",
 	title: "Test Document",
 	content: "# Test",
@@ -15,13 +17,16 @@ const createDoc = (overrides: Partial<ParsedDocument> = {}): ParsedDocument => (
 	...overrides,
 });
 
+// biome-ignore lint/suspicious/noExplicitAny: Mock objects are intentionally loosely typed for flexibility
+type MockService = any;
+
 describe("SyncService", () => {
 	let service: SyncService;
-	let mockManifest: any;
-	let mockParser: any;
-	let mockGraph: any;
-	let mockCascade: any;
-	let mockPathResolver: any;
+	let mockManifest: MockService;
+	let mockParser: MockService;
+	let mockGraph: MockService;
+	let mockCascade: MockService;
+	let mockPathResolver: MockService;
 
 	beforeEach(() => {
 		mockManifest = {
@@ -89,7 +94,9 @@ describe("SyncService", () => {
 		});
 
 		it("returns deleted documents no longer on disk", async () => {
-			mockManifest.getTrackedPaths.mockImplementation(() => ["docs/deleted.md"]);
+			mockManifest.getTrackedPaths.mockImplementation(() => [
+				"docs/deleted.md",
+			]);
 
 			const changes = await service.detectChanges();
 
@@ -106,7 +113,9 @@ describe("SyncService", () => {
 				Promise.resolve(createDoc({ path: "docs/updated.md" })),
 			);
 			mockManifest.detectChange.mockImplementation(() => "updated");
-			mockManifest.getTrackedPaths.mockImplementation(() => ["docs/updated.md"]);
+			mockManifest.getTrackedPaths.mockImplementation(() => [
+				"docs/updated.md",
+			]);
 
 			const changes = await service.detectChanges();
 
@@ -150,7 +159,11 @@ describe("SyncService", () => {
 		it("creates entity nodes and APPEARS_IN relationships", async () => {
 			const doc = createDoc({
 				entities: [
-					{ name: "FalkorDB", type: "Technology", description: "Graph database" },
+					{
+						name: "FalkorDB",
+						type: "Technology",
+						description: "Graph database",
+					},
 					{ name: "NestJS", type: "Technology" },
 				],
 			});
@@ -159,7 +172,10 @@ describe("SyncService", () => {
 
 			expect(mockGraph.upsertNode).toHaveBeenCalledWith(
 				"Technology",
-				expect.objectContaining({ name: "FalkorDB", description: "Graph database" }),
+				expect.objectContaining({
+					name: "FalkorDB",
+					description: "Graph database",
+				}),
 			);
 			expect(mockGraph.upsertNode).toHaveBeenCalledWith(
 				"Technology",
@@ -238,7 +254,11 @@ describe("SyncService", () => {
 	describe("sync", () => {
 		it("returns correct counts for mixed changes", async () => {
 			mockParser.discoverDocuments.mockImplementation(() =>
-				Promise.resolve(["docs/new.md", "docs/updated.md", "docs/unchanged.md"]),
+				Promise.resolve([
+					"docs/new.md",
+					"docs/updated.md",
+					"docs/unchanged.md",
+				]),
 			);
 			mockParser.parseDocument.mockImplementation((path: string) =>
 				Promise.resolve(createDoc({ path })),
@@ -296,7 +316,9 @@ describe("SyncService", () => {
 
 			expect(result.errors.length).toBeGreaterThanOrEqual(1);
 			expect(result.errors.some((e) => e.path === "docs/bad.md")).toBe(true);
-			expect(result.errors.some((e) => e.error.includes("Parse error"))).toBe(true);
+			expect(result.errors.some((e) => e.error.includes("Parse error"))).toBe(
+				true,
+			);
 		});
 
 		it("returns duration in result", async () => {

@@ -31,3 +31,44 @@ Single file storage: `.lattice.duckdb` in your docs directory. Contains:
 - Uses SQL for queries (replaced Cypher)
 - VSS extension provides HNSW vector indexing
 - DuckPGQ extension available for property graph queries (optional)
+
+## Testing Philosophy
+
+### Unit Tests (fast, pure functions)
+- Test pure functions in isolation (no DB, no API calls)
+- File pattern: `*.test.ts` next to the source file
+- Examples: frontmatter parsing, hash computation, entity detection
+- Should run in milliseconds
+
+### Integration Tests (slow, real dependencies)
+- Test actual DuckDB/API integration
+- **Connect ONCE in beforeAll**, truncate tables in beforeEach
+- Keep minimal - only test what unit tests can't
+
+### When Writing Tests
+1. **Prefer unit tests** - if logic can be extracted to a pure function, do it
+2. **One integration test per boundary** - DB connection, API call
+3. **Never beforeEach reconnect** - use beforeAll + truncate for DB tests
+
+### Example: DuckDB Integration Test Pattern
+```typescript
+describe("GraphService (DuckDB)", () => {
+  let graphService: GraphService;
+
+  beforeAll(async () => {
+    // Connect ONCE - extension loading is slow
+    graphService = new GraphService(configService);
+    await graphService.connect();
+  });
+
+  afterAll(async () => {
+    await graphService.disconnect();
+  });
+
+  beforeEach(async () => {
+    // Clear data, keep connection
+    await graphService.query("DELETE FROM relationships");
+    await graphService.query("DELETE FROM nodes");
+  });
+});
+```

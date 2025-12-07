@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
 import type { EmbeddingService } from "../embedding/embedding.service.js";
 import type { GraphService } from "../graph/graph.service.js";
 import type { ConsoleSpy, ProcessExitSpy } from "../testing/mock-types.js";
@@ -24,11 +24,19 @@ describe("Query Commands", () => {
 		};
 
 		consoleLogSpy = spyOn(console, "log") as ConsoleSpy;
+		consoleLogSpy.mockClear();
 		_consoleErrorSpy = spyOn(console, "error") as ConsoleSpy;
+		_consoleErrorSpy.mockClear();
 		processExitSpy = spyOn(process, "exit") as unknown as ProcessExitSpy;
 		processExitSpy.mockImplementation(() => {
 			throw new Error("PROCESS_EXIT_CALLED");
 		});
+	});
+
+	afterEach(() => {
+		consoleLogSpy.mockRestore();
+		_consoleErrorSpy.mockRestore();
+		processExitSpy.mockRestore();
 	});
 
 	describe("SearchCommand", () => {
@@ -159,21 +167,22 @@ describe("Query Commands", () => {
 
 	describe("RelsCommand", () => {
 		it("should show relationships for a node", async () => {
+			// findRelationships returns [relType, otherNodeName] tuples
 			mockGraphService.findRelationships = mock(async () => [
 				["USES", "Redis"],
-				["DEPENDS_ON", "Node.js"],
+				["DEPENDS_ON", "TypeScript"],
 			]);
 
 			const command = new RelsCommand(mockGraphService as GraphService);
 
 			try {
-				await command.run(["DuckDB"]);
+				await command.run(["FalkorDB"]);
 			} catch (_e) {
 				// Expected - process.exit mock throws
 			}
 
 			const logs = consoleLogSpy.mock.calls.map((call) => call[0]);
-			expect(logs.join("\n")).toContain('Relationships for "DuckDB"');
+			expect(logs.join("\n")).toContain('Relationships for "FalkorDB"');
 		});
 
 		it("should show no relationships message when none found", async () => {

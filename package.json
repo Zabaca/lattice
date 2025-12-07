@@ -1,6 +1,6 @@
 {
 	"name": "@zabaca/lattice",
-	"version": "0.3.4",
+	"version": "1.0.0",
 	"description": "Human-initiated, AI-powered knowledge graph for markdown documentation",
 	"type": "module",
 	"bin": {

@@ -1,3 +1,4 @@
+import { existsSync, unlinkSync } from "node:fs";
 import { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
 import { Injectable, Logger, OnModuleDestroy } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
@@ -53,6 +54,17 @@ export class GraphService implements OnModuleDestroy {
 
 	async connect(): Promise<void> {
 		try {
+			// Remove WAL file if it exists - WAL replay fails with HNSW indexes
+			// because VSS extension can't be loaded before database opens.
+			// Checkpointing on disconnect minimizes data loss.
+			const walPath = `${this.dbPath}.wal`;
+			if (existsSync(walPath)) {
+				this.logger.warn(
+					`Removing WAL file to prevent HNSW index replay failure`,
+				);
+				unlinkSync(walPath);
+			}
+
 			// Allow unsigned extensions for DuckPGQ from custom repository
 			this.instance = await DuckDBInstance.create(this.dbPath, {
 				allow_unsigned_extensions: "true",
@@ -98,6 +110,14 @@ export class GraphService implements OnModuleDestroy {
 
 	async disconnect(): Promise<void> {
 		if (this.connection) {
+			// Checkpoint to flush WAL to main database file
+			// This prevents HNSW index replay issues on next startup
+			try {
+				await this.connection.run("CHECKPOINT;");
+			} catch {
+				// Checkpoint may fail if database is read-only or other issues
+				this.logger.debug("Checkpoint failed during disconnect");
+			}
 			this.connection.closeSync();
 			this.connection = null;
 			this.logger.log("Disconnected from DuckDB");

@@ -1,9 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
 import { Injectable, Logger } from "@nestjs/common";
 import { glob } from "glob";
-import { DocsConfigSchema } from "../schemas/config.schemas.js";
 import {
 	Entity,
 	EntitySchema,
@@ -14,6 +12,10 @@ import {
 	RelationshipSchema,
 	RelationTypeSchema,
 } from "../utils/frontmatter.js";
+import {
+	ensureLatticeHome,
+	getDocsPath as getLatticeDocsPath,
+} from "../utils/paths.js";
 
 export interface ParsedDocument {
 	path: string;
@@ -33,34 +35,14 @@ export interface ParsedDocument {
 	status?: string;
 }
 
-/**
- * Get the project root from environment or default
- */
-function _getProjectRoot(): string {
-	if (process.env.PROJECT_ROOT) {
-		return process.env.PROJECT_ROOT;
-	}
-	return process.cwd();
-}
-
 @Injectable()
 export class DocumentParserService {
 	private readonly logger = new Logger(DocumentParserService.name);
 	private docsPath: string;
 
 	constructor() {
-		// Validate config with Zod schema
-		const config = DocsConfigSchema.parse({
-			projectRoot: process.env.PROJECT_ROOT,
-			docsPath: process.env.DOCS_PATH,
-		});
-
-		// Use DOCS_PATH if absolute, otherwise resolve relative to project root
-		if (config.docsPath.startsWith("/")) {
-			this.docsPath = config.docsPath;
-		} else {
-			this.docsPath = resolve(config.projectRoot, config.docsPath);
-		}
+		ensureLatticeHome();
+		this.docsPath = getLatticeDocsPath();
 	}
 
 	/**

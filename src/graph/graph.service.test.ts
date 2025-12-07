@@ -11,19 +11,19 @@ import {
 // Increase timeout for tests that load DuckPGQ extension from remote
 setDefaultTimeout(15000);
 
-import { existsSync, unlinkSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { ConfigService } from "@nestjs/config";
+import { getDatabasePath, setLatticeHomeForTesting } from "../utils/paths.js";
 import { GraphService } from "./graph.service.js";
 
-// Test with real DuckDB instance (embedded, no external deps)
-const TEST_DB_PATH = "/tmp/test-lattice-graph.duckdb";
+// Use a temp directory for tests to avoid conflicts with user data
+const TEST_HOME = "/tmp/lattice-test";
 
 class TestConfigService {
 	private config: Record<string, unknown>;
 
 	constructor(overrides: Record<string, unknown> = {}) {
 		this.config = {
-			DUCKDB_PATH: TEST_DB_PATH,
 			...overrides,
 		};
 	}
@@ -44,10 +44,14 @@ describe("GraphService (DuckDB)", () => {
 	let graphService: GraphService;
 
 	beforeAll(async () => {
-		// Clean up any existing test database and connect ONCE
-		if (existsSync(TEST_DB_PATH)) {
-			unlinkSync(TEST_DB_PATH);
+		// Override path to use temp directory for tests
+		setLatticeHomeForTesting(TEST_HOME);
+
+		// Clean up any existing test data
+		if (existsSync(TEST_HOME)) {
+			rmSync(TEST_HOME, { recursive: true, force: true });
 		}
+
 		const configService = new TestConfigService();
 		graphService = new GraphService(configService as unknown as ConfigService);
 		await graphService.connect(); // Load extensions ONCE - this is slow
@@ -56,9 +60,11 @@ describe("GraphService (DuckDB)", () => {
 	afterAll(async () => {
 		// Disconnect and clean up
 		await graphService.disconnect();
-		if (existsSync(TEST_DB_PATH)) {
-			unlinkSync(TEST_DB_PATH);
+		if (existsSync(TEST_HOME)) {
+			rmSync(TEST_HOME, { recursive: true, force: true });
 		}
+		// Reset the override
+		setLatticeHomeForTesting(null);
 	});
 
 	beforeEach(async () => {
@@ -74,7 +80,8 @@ describe("GraphService (DuckDB)", () => {
 		});
 
 		it("should create database file at configured path", async () => {
-			expect(existsSync(TEST_DB_PATH)).toBe(true);
+			// getDatabasePath() returns the path based on the test override
+			expect(existsSync(getDatabasePath())).toBe(true);
 		});
 	});
 

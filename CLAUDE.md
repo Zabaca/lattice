@@ -19,9 +19,22 @@ lattice sql      # Raw SQL queries
 lattice rels     # Show relationships for a node
 ```
 
-## Database
+## Storage
 
-Single file storage: `.lattice.duckdb` in your docs directory. Contains:
+All data is stored in `~/.lattice/`:
+```
+~/.lattice/
+├── docs/                  # Markdown documentation
+├── lattice.duckdb         # Graph database
+├── .sync-manifest.json    # Sync state tracking
+└── .env                   # API keys (VOYAGE_API_KEY)
+```
+
+Run `lattice init` to setup the directory structure.
+
+### Database
+
+Contains:
 - `nodes` table - entities with embeddings
 - `relationships` table - connections between entities
 
@@ -31,6 +44,7 @@ Single file storage: `.lattice.duckdb` in your docs directory. Contains:
 - Uses SQL for queries (replaced Cypher)
 - VSS extension provides HNSW vector indexing
 - DuckPGQ extension available for property graph queries (optional)
+- Path utilities in `src/utils/paths.ts` for centralized storage
 
 ## Testing Philosophy
 

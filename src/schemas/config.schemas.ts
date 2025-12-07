@@ -2,9 +2,11 @@ import { z } from "zod";
 
 /**
  * DuckDB connection configuration schema
+ *
+ * Note: Database path is now fixed at ~/.lattice/lattice.duckdb
+ * See src/utils/paths.ts for path utilities.
  */
 export const DuckDBConfigSchema = z.object({
-	dbPath: z.string().optional(), // Default: ./.lattice.duckdb
 	embeddingDimensions: z.coerce.number().int().positive().default(512),
 });
 
@@ -23,13 +25,3 @@ export const EmbeddingConfigSchema = z.object({
 });
 
 export type EmbeddingConfig = z.infer<typeof EmbeddingConfigSchema>;
-
-/**
- * Document paths configuration schema
- */
-export const DocsConfigSchema = z.object({
-	projectRoot: z.string().default(process.cwd()),
-	docsPath: z.string().default("docs"),
-});
-
-export type DocsConfig = z.infer<typeof DocsConfigSchema>;

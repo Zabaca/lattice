@@ -14,11 +14,13 @@ import { EmbeddingModule } from "./embedding/embedding.module.js";
 import { GraphModule } from "./graph/graph.module.js";
 import { QueryModule } from "./query/query.module.js";
 import { SyncModule } from "./sync/sync.module.js";
+import { getEnvPath } from "./utils/paths.js";
 
 @Module({
 	imports: [
 		ConfigModule.forRoot({
 			isGlobal: true,
+			envFilePath: getEnvPath(),
 		}),
 		GraphModule,
 		SyncModule,

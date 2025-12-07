@@ -1,6 +1,7 @@
 import { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
 import { Injectable, Logger, OnModuleDestroy } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { ensureLatticeHome, getDatabasePath } from "../utils/paths.js";
 import type { CypherResult } from "./graph.types.js";
 
 @Injectable()
@@ -14,8 +15,8 @@ export class GraphService implements OnModuleDestroy {
 	private embeddingDimensions: number;
 
 	constructor(private configService: ConfigService) {
-		this.dbPath =
-			this.configService.get<string>("DUCKDB_PATH") || "./.lattice.duckdb";
+		ensureLatticeHome();
+		this.dbPath = getDatabasePath();
 		this.embeddingDimensions =
 			this.configService.get<number>("EMBEDDING_DIMENSIONS") || 512;
 	}

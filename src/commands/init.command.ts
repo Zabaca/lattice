@@ -1,9 +1,16 @@
+import { existsSync, writeFileSync } from "node:fs";
 import * as fs from "node:fs/promises";
 import { homedir } from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Injectable } from "@nestjs/common";
 import { Command, CommandRunner, Option } from "nest-commander";
+import {
+	ensureLatticeHome,
+	getDocsPath,
+	getEnvPath,
+	getLatticeHome,
+} from "../utils/paths.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -22,6 +29,28 @@ interface InitCommandOptions {
 export class InitCommand extends CommandRunner {
 	async run(_inputs: string[], options: InitCommandOptions): Promise<void> {
 		try {
+			// Setup ~/.lattice/ directory structure
+			ensureLatticeHome();
+
+			// Create .env file with placeholder if it doesn't exist
+			const envPath = getEnvPath();
+			if (!existsSync(envPath)) {
+				writeFileSync(
+					envPath,
+					`# Lattice Configuration
+# Get your API key from: https://www.voyageai.com/
+
+VOYAGE_API_KEY=
+`,
+				);
+			}
+
+			// Show Lattice home setup info
+			console.log(`✅ Lattice home directory: ${getLatticeHome()}`);
+			console.log(`   Documents: ${getDocsPath()}`);
+			console.log(`   Config:    ${envPath}`);
+			console.log();
+
 			// Determine target directory
 			const targetDir = options.global
 				? path.join(homedir(), ".claude", "commands")
@@ -128,7 +157,11 @@ export class InitCommand extends CommandRunner {
 				console.log(
 					"💡 Tip: Use 'lattice init --global' to install for all projects",
 				);
+				console.log();
 			}
+
+			console.log(`⚠️  Add your Voyage API key to: ${getEnvPath()}`);
+			console.log();
 
 			process.exit(0);
 		} catch (error) {

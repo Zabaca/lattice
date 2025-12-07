@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { Injectable } from "@nestjs/common";
-import { DocumentParserService } from "./document-parser.service.js";
+import { getDocsPath } from "../utils/paths.js";
 
 export interface PathResolutionOptions {
 	/** If true, throw error when path doesn't exist (default: true) */
@@ -13,33 +13,32 @@ export interface PathResolutionOptions {
 /**
  * Service for resolving user-provided paths to absolute form.
  *
- * Accepts paths in three formats:
- * 1. Absolute: /home/user/project/docs/topic/file.md
- * 2. Relative to CWD: docs/topic/file.md
- * 3. Relative to docs/: topic/file.md
- *
- * All paths are normalized to absolute form for consistent comparison
- * with paths returned by DocumentParserService.discoverDocuments().
+ * All docs are now stored in ~/.lattice/docs/.
+ * Accepts paths in two formats:
+ * 1. Absolute: /home/user/.lattice/docs/topic/file.md
+ * 2. Relative to ~/.lattice/docs/: topic/file.md
  */
 @Injectable()
 export class PathResolverService {
-	constructor(private readonly parser: DocumentParserService) {}
+	private readonly docsPath: string;
+
+	constructor() {
+		this.docsPath = getDocsPath();
+	}
 
 	/**
-	 * Get the configured docs path (absolute)
+	 * Get the docs path (~/.lattice/docs)
 	 */
 	getDocsPath(): string {
-		return this.parser.getDocsPath();
+		return this.docsPath;
 	}
 
 	/**
 	 * Resolve a user-provided path to absolute form.
 	 *
-	 * Resolution order:
-	 * 1. If absolute, validate and return
-	 * 2. Try resolving from CWD (if result is under docs/ and exists)
-	 * 3. Try resolving from docs/ directory (if exists)
-	 * 4. Fall back to best-guess resolution for error message
+	 * Resolution:
+	 * 1. If absolute, use directly
+	 * 2. Otherwise resolve relative to ~/.lattice/docs/
 	 *
 	 * @throws Error if path cannot be resolved or doesn't meet requirements
 	 */
@@ -55,45 +54,14 @@ export class PathResolverService {
 			// Absolute path - use directly
 			resolvedPath = userPath;
 		} else {
-			// Try resolving from CWD first
-			const fromCwd = resolve(process.cwd(), userPath);
-
-			// Try resolving from docs/ directory
-			const fromDocs = resolve(this.getDocsPath(), userPath);
-
-			// Special case: if path starts with "docs/", strip it and resolve from docs/
-			// This handles "docs/agents/file.md" when CWD is not under docs/
-			const docsPrefix = "docs/";
-			const strippedFromDocs = userPath.startsWith(docsPrefix)
-				? resolve(this.getDocsPath(), userPath.slice(docsPrefix.length))
-				: null;
-
-			if (this.isUnderDocs(fromCwd) && existsSync(fromCwd)) {
-				// CWD resolution is under docs/ and file exists
-				resolvedPath = fromCwd;
-			} else if (strippedFromDocs && existsSync(strippedFromDocs)) {
-				// Path started with "docs/" and exists after stripping prefix
-				resolvedPath = strippedFromDocs;
-			} else if (existsSync(fromDocs)) {
-				// File exists when resolved from docs/
-				resolvedPath = fromDocs;
-			} else if (this.isUnderDocs(fromCwd)) {
-				// CWD resolution is under docs/ but file doesn't exist
-				// Use this path to give meaningful error message
-				resolvedPath = fromCwd;
-			} else if (strippedFromDocs) {
-				// Path started with "docs/" - use stripped version for error
-				resolvedPath = strippedFromDocs;
-			} else {
-				// Fall back to fromDocs for error message
-				resolvedPath = fromDocs;
-			}
+			// Resolve relative to ~/.lattice/docs/
+			resolvedPath = resolve(this.docsPath, userPath);
 		}
 
 		// Validate path is under docs/ if required
 		if (requireInDocs && !this.isUnderDocs(resolvedPath)) {
 			throw new Error(
-				`Path "${userPath}" resolves to "${resolvedPath}" which is outside the docs directory (${this.getDocsPath()})`,
+				`Path "${userPath}" resolves to "${resolvedPath}" which is outside the docs directory (${this.docsPath})`,
 			);
 		}
 

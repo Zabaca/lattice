@@ -3,7 +3,7 @@ description: Extract entities from modified docs and sync to graph
 model: sonnet
 ---
 
-Identify modified documents, extract entities from them, and sync to the knowledge graph.
+Identify modified documents in `~/.lattice/docs/`, extract entities from them, and sync to the knowledge graph.
 
 ## Process
 

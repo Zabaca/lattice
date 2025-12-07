@@ -1,13 +1,13 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
 import { Injectable } from "@nestjs/common";
 import {
 	type ManifestEntry,
 	type SyncManifest,
 	SyncManifestSchema,
 } from "../schemas/manifest.schemas.js";
+import { getManifestPath } from "../utils/paths.js";
 
 // Re-export types for backwards compatibility
 export type { ManifestEntry, SyncManifest };
@@ -20,28 +20,13 @@ export interface DocumentChange {
 	reason?: string;
 }
 
-/**
- * Get the project root from environment or default
- */
-function getProjectRoot(): string {
-	if (process.env.PROJECT_ROOT) {
-		return process.env.PROJECT_ROOT;
-	}
-	return process.cwd();
-}
-
 @Injectable()
 export class ManifestService {
 	private manifestPath: string;
 	private manifest: SyncManifest | null = null;
 
 	constructor() {
-		const docsPath = process.env.DOCS_PATH || "docs";
-		this.manifestPath = resolve(
-			getProjectRoot(),
-			docsPath,
-			".sync-manifest.json",
-		);
+		this.manifestPath = getManifestPath();
 	}
 
 	/**

@@ -83,7 +83,7 @@ The goal is to ensure entities reflect the document's CURRENT state, not preserv
    - Preserve existing fields like `created`, `status`, `topic` (but update `updated` date)
    - **Replace** the `summary`, `entities` and `relationships` sections entirely
    - If no topic field exists, derive it from the directory name
-     (e.g., `docs/claude-code/file.md` -> `topic: claude-code`)
+     (e.g., `~/.lattice/docs/claude-code/file.md` -> `topic: claude-code`)
 
    Frontmatter template:
    ```yaml

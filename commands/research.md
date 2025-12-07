@@ -65,7 +65,7 @@ If user wants new research:
 ### Step 6: Determine Topic and Filename
 
 **Identify the topic directory:**
-- Check if a relevant `docs/{topic-name}/` directory already exists
+- Check if a relevant `~/.lattice/docs/{topic-name}/` directory already exists
 - If not, derive a new topic name from the query (kebab-case)
 
 **Derive the research filename:**
@@ -89,7 +89,7 @@ Auto-derive from the specific focus of the query:
 
 Create TWO files:
 
-**1. `docs/{topic-name}/README.md`** (index):
+**1. `~/.lattice/docs/{topic-name}/README.md`** (index):
 ```markdown
 ---
 created: [TODAY'S DATE]
@@ -115,7 +115,7 @@ Brief description of what this topic covers.
 - [Related Topic](../related-topic/)
 ```
 
-**2. `docs/{topic-name}/{research-filename}.md`** (content):
+**2. `~/.lattice/docs/{topic-name}/{research-filename}.md`** (content):
 ```markdown
 ---
 created: [TODAY'S DATE]
@@ -146,9 +146,9 @@ What this research addresses.
 
 #### For EXISTING Topics (directory exists)
 
-**1. Create** `docs/{topic-name}/{research-filename}.md` with content template above
+**1. Create** `~/.lattice/docs/{topic-name}/{research-filename}.md` with content template above
 
-**2. Update** `docs/{topic-name}/README.md`:
+**2. Update** `~/.lattice/docs/{topic-name}/README.md`:
 - Add new row to the Documents table
 - Update the `updated` date in frontmatter
 
@@ -173,7 +173,7 @@ After creating files, confirm:
 ## File Structure Standard
 
 ```
-docs/{topic-name}/
+~/.lattice/docs/{topic-name}/
 ├── README.md              # Index: links to docs, brief overview
 ├── {research-1}.md        # Specific research
 ├── {research-2}.md        # Additional research

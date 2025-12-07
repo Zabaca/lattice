@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
 import type { EmbeddingService } from "../embedding/embedding.service.js";
 import type { GraphService } from "../graph/graph.service.js";
 import type { ConsoleSpy, ProcessExitSpy } from "../testing/mock-types.js";
-import { CypherCommand, RelsCommand, SearchCommand } from "./query.command.js";
+import { RelsCommand, SearchCommand, SqlCommand } from "./query.command.js";
 
 describe("Query Commands", () => {
 	let mockGraphService: Partial<GraphService>;
@@ -16,6 +16,7 @@ describe("Query Commands", () => {
 			vectorSearch: mock(async () => []),
 			vectorSearchAll: mock(async () => []),
 			query: mock(async () => ({ resultSet: [] })),
+			findRelationships: mock(async () => []),
 		};
 
 		mockEmbeddingService = {
@@ -158,36 +159,25 @@ describe("Query Commands", () => {
 
 	describe("RelsCommand", () => {
 		it("should show relationships for a node", async () => {
-			mockGraphService.query = mock(async () => ({
-				resultSet: [
-					[
-						[
-							["id", 1],
-							["properties", [["name", "FalkorDB"]]],
-						],
-						[["type", "USES"]],
-						[
-							["id", 2],
-							["properties", [["name", "Redis"]]],
-						],
-					],
-				],
-			}));
+			mockGraphService.findRelationships = mock(async () => [
+				["USES", "Redis"],
+				["DEPENDS_ON", "Node.js"],
+			]);
 
 			const command = new RelsCommand(mockGraphService as GraphService);
 
 			try {
-				await command.run(["FalkorDB"]);
+				await command.run(["DuckDB"]);
 			} catch (_e) {
 				// Expected - process.exit mock throws
 			}
 
 			const logs = consoleLogSpy.mock.calls.map((call) => call[0]);
-			expect(logs.join("\n")).toContain('Relationships for "FalkorDB"');
+			expect(logs.join("\n")).toContain('Relationships for "DuckDB"');
 		});
 
 		it("should show no relationships message when none found", async () => {
-			mockGraphService.query = mock(async () => ({ resultSet: [] }));
+			mockGraphService.findRelationships = mock(async () => []);
 
 			const command = new RelsCommand(mockGraphService as GraphService);
 
@@ -202,22 +192,22 @@ describe("Query Commands", () => {
 		});
 	});
 
-	describe("CypherCommand", () => {
-		it("should execute raw cypher query", async () => {
+	describe("SqlCommand", () => {
+		it("should execute raw SQL query", async () => {
 			mockGraphService.query = mock(async () => ({
 				resultSet: [["test result"]],
 			}));
 
-			const command = new CypherCommand(mockGraphService as GraphService);
+			const command = new SqlCommand(mockGraphService as GraphService);
 
 			try {
-				await command.run(["MATCH (n) RETURN n LIMIT 1"]);
+				await command.run(["SELECT * FROM nodes LIMIT 1"]);
 			} catch (_e) {
 				// Expected - process.exit mock throws
 			}
 
 			const logs = consoleLogSpy.mock.calls.map((call) => call[0]);
-			expect(logs.join("\n")).toContain("Cypher Query Results");
+			expect(logs.join("\n")).toContain("SQL Query Results");
 		});
 	});
 });

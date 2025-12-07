@@ -1,11 +1,11 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import {
-	CypherCommand,
 	InitCommand,
 	OntologyCommand,
 	RelsCommand,
 	SearchCommand,
+	SqlCommand,
 	StatusCommand,
 	SyncCommand,
 	ValidateCommand,
@@ -31,7 +31,7 @@ import { SyncModule } from "./sync/sync.module.js";
 		StatusCommand,
 		SearchCommand,
 		RelsCommand,
-		CypherCommand,
+		SqlCommand,
 		ValidateCommand,
 		OntologyCommand,
 		InitCommand,

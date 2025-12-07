@@ -142,64 +142,19 @@ export class RelsCommand extends CommandRunner {
 		const name = inputs[0];
 
 		try {
-			const escapedName = name.replace(/'/g, "\\'");
-			const cypher = `MATCH (a { name: '${escapedName}' })-[r]-(b) RETURN a, r, b`;
-
-			const result = await this.graphService.query(cypher);
-			const results = result.resultSet || [];
+			const relationships = await this.graphService.findRelationships(name);
 
 			console.log(`\n=== Relationships for "${name}" ===\n`);
 
-			if (results.length === 0) {
+			if (relationships.length === 0) {
 				console.log("No relationships found.\n");
 				process.exit(0);
 			}
 
-			const incoming: string[] = [];
-			const outgoing: string[] = [];
-
-			for (const row of results as unknown[][]) {
-				const [source, rel, target] = row as [
-					[string, unknown][],
-					[string, unknown][],
-					[string, unknown][],
-				];
-				// FalkorDB returns arrays of tuples, convert to objects
-				const sourceObj = Object.fromEntries(source) as Record<string, unknown>;
-				const targetObj = Object.fromEntries(target) as Record<string, unknown>;
-				const relObj = Object.fromEntries(rel) as Record<string, unknown>;
-
-				const sourceProps = Object.fromEntries(
-					(sourceObj.properties as [string, unknown][]) || [],
-				) as Record<string, unknown>;
-				const targetProps = Object.fromEntries(
-					(targetObj.properties as [string, unknown][]) || [],
-				) as Record<string, unknown>;
-
-				const sourceName = (sourceProps.name as string) || "unknown";
-				const targetName = (targetProps.name as string) || "unknown";
-				const relType = (relObj.type as string) || "UNKNOWN";
-
-				if (sourceName === name) {
-					outgoing.push(`  -[${relType}]-> ${targetName}`);
-				} else {
-					incoming.push(`  <-[${relType}]- ${sourceName}`);
-				}
-			}
-
-			if (outgoing.length > 0) {
-				console.log("Outgoing:");
-				for (const r of outgoing) {
-					console.log(r);
-				}
-			}
-
-			if (incoming.length > 0) {
-				if (outgoing.length > 0) console.log();
-				console.log("Incoming:");
-				for (const r of incoming) {
-					console.log(r);
-				}
+			console.log("Relationships:");
+			for (const rel of relationships) {
+				const [relType, targetName] = rel as [string, string];
+				console.log(`  -[${relType}]-> ${targetName}`);
 			}
 			console.log();
 
@@ -214,14 +169,14 @@ export class RelsCommand extends CommandRunner {
 	}
 }
 
-// Cypher Command
+// SQL Command
 @Injectable()
 @Command({
-	name: "cypher",
+	name: "sql",
 	arguments: "<query>",
-	description: "Execute raw Cypher query",
+	description: "Execute raw SQL query against DuckDB",
 })
-export class CypherCommand extends CommandRunner {
+export class SqlCommand extends CommandRunner {
 	constructor(private readonly graphService: GraphService) {
 		super();
 	}
@@ -232,8 +187,11 @@ export class CypherCommand extends CommandRunner {
 		try {
 			const result = await this.graphService.query(query);
 
-			console.log("\n=== Cypher Query Results ===\n");
-			console.log(JSON.stringify(result, null, 2));
+			console.log("\n=== SQL Query Results ===\n");
+			// Handle BigInt serialization
+			const replacer = (_key: string, value: unknown) =>
+				typeof value === "bigint" ? Number(value) : value;
+			console.log(JSON.stringify(result, replacer, 2));
 			console.log();
 
 			process.exit(0);

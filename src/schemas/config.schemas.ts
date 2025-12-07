@@ -1,15 +1,14 @@
 import { z } from "zod";
 
 /**
- * FalkorDB connection configuration schema
+ * DuckDB connection configuration schema
  */
-export const FalkorDBConfigSchema = z.object({
-	host: z.string().min(1).default("localhost"),
-	port: z.coerce.number().int().positive().default(6379),
-	graphName: z.string().min(1).default("research_knowledge"),
+export const DuckDBConfigSchema = z.object({
+	dbPath: z.string().optional(), // Default: ./.lattice.duckdb
+	embeddingDimensions: z.coerce.number().int().positive().default(512),
 });
 
-export type FalkorDBConfig = z.infer<typeof FalkorDBConfigSchema>;
+export type DuckDBConfig = z.infer<typeof DuckDBConfigSchema>;
 
 /**
  * Embedding service configuration schema

@@ -267,12 +267,13 @@ export class CascadeService {
 		_newName: string,
 	): Promise<AffectedDocument[]> {
 		try {
-			// Note: FalkorDB doesn't support parameterized queries the same way,
-			// so we construct the query directly with escaped values
-			const escapedName = this.escapeForCypher(entityName);
+			const escapedName = this.escapeForSql(entityName);
 			const query = `
-				MATCH (e {name: '${escapedName}'})-[:APPEARS_IN]->(d:Document)
-				RETURN d.name, d.title
+				SELECT DISTINCT n.name, n.properties->>'title' as title
+				FROM nodes n
+				INNER JOIN relationships r ON r.target_label = n.label AND r.target_name = n.name
+				WHERE r.source_name = '${escapedName}'
+				  AND n.label = 'Document'
 			`.trim();
 
 			const result = await this.graph.query(query);
@@ -299,10 +300,13 @@ export class CascadeService {
 		entityName: string,
 	): Promise<AffectedDocument[]> {
 		try {
-			const escapedName = this.escapeForCypher(entityName);
+			const escapedName = this.escapeForSql(entityName);
 			const query = `
-				MATCH (e {name: '${escapedName}'})-[:APPEARS_IN]->(d:Document)
-				RETURN d.name, d.title
+				SELECT DISTINCT n.name, n.properties->>'title' as title
+				FROM nodes n
+				INNER JOIN relationships r ON r.target_label = n.label AND r.target_name = n.name
+				WHERE r.source_name = '${escapedName}'
+				  AND n.label = 'Document'
 			`.trim();
 
 			const result = await this.graph.query(query);
@@ -331,10 +335,13 @@ export class CascadeService {
 		newType: string,
 	): Promise<AffectedDocument[]> {
 		try {
-			const escapedName = this.escapeForCypher(entityName);
+			const escapedName = this.escapeForSql(entityName);
 			const query = `
-				MATCH (e {name: '${escapedName}'})-[:APPEARS_IN]->(d:Document)
-				RETURN d.name, d.title
+				SELECT DISTINCT n.name, n.properties->>'title' as title
+				FROM nodes n
+				INNER JOIN relationships r ON r.target_label = n.label AND r.target_name = n.name
+				WHERE r.source_name = '${escapedName}'
+				  AND n.label = 'Document'
 			`.trim();
 
 			const result = await this.graph.query(query);
@@ -361,10 +368,13 @@ export class CascadeService {
 		entityName: string,
 	): Promise<AffectedDocument[]> {
 		try {
-			const escapedName = this.escapeForCypher(entityName);
+			const escapedName = this.escapeForSql(entityName);
 			const query = `
-				MATCH (e {name: '${escapedName}'})-[r]->(d:Document)
-				RETURN d.name, d.title, type(r) as relType
+				SELECT DISTINCT n.name, n.properties->>'title' as title, r.relation_type
+				FROM nodes n
+				INNER JOIN relationships r ON r.target_label = n.label AND r.target_name = n.name
+				WHERE r.source_name = '${escapedName}'
+				  AND n.label = 'Document'
 			`.trim();
 
 			const result = await this.graph.query(query);
@@ -392,10 +402,13 @@ export class CascadeService {
 		documentPath: string,
 	): Promise<AffectedDocument[]> {
 		try {
-			const escapedPath = this.escapeForCypher(documentPath);
+			const escapedPath = this.escapeForSql(documentPath);
 			const query = `
-				MATCH (d:Document)-[r]->(deleted:Document {name: '${escapedPath}'})
-				RETURN d.name, type(r) as relType
+				SELECT DISTINCT n.name, r.relation_type
+				FROM nodes n
+				INNER JOIN relationships r ON r.source_label = n.label AND r.source_name = n.name
+				WHERE r.target_name = '${escapedPath}'
+				  AND n.label = 'Document'
 			`.trim();
 
 			const result = await this.graph.query(query);
@@ -529,12 +542,9 @@ export class CascadeService {
 	}
 
 	/**
-	 * Escape a string for use in Cypher queries.
+	 * Escape a string for use in SQL queries.
 	 */
-	private escapeForCypher(value: string): string {
-		return value
-			.replace(/\\/g, "\\\\")
-			.replace(/'/g, "\\'")
-			.replace(/"/g, '\\"');
+	private escapeForSql(value: string): string {
+		return value.replace(/'/g, "''");
 	}
 }

@@ -1,4 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
+import {
+	afterEach,
+	beforeEach,
+	describe,
+	expect,
+	it,
+	mock,
+	spyOn,
+} from "bun:test";
 import type { EmbeddingService } from "../embedding/embedding.service.js";
 import type { GraphService } from "../graph/graph.service.js";
 import type { ConsoleSpy, ProcessExitSpy } from "../testing/mock-types.js";

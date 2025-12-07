@@ -9,15 +9,15 @@ import { describe, expect, it } from "bun:test";
 import {
 	EntitySchema,
 	EntityTypeSchema,
+	type FrontmatterData,
 	FrontmatterSchema,
 	GraphMetadataSchema,
-	RelationshipSchema,
-	RelationTypeSchema,
 	generateFrontmatter,
 	getCurrentDate,
 	parseFrontmatter,
+	RelationshipSchema,
+	RelationTypeSchema,
 	validateFrontmatter,
-	type FrontmatterData,
 } from "./frontmatter.js";
 
 describe("frontmatter utils", () => {
@@ -114,7 +114,9 @@ describe("frontmatter utils", () => {
 			});
 
 			it("accepts domain field", () => {
-				const result = GraphMetadataSchema.safeParse({ domain: "architecture" });
+				const result = GraphMetadataSchema.safeParse({
+					domain: "architecture",
+				});
 				expect(result.success).toBe(true);
 			});
 
@@ -469,7 +471,7 @@ Content`;
 				tags: ["test", "roundtrip"],
 			};
 			const yaml = generateFrontmatter(original);
-			const parsed = parseFrontmatter(yaml + "\nContent");
+			const parsed = parseFrontmatter(`${yaml}\nContent`);
 			expect(parsed.frontmatter?.created).toBe(original.created);
 			expect(parsed.frontmatter?.updated).toBe(original.updated);
 			expect(parsed.frontmatter?.status).toBe(original.status);

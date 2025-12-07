@@ -14,7 +14,7 @@ export const VoyageEmbeddingResponseSchema = z.object({
 	),
 	model: z.string(),
 	usage: z.object({
-		total_tokens: z.number().int().positive(),
+		total_tokens: z.number().int().nonnegative(),
 	}),
 });
 

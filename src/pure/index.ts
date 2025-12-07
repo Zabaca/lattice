@@ -3,13 +3,6 @@
  * Following the "Functional Core, Imperative Shell" pattern
  */
 
-// Cypher query building and escaping
-export {
-	buildPropertyAssignments,
-	escapeCypher,
-	escapeCypherValue,
-	parseStats,
-} from "./cypher.js";
 // Embedding text composition
 export {
 	collectUniqueEntities,

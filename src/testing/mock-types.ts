@@ -1,6 +1,5 @@
 /**
  * Type-safe mock utilities for Bun test runner
- * Used with @tkoehlerlg/bun-mock-extended for type-safe mocking
  */
 import type { Mock } from "bun:test";
 

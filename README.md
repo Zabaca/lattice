@@ -24,29 +24,30 @@ That's it. Two commands to build a knowledge base.
 | Feature | Lattice | Other GraphRAG Tools |
 |---------|---------|---------------------|
 | **LLM for extraction** | Your Claude Code subscription | Separate API key + costs |
-| **Setup time** | 5 minutes | 30+ minutes |
-| **Containers** | 1 (FalkorDB) | 2-3 (DB + vector + graph) |
+| **Setup time** | 2 minutes | 30+ minutes |
+| **Database** | Embedded DuckDB (zero config) | Docker containers required |
+| **External dependencies** | None | 2-3 (DB + vector + graph) |
 | **API keys needed** | 1 (Voyage AI for embeddings) | 2-3 (LLM + embedding + rerank) |
 | **Workflow** | `/research` → `/graph-sync` | Custom scripts |
 
 ---
 
-## Quick Start (5 Minutes)
+## Quick Start (2 Minutes)
 
 ### What You Need
 
 - **Claude Code** (you probably already have it)
-- **Docker** (for FalkorDB)
 - **Voyage AI API key** ([get one here](https://www.voyageai.com/) - embeddings only, ~$0.01/1M tokens)
 
-### 1. Install & Start
+### 1. Install
 
 ```bash
-bun add -g @zabaca/lattice                    # Install CLI
-docker run -d -p 6379:6379 falkordb/falkordb  # Start database
-export VOYAGE_API_KEY=your-key-here           # Set API key
-lattice init --global                         # Install Claude Code commands
+bun add -g @zabaca/lattice          # Install CLI
+export VOYAGE_API_KEY=your-key-here  # Set API key
+lattice init --global                # Install Claude Code commands
 ```
+
+That's it. No Docker. No containers. DuckDB is embedded.
 
 ### 2. Start Researching
 
@@ -67,7 +68,7 @@ The `/research` command will:
 The `/graph-sync` command will:
 - Detect all new/changed documents
 - Extract entities using Claude Code (your subscription)
-- Sync to FalkorDB for semantic search
+- Sync to DuckDB for semantic search
 
 ---
 
@@ -152,6 +153,24 @@ Semantic search across the knowledge graph.
 
 ```bash
 lattice search "query"          # Search all entity types
+lattice search "query" -l Tool  # Filter by label
+```
+
+### `lattice sql`
+
+Execute raw SQL queries against DuckDB.
+
+```bash
+lattice sql "SELECT * FROM nodes LIMIT 10"
+lattice sql "SELECT label, COUNT(*) FROM nodes GROUP BY label"
+```
+
+### `lattice rels`
+
+Show relationships for a node.
+
+```bash
+lattice rels "TypeScript"       # Show all relationships for an entity
 ```
 
 ### `lattice validate`
@@ -182,15 +201,24 @@ lattice ontology                # Show entity types and relationship types
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `VOYAGE_API_KEY` | Voyage AI API key for embeddings | *required* |
-| `FALKORDB_HOST` | FalkorDB server hostname | `localhost` |
-| `FALKORDB_PORT` | FalkorDB server port | `6379` |
+| `DUCKDB_PATH` | Path to DuckDB database file | `./.lattice.duckdb` |
+| `EMBEDDING_DIMENSIONS` | Embedding vector dimensions | `512` |
+
+### Database Location
+
+Lattice stores its knowledge graph in a single `.lattice.duckdb` file in your docs directory. This file contains:
+- All extracted entities (nodes)
+- Relationships between entities
+- Vector embeddings for semantic search
+
+You can back up, copy, or version control this file like any other.
 
 <details>
 <summary><b>How It Works (Technical Details)</b></summary>
 
 ### Entity Extraction
 
-When you run `/graph-sync`, Claude Code extracts entities from your documents and writes them to YAML frontmatter. The Lattice CLI then syncs this to FalkorDB.
+When you run `/graph-sync`, Claude Code extracts entities from your documents and writes them to YAML frontmatter. The Lattice CLI then syncs this to DuckDB.
 
 ```yaml
 ---
@@ -208,57 +236,35 @@ relationships:
 
 You don't need to write this manually — Claude Code handles it automatically.
 
-</details>
+### Database Schema
 
----
+Lattice uses two main tables:
 
-## Infrastructure
+```sql
+-- Nodes (entities)
+CREATE TABLE nodes (
+    label VARCHAR NOT NULL,      -- Entity type: Document, Technology, etc.
+    name VARCHAR NOT NULL,       -- Unique identifier
+    properties JSON,             -- Additional metadata
+    embedding FLOAT[512],        -- Vector for semantic search
+    PRIMARY KEY(label, name)
+);
 
-<details>
-<summary><b>Docker Compose (Alternative Setup)</b></summary>
-
-If you prefer Docker Compose over a single `docker run` command:
-
-```yaml
-version: '3.8'
-
-services:
-  falkordb:
-    image: falkordb/falkordb:latest
-    ports:
-      - "6379:6379"
-    volumes:
-      - falkordb-data:/data
-    restart: unless-stopped
-
-volumes:
-  falkordb-data:
+-- Relationships
+CREATE TABLE relationships (
+    source_label VARCHAR NOT NULL,
+    source_name VARCHAR NOT NULL,
+    relation_type VARCHAR NOT NULL,
+    target_label VARCHAR NOT NULL,
+    target_name VARCHAR NOT NULL,
+    properties JSON,
+    PRIMARY KEY(source_label, source_name, relation_type, target_label, target_name)
+);
 ```
 
-```bash
-docker-compose up -d
-```
+### Vector Search
 
-</details>
-
-<details>
-<summary><b>Kubernetes (k3s)</b></summary>
-
-For production deployments, use the provided k3s manifests:
-
-```bash
-kubectl apply -f infra/k3s/namespace.yaml
-kubectl apply -f infra/k3s/pv.yaml
-kubectl apply -f infra/k3s/pvc.yaml
-kubectl apply -f infra/k3s/deployment.yaml
-kubectl apply -f infra/k3s/service.yaml
-
-# Optional: NodePort for external access
-kubectl apply -f infra/k3s/nodeport-service.yaml
-
-# Optional: Ingress
-kubectl apply -f infra/k3s/ingress.yaml
-```
+Lattice uses DuckDB's VSS extension for HNSW-based vector similarity search with cosine distance.
 
 </details>
 
@@ -273,7 +279,6 @@ kubectl apply -f infra/k3s/ingress.yaml
 
 - Node.js >= 18.0.0
 - Bun (recommended) or npm
-- Docker (for FalkorDB)
 
 ### Setup
 
@@ -282,7 +287,6 @@ git clone https://github.com/Zabaca/lattice.git
 cd lattice
 bun install
 cp .env.example .env
-docker-compose -f infra/docker-compose.yaml up -d
 ```
 
 ### Running Locally
@@ -329,4 +333,4 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ---
 
-Built with [FalkorDB](https://www.falkordb.com/), [Voyage AI](https://www.voyageai.com/), and [Claude Code](https://claude.ai/code)
+Built with [DuckDB](https://duckdb.org/), [Voyage AI](https://www.voyageai.com/), and [Claude Code](https://claude.ai/code)

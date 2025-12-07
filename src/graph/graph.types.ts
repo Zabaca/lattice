@@ -105,21 +105,14 @@ export interface SyncResult {
 	duration: number;
 }
 
-// FalkorDB configuration
-export interface FalkorDBConfig {
-	host: string;
-	port: number;
-	graphName: string;
+// DuckDB configuration
+export interface DuckDBConfig {
+	dbPath: string;
+	embeddingDimensions?: number;
 }
 
-// Cypher query result
+// SQL query result (renamed from CypherResult for backward compatibility)
 export interface CypherResult {
 	resultSet: unknown[][];
-	stats?: {
-		nodesCreated: number;
-		nodesDeleted: number;
-		relationshipsCreated: number;
-		relationshipsDeleted: number;
-		propertiesSet: number;
-	};
+	stats?: undefined; // DuckDB doesn't return stats in the same way
 }

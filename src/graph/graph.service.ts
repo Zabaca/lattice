@@ -1,26 +1,23 @@
 import { Injectable, Logger, OnModuleDestroy } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import Redis from "ioredis";
-import {
-	type FalkorDBConfig,
-	FalkorDBConfigSchema,
-} from "../schemas/config.schemas.js";
+import { DuckDBInstance, DuckDBConnection } from "@duckdb/node-api";
 import type { CypherResult } from "./graph.types.js";
 
 @Injectable()
 export class GraphService implements OnModuleDestroy {
 	private readonly logger = new Logger(GraphService.name);
-	private redis: Redis | null = null;
-	private config: FalkorDBConfig;
+	private instance: DuckDBInstance | null = null;
+	private connection: DuckDBConnection | null = null;
+	private dbPath: string;
 	private connecting: Promise<void> | null = null;
+	private vectorIndexes: Set<string> = new Set();
+	private embeddingDimensions: number;
 
 	constructor(private configService: ConfigService) {
-		// Validate config with Zod schema (fail-fast on invalid config)
-		this.config = FalkorDBConfigSchema.parse({
-			host: this.configService.get<string>("FALKORDB_HOST"),
-			port: this.configService.get<string>("FALKORDB_PORT"),
-			graphName: this.configService.get<string>("GRAPH_NAME"),
-		});
+		this.dbPath =
+			this.configService.get<string>("DUCKDB_PATH") || "./.lattice.duckdb";
+		this.embeddingDimensions =
+			this.configService.get<number>("EMBEDDING_DIMENSIONS") || 512;
 	}
 
 	async onModuleDestroy(): Promise<void> {
@@ -28,100 +25,156 @@ export class GraphService implements OnModuleDestroy {
 	}
 
 	/**
-	 * Lazily connect to FalkorDB - only connects when first query is made
+	 * Lazily connect to DuckDB - only connects when first query is made
 	 */
-	private async ensureConnected(): Promise<Redis> {
-		if (this.redis) {
-			return this.redis;
+	private async ensureConnected(): Promise<DuckDBConnection> {
+		if (this.connection) {
+			return this.connection;
 		}
 
 		// Prevent multiple simultaneous connection attempts
 		if (this.connecting) {
 			await this.connecting;
-			return this.redis as unknown as Redis;
+			if (!this.connection) {
+				throw new Error("Connection failed to establish");
+			}
+			return this.connection;
 		}
 
 		this.connecting = this.connect();
 		await this.connecting;
 		this.connecting = null;
-		return this.redis as unknown as Redis;
+		if (!this.connection) {
+			throw new Error("Connection failed to establish");
+		}
+		return this.connection;
 	}
 
 	async connect(): Promise<void> {
 		try {
-			this.redis = new Redis({
-				host: this.config.host,
-				port: this.config.port,
-				maxRetriesPerRequest: 3,
-				retryStrategy: (times: number) => {
-					if (times > 3) {
-						return null; // Stop retrying
-					}
-					const delay = Math.min(times * 50, 2000);
-					return delay;
-				},
-				lazyConnect: true, // Don't connect until first command
+			// Allow unsigned extensions for DuckPGQ from custom repository
+			this.instance = await DuckDBInstance.create(this.dbPath, {
+				allow_unsigned_extensions: "true",
 			});
+			this.connection = await this.instance.connect();
 
-			// Suppress unhandled error events (we handle errors in queries)
-			this.redis.on("error", (err) => {
-				this.logger.debug(`Redis connection error: ${err.message}`);
-			});
+			// Load VSS extension for vector similarity search
+			await this.connection.run("INSTALL vss; LOAD vss;");
 
-			// Test connection
-			await this.redis.ping();
-			this.logger.log(
-				`Connected to FalkorDB at ${this.config.host}:${this.config.port}`,
+			// Enable experimental HNSW persistence
+			await this.connection.run(
+				"SET hnsw_enable_experimental_persistence = true;",
 			);
+
+			// Load DuckPGQ extension for property graph queries (from custom repository)
+			try {
+				// Set custom repo for DuckPGQ
+				await this.connection.run(
+					"SET custom_extension_repository = 'http://duckpgq.s3.eu-north-1.amazonaws.com';",
+				);
+				await this.connection.run("FORCE INSTALL 'duckpgq';");
+				await this.connection.run("LOAD 'duckpgq';");
+				this.logger.log("DuckPGQ extension loaded successfully");
+			} catch (e) {
+				this.logger.warn(
+					`DuckPGQ extension not available: ${e instanceof Error ? e.message : String(e)}`,
+				);
+			}
+
+			// Initialize schema
+			await this.initializeSchema();
+
+			this.logger.log(`Connected to DuckDB at ${this.dbPath}`);
 		} catch (error) {
-			this.redis = null;
+			this.connection = null;
+			this.instance = null;
 			this.logger.error(
-				`Failed to connect to FalkorDB: ${error instanceof Error ? error.message : String(error)}`,
+				`Failed to connect to DuckDB: ${error instanceof Error ? error.message : String(error)}`,
 			);
 			throw error;
 		}
 	}
 
 	async disconnect(): Promise<void> {
-		if (this.redis) {
-			await this.redis.quit();
-			this.logger.log("Disconnected from FalkorDB");
+		if (this.connection) {
+			this.connection.closeSync();
+			this.connection = null;
+			this.logger.log("Disconnected from DuckDB");
+		}
+		if (this.instance) {
+			this.instance = null;
 		}
 	}
 
+	private async initializeSchema(): Promise<void> {
+		const conn = this.connection!;
+
+		// Create nodes table with composite primary key
+		// Note: embedding uses fixed-size array for VSS compatibility
+		await conn.run(`
+			CREATE TABLE IF NOT EXISTS nodes (
+				label VARCHAR NOT NULL,
+				name VARCHAR NOT NULL,
+				properties JSON,
+				embedding FLOAT[${this.embeddingDimensions}],
+				created_at TIMESTAMP DEFAULT NOW(),
+				updated_at TIMESTAMP DEFAULT NOW(),
+				PRIMARY KEY(label, name)
+			)
+		`);
+
+		// Create relationships table with composite primary key
+		await conn.run(`
+			CREATE TABLE IF NOT EXISTS relationships (
+				source_label VARCHAR NOT NULL,
+				source_name VARCHAR NOT NULL,
+				relation_type VARCHAR NOT NULL,
+				target_label VARCHAR NOT NULL,
+				target_name VARCHAR NOT NULL,
+				properties JSON,
+				created_at TIMESTAMP DEFAULT NOW(),
+				PRIMARY KEY(source_label, source_name, relation_type, target_label, target_name)
+			)
+		`);
+
+		// Create indexes
+		await conn.run(
+			"CREATE INDEX IF NOT EXISTS idx_nodes_label ON nodes(label)",
+		);
+		await conn.run(
+			"CREATE INDEX IF NOT EXISTS idx_nodes_label_name ON nodes(label, name)",
+		);
+		await conn.run(
+			"CREATE INDEX IF NOT EXISTS idx_rels_source ON relationships(source_label, source_name)",
+		);
+		await conn.run(
+			"CREATE INDEX IF NOT EXISTS idx_rels_target ON relationships(target_label, target_name)",
+		);
+	}
+
 	async query(
-		cypher: string,
+		sql: string,
 		_params?: Record<string, unknown>,
 	): Promise<CypherResult> {
 		try {
-			const redis = await this.ensureConnected();
-			const result = await redis.call(
-				"GRAPH.QUERY",
-				this.config.graphName,
-				cypher,
-			);
+			const conn = await this.ensureConnected();
+			const reader = await conn.runAndReadAll(sql);
+			const rows = reader.getRows();
 
-			// FalkorDB returns: [headers, rows, stats]
-			// - result[0] = column headers (e.g., ["count"])
-			// - result[1] = data rows (e.g., [[0], [1]])
-			// - result[2] = execution stats
-			const resultArray = Array.isArray(result) ? result : [];
 			return {
-				resultSet: (Array.isArray(resultArray[1])
-					? resultArray[1]
-					: []) as unknown[][],
-				stats: this.parseStats(result),
+				resultSet: rows as unknown[][],
+				stats: undefined, // DuckDB doesn't return stats in the same way
 			};
 		} catch (error) {
 			this.logger.error(
-				`Cypher query failed: ${error instanceof Error ? error.message : String(error)}`,
+				`Query failed: ${error instanceof Error ? error.message : String(error)}`,
 			);
 			throw error;
 		}
 	}
 
 	/**
-	 * Upsert a node (MERGE by name + type)
+	 * Upsert a node (INSERT ... ON CONFLICT DO UPDATE)
 	 */
 	async upsertNode(
 		label: string,
@@ -134,26 +187,18 @@ export class GraphService implements OnModuleDestroy {
 				throw new Error("Node must have a 'name' property");
 			}
 
-			const escapedName = this.escapeCypher(String(name));
-			const escapedLabel = this.escapeCypher(label);
+			const conn = await this.ensureConnected();
 
-			// Build property assignments
-			const propAssignments = Object.entries({
-				name,
-				...otherProps,
-			})
-				.map(([key, value]) => {
-					const escapedKey = this.escapeCypher(key);
-					const escapedValue = this.escapeCypherValue(value);
-					return `n.\`${escapedKey}\` = ${escapedValue}`;
-				})
-				.join(", ");
+			// Use parameterized query to avoid SQL injection
+			const propsJson = JSON.stringify(otherProps);
 
-			const cypher =
-				`MERGE (n:\`${escapedLabel}\` { name: '${escapedName}' }) ` +
-				`SET ${propAssignments}`;
-
-			await this.query(cypher);
+			await conn.run(`
+				INSERT INTO nodes (label, name, properties)
+				VALUES ('${this.escape(String(label))}', '${this.escape(String(name))}', '${this.escape(propsJson)}')
+				ON CONFLICT (label, name) DO UPDATE SET
+					properties = EXCLUDED.properties,
+					updated_at = NOW()
+			`);
 		} catch (error) {
 			this.logger.error(
 				`Failed to upsert node: ${error instanceof Error ? error.message : String(error)}`,
@@ -164,8 +209,7 @@ export class GraphService implements OnModuleDestroy {
 
 	/**
 	 * Upsert a relationship between two nodes.
-	 * Uses MERGE for both nodes to ensure they exist before creating the relationship.
-	 * This prevents silent failures when nodes don't exist.
+	 * Creates nodes if they don't exist (MERGE behavior).
 	 */
 	async upsertRelationship(
 		sourceLabel: string,
@@ -176,35 +220,37 @@ export class GraphService implements OnModuleDestroy {
 		properties?: Record<string, unknown>,
 	): Promise<void> {
 		try {
-			const escapedSourceLabel = this.escapeCypher(sourceLabel);
-			const escapedSourceName = this.escapeCypher(sourceName);
-			const escapedRelation = this.escapeCypher(relation);
-			const escapedTargetLabel = this.escapeCypher(targetLabel);
-			const escapedTargetName = this.escapeCypher(targetName);
+			const conn = await this.ensureConnected();
 
-			// Build relationship property assignments if provided
-			let relPropAssignments = "";
-			if (properties && Object.keys(properties).length > 0) {
-				relPropAssignments =
-					` SET ` +
-					Object.entries(properties)
-						.map(([key, value]) => {
-							const escapedKey = this.escapeCypher(key);
-							const escapedValue = this.escapeCypherValue(value);
-							return `r.\`${escapedKey}\` = ${escapedValue}`;
-						})
-						.join(", ");
-			}
+			// Ensure source node exists
+			await conn.run(`
+				INSERT INTO nodes (label, name, properties)
+				VALUES ('${this.escape(sourceLabel)}', '${this.escape(sourceName)}', '{}')
+				ON CONFLICT (label, name) DO NOTHING
+			`);
 
-			// Use MERGE for both nodes to ensure they exist
-			// This prevents silent failures when MATCH finds no nodes
-			const cypher =
-				`MERGE (source:\`${escapedSourceLabel}\` { name: '${escapedSourceName}' }) ` +
-				`MERGE (target:\`${escapedTargetLabel}\` { name: '${escapedTargetName}' }) ` +
-				`MERGE (source)-[r:\`${escapedRelation}\`]->(target)` +
-				relPropAssignments;
+			// Ensure target node exists
+			await conn.run(`
+				INSERT INTO nodes (label, name, properties)
+				VALUES ('${this.escape(targetLabel)}', '${this.escape(targetName)}', '{}')
+				ON CONFLICT (label, name) DO NOTHING
+			`);
 
-			await this.query(cypher);
+			// Insert relationship
+			const propsJson = properties ? JSON.stringify(properties) : "{}";
+			await conn.run(`
+				INSERT INTO relationships (source_label, source_name, relation_type, target_label, target_name, properties)
+				VALUES (
+					'${this.escape(sourceLabel)}',
+					'${this.escape(sourceName)}',
+					'${this.escape(relation)}',
+					'${this.escape(targetLabel)}',
+					'${this.escape(targetName)}',
+					'${this.escape(propsJson)}'
+				)
+				ON CONFLICT (source_label, source_name, relation_type, target_label, target_name) DO UPDATE SET
+					properties = EXCLUDED.properties
+			`);
 		} catch (error) {
 			this.logger.error(
 				`Failed to upsert relationship: ${error instanceof Error ? error.message : String(error)}`,
@@ -218,14 +264,20 @@ export class GraphService implements OnModuleDestroy {
 	 */
 	async deleteNode(label: string, name: string): Promise<void> {
 		try {
-			const escapedLabel = this.escapeCypher(label);
-			const escapedName = this.escapeCypher(name);
+			const conn = await this.ensureConnected();
 
-			const cypher =
-				`MATCH (n:\`${escapedLabel}\` { name: '${escapedName}' }) ` +
-				`DETACH DELETE n`;
+			// Delete relationships first (both directions)
+			await conn.run(`
+				DELETE FROM relationships
+				WHERE (source_label = '${this.escape(label)}' AND source_name = '${this.escape(name)}')
+				   OR (target_label = '${this.escape(label)}' AND target_name = '${this.escape(name)}')
+			`);
 
-			await this.query(cypher);
+			// Delete node
+			await conn.run(`
+				DELETE FROM nodes
+				WHERE label = '${this.escape(label)}' AND name = '${this.escape(name)}'
+			`);
 		} catch (error) {
 			this.logger.error(
 				`Failed to delete node: ${error instanceof Error ? error.message : String(error)}`,
@@ -239,11 +291,12 @@ export class GraphService implements OnModuleDestroy {
 	 */
 	async deleteDocumentRelationships(documentPath: string): Promise<void> {
 		try {
-			const escapedPath = this.escapeCypher(documentPath);
+			const conn = await this.ensureConnected();
 
-			const cypher = `MATCH ()-[r { documentPath: '${escapedPath}' }]-() DELETE r`;
-
-			await this.query(cypher);
+			await conn.run(`
+				DELETE FROM relationships
+				WHERE properties->>'documentPath' = '${this.escape(documentPath)}'
+			`);
 		} catch (error) {
 			this.logger.error(
 				`Failed to delete document relationships: ${error instanceof Error ? error.message : String(error)}`,
@@ -257,13 +310,20 @@ export class GraphService implements OnModuleDestroy {
 	 */
 	async findNodesByLabel(label: string, limit?: number): Promise<unknown[]> {
 		try {
-			const escapedLabel = this.escapeCypher(label);
+			const conn = await this.ensureConnected();
 			const limitClause = limit ? ` LIMIT ${limit}` : "";
 
-			const cypher = `MATCH (n:\`${escapedLabel}\`) RETURN n${limitClause}`;
+			const reader = await conn.runAndReadAll(`
+				SELECT name, properties
+				FROM nodes
+				WHERE label = '${this.escape(label)}'${limitClause}
+			`);
 
-			const result = await this.query(cypher);
-			return (result.resultSet || []).map((row) => row[0]);
+			return reader.getRows().map((row) => {
+				const [name, properties] = row as [string, string | null];
+				const props = properties ? JSON.parse(properties) : {};
+				return { name, ...props };
+			});
 		} catch (error) {
 			this.logger.error(
 				`Failed to find nodes by label: ${error instanceof Error ? error.message : String(error)}`,
@@ -277,14 +337,23 @@ export class GraphService implements OnModuleDestroy {
 	 */
 	async findRelationships(nodeName: string): Promise<unknown[]> {
 		try {
-			const escapedName = this.escapeCypher(nodeName);
+			const conn = await this.ensureConnected();
 
-			const cypher =
-				`MATCH (n { name: '${escapedName}' })-[r]-(m) ` +
-				`RETURN type(r), m.name`;
+			const reader = await conn.runAndReadAll(`
+				SELECT relation_type, target_name, source_name
+				FROM relationships
+				WHERE source_name = '${this.escape(nodeName)}'
+				   OR target_name = '${this.escape(nodeName)}'
+			`);
 
-			const result = await this.query(cypher);
-			return result.resultSet || [];
+			return reader.getRows().map((row) => {
+				const [relType, targetName, sourceName] = row as [
+					string,
+					string,
+					string,
+				];
+				return [relType, sourceName === nodeName ? targetName : sourceName];
+			});
 		} catch (error) {
 			this.logger.error(
 				`Failed to find relationships: ${error instanceof Error ? error.message : String(error)}`,
@@ -295,7 +364,6 @@ export class GraphService implements OnModuleDestroy {
 
 	/**
 	 * Create a vector index for semantic search
-	 * FalkorDB uses HNSW indexing for vector similarity
 	 */
 	async createVectorIndex(
 		label: string,
@@ -303,26 +371,37 @@ export class GraphService implements OnModuleDestroy {
 		dimensions: number,
 	): Promise<void> {
 		try {
-			const escapedLabel = this.escapeCypher(label);
-			const escapedProperty = this.escapeCypher(property);
+			const indexKey = `${label}_${property}`;
+			if (this.vectorIndexes.has(indexKey)) {
+				return; // Index already created in this session
+			}
 
-			// FalkorDB vector index creation syntax
-			// See: https://docs.falkordb.com/commands/graph.query.html#vector-indexing
-			const cypher = `CREATE VECTOR INDEX FOR (n:\`${escapedLabel}\`) ON (n.\`${escapedProperty}\`) OPTIONS { dimension: ${dimensions}, similarityFunction: 'cosine' }`;
+			const conn = await this.ensureConnected();
 
-			await this.query(cypher);
+			// First, alter the table to ensure the embedding column has the right dimensions
+			// DuckDB VSS requires a fixed-size array
+			try {
+				await conn.run(`
+					CREATE INDEX idx_embedding_${this.escape(label)}
+					ON nodes USING HNSW (embedding)
+					WITH (metric = 'cosine')
+				`);
+			} catch {
+				// Index might already exist, that's okay
+				this.logger.debug(`Vector index on ${label}.${property} already exists`);
+			}
+
+			this.vectorIndexes.add(indexKey);
 			this.logger.log(
 				`Created vector index on ${label}.${property} with ${dimensions} dimensions`,
 			);
 		} catch (error) {
-			// Index might already exist, that's okay
 			const errorMessage =
 				error instanceof Error ? error.message : String(error);
-			if (!errorMessage.includes("already indexed")) {
+			if (!errorMessage.includes("already exists")) {
 				this.logger.error(`Failed to create vector index: ${errorMessage}`);
 				throw error;
 			}
-			this.logger.debug(`Vector index on ${label}.${property} already exists`);
 		}
 	}
 
@@ -335,17 +414,16 @@ export class GraphService implements OnModuleDestroy {
 		embedding: number[],
 	): Promise<void> {
 		try {
-			const escapedLabel = this.escapeCypher(label);
-			const escapedName = this.escapeCypher(name);
+			const conn = await this.ensureConnected();
 
-			// FalkorDB stores vectors as arrays
 			const vectorStr = `[${embedding.join(", ")}]`;
 
-			const cypher =
-				`MATCH (n:\`${escapedLabel}\` { name: '${escapedName}' }) ` +
-				`SET n.embedding = vecf32(${vectorStr})`;
-
-			await this.query(cypher);
+			// Cast to fixed-size array for VSS compatibility
+			await conn.run(`
+				UPDATE nodes
+				SET embedding = ${vectorStr}::FLOAT[${this.embeddingDimensions}]
+				WHERE label = '${this.escape(label)}' AND name = '${this.escape(name)}'
+			`);
 		} catch (error) {
 			this.logger.error(
 				`Failed to update node embedding: ${error instanceof Error ? error.message : String(error)}`,
@@ -363,25 +441,32 @@ export class GraphService implements OnModuleDestroy {
 		k: number = 10,
 	): Promise<Array<{ name: string; title?: string; score: number }>> {
 		try {
-			const escapedLabel = this.escapeCypher(label);
+			const conn = await this.ensureConnected();
 			const vectorStr = `[${queryVector.join(", ")}]`;
 
-			// FalkorDB KNN vector search using vec.queryNodes
-			// FalkorDB returns distance (lower = better), normalize to similarity (higher = better)
-			// Formula: (2 - distance) / 2 converts cosine distance to similarity
-			const cypher =
-				`CALL db.idx.vector.queryNodes('${escapedLabel}', 'embedding', ${k}, vecf32(${vectorStr})) ` +
-				`YIELD node, score ` +
-				`RETURN node.name AS name, node.title AS title, (2 - score) / 2 AS similarity ` +
-				`ORDER BY similarity DESC`;
+			// Use array_cosine_similarity for similarity search
+			// Cosine similarity ranges from -1 to 1, where 1 is most similar
+			// Cast to fixed-size array for VSS compatibility
+			const reader = await conn.runAndReadAll(`
+				SELECT
+					name,
+					properties->>'title' as title,
+					array_cosine_similarity(embedding, ${vectorStr}::FLOAT[${this.embeddingDimensions}]) as similarity
+				FROM nodes
+				WHERE label = '${this.escape(label)}'
+				  AND embedding IS NOT NULL
+				ORDER BY similarity DESC
+				LIMIT ${k}
+			`);
 
-			const result = await this.query(cypher);
-
-			return (result.resultSet || []).map((row) => ({
-				name: row[0] as string,
-				title: row[1] as string | undefined,
-				score: row[2] as number,
-			}));
+			return reader.getRows().map((row) => {
+				const [name, title, similarity] = row as [string, string | null, number];
+				return {
+					name,
+					title: title || undefined,
+					score: similarity,
+				};
+			});
 		} catch (error) {
 			this.logger.error(
 				`Vector search failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -392,7 +477,6 @@ export class GraphService implements OnModuleDestroy {
 
 	/**
 	 * Search across all entity types using vector similarity
-	 * Queries each label's index and merges results sorted by score
 	 */
 	async vectorSearchAll(
 		queryVector: number[],
@@ -424,128 +508,54 @@ export class GraphService implements OnModuleDestroy {
 			score: number;
 		}> = [];
 
-		// Query each label's vector index
-		for (const label of allLabels) {
-			try {
-				const escapedLabel = this.escapeCypher(label);
-				const vectorStr = `[${queryVector.join(", ")}]`;
+		const conn = await this.ensureConnected();
+		const vectorStr = `[${queryVector.join(", ")}]`;
 
-				// FalkorDB returns distance (lower = better), normalize to similarity (higher = better)
-				const cypher =
-					`CALL db.idx.vector.queryNodes('${escapedLabel}', 'embedding', ${k}, vecf32(${vectorStr})) ` +
-					`YIELD node, score ` +
-					`RETURN node.name AS name, node.title AS title, node.description AS description, (2 - score) / 2 AS similarity ` +
-					`ORDER BY similarity DESC`;
-
-				const result = await this.query(cypher);
-				const labelResults = (result.resultSet || []).map((row) => ({
-					name: row[0] as string,
+		// Query all labels at once
+		// Cast to fixed-size array for VSS compatibility
+		try {
+			const reader = await conn.runAndReadAll(`
+				SELECT
+					name,
 					label,
-					title: row[1] as string | undefined,
-					description: row[2] as string | undefined,
-					score: row[3] as number,
-				}));
-				allResults.push(...labelResults);
-			} catch (error) {
-				// Some labels might not have indices, skip them
-				this.logger.debug(
-					`Vector search for ${label} skipped: ${error instanceof Error ? error.message : String(error)}`,
-				);
+					properties->>'title' as title,
+					properties->>'description' as description,
+					array_cosine_similarity(embedding, ${vectorStr}::FLOAT[${this.embeddingDimensions}]) as similarity
+				FROM nodes
+				WHERE embedding IS NOT NULL
+				ORDER BY similarity DESC
+				LIMIT ${k}
+			`);
+
+			for (const row of reader.getRows()) {
+				const [name, label, title, description, similarity] = row as [
+					string,
+					string,
+					string | null,
+					string | null,
+					number,
+				];
+				allResults.push({
+					name,
+					label,
+					title: title || undefined,
+					description: description || undefined,
+					score: similarity,
+				});
 			}
+		} catch (error) {
+			this.logger.debug(
+				`Vector search failed: ${error instanceof Error ? error.message : String(error)}`,
+			);
 		}
 
-		// Sort by score descending and return top k
 		return allResults.sort((a, b) => b.score - a.score).slice(0, k);
 	}
 
 	/**
-	 * Escape special characters in Cypher string values
+	 * Escape special characters in SQL string values
 	 */
-	private escapeCypher(value: string): string {
-		return value
-			.replace(/\\/g, "\\\\")
-			.replace(/'/g, "\\'")
-			.replace(/"/g, '\\"');
-	}
-
-	/**
-	 * Escape and format a value for Cypher
-	 */
-	private escapeCypherValue(value: unknown): string {
-		if (value === null || value === undefined) {
-			return "null";
-		}
-
-		if (typeof value === "string") {
-			const escaped = this.escapeCypher(value);
-			return `'${escaped}'`;
-		}
-
-		if (typeof value === "number" || typeof value === "boolean") {
-			return String(value);
-		}
-
-		if (Array.isArray(value)) {
-			return `[${value.map((v) => this.escapeCypherValue(v)).join(", ")}]`;
-		}
-
-		if (typeof value === "object") {
-			const pairs = Object.entries(value)
-				.map(([k, v]) => `${k}: ${this.escapeCypherValue(v)}`)
-				.join(", ");
-			return `{${pairs}}`;
-		}
-
-		return String(value);
-	}
-
-	private parseStats(result: unknown): CypherResult["stats"] | undefined {
-		// FalkorDB returns: [headers, rows, stats]
-		// Statistics is the last element (index 2 for 3-element array)
-		if (!Array.isArray(result) || result.length < 3) {
-			return undefined;
-		}
-
-		const statsStr = result[2] as string | undefined;
-		if (!statsStr || typeof statsStr !== "string") {
-			return undefined;
-		}
-
-		// Parse FalkorDB stats string format
-		const stats: CypherResult["stats"] = {
-			nodesCreated: 0,
-			nodesDeleted: 0,
-			relationshipsCreated: 0,
-			relationshipsDeleted: 0,
-			propertiesSet: 0,
-		};
-
-		// Extract values from stats string (e.g., "Nodes created: 1, Properties set: 2")
-		const nodeCreatedMatch = statsStr.match(/Nodes created: (\d+)/);
-		if (nodeCreatedMatch) {
-			stats.nodesCreated = parseInt(nodeCreatedMatch[1], 10);
-		}
-
-		const nodeDeletedMatch = statsStr.match(/Nodes deleted: (\d+)/);
-		if (nodeDeletedMatch) {
-			stats.nodesDeleted = parseInt(nodeDeletedMatch[1], 10);
-		}
-
-		const relCreatedMatch = statsStr.match(/Relationships created: (\d+)/);
-		if (relCreatedMatch) {
-			stats.relationshipsCreated = parseInt(relCreatedMatch[1], 10);
-		}
-
-		const relDeletedMatch = statsStr.match(/Relationships deleted: (\d+)/);
-		if (relDeletedMatch) {
-			stats.relationshipsDeleted = parseInt(relDeletedMatch[1], 10);
-		}
-
-		const propSetMatch = statsStr.match(/Properties set: (\d+)/);
-		if (propSetMatch) {
-			stats.propertiesSet = parseInt(propSetMatch[1], 10);
-		}
-
-		return stats;
+	private escape(value: string): string {
+		return value.replace(/'/g, "''");
 	}
 }

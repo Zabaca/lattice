@@ -8,8 +8,8 @@ export class QueryService {
 
 	constructor(private graphService: GraphService) {}
 
-	async query(cypher: string): Promise<CypherResult> {
-		this.logger.debug(`Executing query: ${cypher}`);
-		return await this.graphService.query(cypher);
+	async query(sql: string): Promise<CypherResult> {
+		this.logger.debug(`Executing query: ${sql}`);
+		return await this.graphService.query(sql);
 	}
 }

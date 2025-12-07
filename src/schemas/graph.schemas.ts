@@ -1,19 +1,15 @@
 import { z } from "zod";
 
 /**
- * FalkorDB Cypher query result schema
+ * DuckDB SQL query result schema
  */
-export const CypherResultSchema = z.object({
+export const SqlResultSchema = z.object({
 	resultSet: z.array(z.array(z.unknown())),
-	stats: z
-		.object({
-			nodesCreated: z.number(),
-			nodesDeleted: z.number(),
-			relationshipsCreated: z.number(),
-			relationshipsDeleted: z.number(),
-			propertiesSet: z.number(),
-		})
-		.optional(),
+	stats: z.undefined().optional(), // DuckDB doesn't return stats like FalkorDB
 });
 
-export type CypherResult = z.infer<typeof CypherResultSchema>;
+export type SqlResult = z.infer<typeof SqlResultSchema>;
+
+// Backward compatibility alias
+export const CypherResultSchema = SqlResultSchema;
+export type CypherResult = SqlResult;

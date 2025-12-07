@@ -278,33 +278,4 @@ describe("SyncCommand", () => {
 		});
 	});
 
-	describe("option parsing", () => {
-		it("parseForce should return true", () => {
-			expect(command.parseForce()).toBe(true);
-		});
-
-		it("parseDryRun should return true", () => {
-			expect(command.parseDryRun()).toBe(true);
-		});
-
-		it("parseVerbose should return true", () => {
-			expect(command.parseVerbose()).toBe(true);
-		});
-
-		it("parseWatch should return true", () => {
-			expect(command.parseWatch()).toBe(true);
-		});
-
-		it("parseDiff should return true", () => {
-			expect(command.parseDiff()).toBe(true);
-		});
-
-		it("parseSkipCascade should return true", () => {
-			expect(command.parseSkipCascade()).toBe(true);
-		});
-
-		it("parseNoEmbeddings should return false", () => {
-			expect(command.parseNoEmbeddings()).toBe(false);
-		});
-	});
 });

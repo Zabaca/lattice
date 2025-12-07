@@ -1,483 +1,387 @@
-import { beforeEach, describe, expect, it } from "bun:test";
+import {
+	afterAll,
+	afterEach,
+	beforeAll,
+	beforeEach,
+	describe,
+	expect,
+	it,
+	setDefaultTimeout,
+} from "bun:test";
+
+// Increase timeout for tests that load DuckPGQ extension from remote
+setDefaultTimeout(15000);
 import { ConfigService } from "@nestjs/config";
-import type Redis from "ioredis";
+import { existsSync, unlinkSync } from "node:fs";
 import { GraphService } from "./graph.service.js";
 
-// Simple mock implementation
-class MockRedis {
-	private callMock = {
-		calls: [] as unknown[][],
-		resolvedValue: null as unknown,
-		rejectedError: null as Error | null,
-	};
+// Test with real DuckDB instance (embedded, no external deps)
+const TEST_DB_PATH = "/tmp/test-lattice-graph.duckdb";
 
-	async call(...args: unknown[]): Promise<unknown> {
-		this.callMock.calls.push(args);
-		if (this.callMock.rejectedError) {
-			throw this.callMock.rejectedError;
-		}
-		return this.callMock.resolvedValue;
-	}
+class TestConfigService {
+	private config: Record<string, unknown>;
 
-	async ping(): Promise<string> {
-		return "PONG";
-	}
-
-	async quit(): Promise<void> {
-		return;
-	}
-
-	setMockResolvedValue(value: unknown) {
-		this.callMock.resolvedValue = value;
-		this.callMock.rejectedError = null;
-	}
-
-	setMockRejectedError(error: Error) {
-		this.callMock.rejectedError = error;
-	}
-
-	getMockCalls() {
-		return this.callMock.calls;
-	}
-
-	clearMockCalls() {
-		this.callMock.calls = [];
-	}
-
-	on(_event: string, _callback: (err: Error) => void): this {
-		return this;
-	}
-}
-
-class MockConfigService {
-	get(key: string, defaultValue?: unknown): unknown {
-		const config: Record<string, unknown> = {
-			FALKORDB_HOST: "localhost",
-			FALKORDB_PORT: 6379,
-			GRAPH_NAME: "research_knowledge",
+	constructor(overrides: Record<string, unknown> = {}) {
+		this.config = {
+			DUCKDB_PATH: TEST_DB_PATH,
+			...overrides,
 		};
-		return config[key] ?? defaultValue;
+	}
+
+	get<T>(key: string, defaultValue?: T): T {
+		return (this.config[key] as T) ?? (defaultValue as T);
 	}
 }
 
-describe("GraphService", () => {
+describe("GraphService (DuckDB)", () => {
 	let graphService: GraphService;
-	let mockRedis: MockRedis;
-	let mockConfigService: MockConfigService;
 
-	beforeEach(() => {
-		mockRedis = new MockRedis();
-		mockConfigService = new MockConfigService();
-		graphService = new GraphService(
-			mockConfigService as unknown as ConfigService,
-		);
-		(graphService as unknown as { redis: Redis }).redis =
-			mockRedis as unknown as Redis;
+	beforeAll(() => {
+		// Clean up any existing test database
+		if (existsSync(TEST_DB_PATH)) {
+			unlinkSync(TEST_DB_PATH);
+		}
+	});
+
+	afterAll(() => {
+		// Clean up test database
+		if (existsSync(TEST_DB_PATH)) {
+			unlinkSync(TEST_DB_PATH);
+		}
+	});
+
+	beforeEach(async () => {
+		// Clean the db file for fresh state each test
+		if (existsSync(TEST_DB_PATH)) {
+			unlinkSync(TEST_DB_PATH);
+		}
+		const configService = new TestConfigService();
+		graphService = new GraphService(configService as unknown as ConfigService);
+		await graphService.connect();
+	});
+
+	afterEach(async () => {
+		await graphService.disconnect();
 	});
 
 	describe("Connection Management", () => {
-		it("should initialize with config from environment", () => {
-			expect(
-				(graphService as unknown as { config: Record<string, unknown> }).config,
-			).toEqual({
-				host: "localhost",
-				port: 6379,
-				graphName: "research_knowledge",
-			});
+		it("should connect to DuckDB and initialize schema", async () => {
+			// Connection happens in beforeEach, just verify it succeeded
+			expect(graphService).toBeDefined();
 		});
 
-		it("should use default values when environment variables are not set", () => {
-			const customConfigService = new MockConfigService();
-			const service = new GraphService(
-				customConfigService as unknown as ConfigService,
-			);
-
-			expect(
-				(service as unknown as { config: Record<string, unknown> }).config,
-			).toEqual({
-				host: "localhost",
-				port: 6379,
-				graphName: "research_knowledge",
-			});
-		});
-	});
-
-	describe("query()", () => {
-		it("should execute a raw Cypher query", async () => {
-			// FalkorDB returns: [headers, rows, stats]
-			const testData = [
-				["n"], // column headers
-				[["value1"], ["value2"]], // data rows
-				"Nodes created: 0", // stats
-			];
-			mockRedis.setMockResolvedValue(testData);
-
-			const result = await graphService.query("MATCH (n) RETURN n LIMIT 10");
-
-			expect(mockRedis.getMockCalls().length).toBeGreaterThan(0);
-			expect(result.resultSet).toEqual([["value1"], ["value2"]]);
-		});
-
-		it("should parse stats from query result", async () => {
-			// FalkorDB returns: [headers, rows, stats]
-			const testData = [
-				[], // headers
-				[], // rows
-				"Nodes created: 2, Relationships created: 1, Properties set: 5", // stats
-			];
-			mockRedis.setMockResolvedValue(testData);
-
-			const result = await graphService.query("CREATE (n:Test)");
-
-			expect(result.stats).toEqual({
-				nodesCreated: 2,
-				nodesDeleted: 0,
-				relationshipsCreated: 1,
-				relationshipsDeleted: 0,
-				propertiesSet: 5,
-			});
-		});
-
-		it("should handle empty result sets", async () => {
-			// FalkorDB returns: [headers, rows, stats]
-			mockRedis.setMockResolvedValue([[], [], "Query OK"]);
-
-			const result = await graphService.query("MATCH (n:NonExistent) RETURN n");
-
-			expect(result.resultSet).toEqual([]);
-		});
-
-		it("should throw error on query failure", async () => {
-			const error = new Error("Connection failed");
-			mockRedis.setMockRejectedError(error);
-
-			try {
-				await graphService.query("MATCH (n) RETURN n");
-				expect(true).toBe(false); // Should not reach here
-			} catch (e) {
-				expect(e).toEqual(error);
-			}
+		it("should create database file at configured path", async () => {
+			expect(existsSync(TEST_DB_PATH)).toBe(true);
 		});
 	});
 
 	describe("upsertNode()", () => {
-		it("should create or update a node", async () => {
-			// FalkorDB returns: [headers, rows, stats]
-			mockRedis.setMockResolvedValue([
-				[], // headers
-				[], // rows
-				"Nodes created: 1, Properties set: 2", // stats
-			]);
-			mockRedis.clearMockCalls();
-
+		it("should create a new node", async () => {
 			await graphService.upsertNode("Technology", {
 				name: "TypeScript",
 				version: "5.0",
 			});
 
-			const calls = mockRedis.getMockCalls();
-			expect(calls.length).toBeGreaterThan(0);
-			const cypher = calls[calls.length - 1][2];
-			expect(cypher).toContain("MERGE");
-			expect(cypher).toContain("Technology");
-			expect(cypher).toContain("TypeScript");
+			const nodes = await graphService.findNodesByLabel("Technology");
+			expect(nodes.length).toBe(1);
 		});
 
-		it("should escape special characters in property values", async () => {
-			mockRedis.setMockResolvedValue([[], [], "Nodes created: 1"]);
-			mockRedis.clearMockCalls();
+		it("should update existing node with same name (upsert behavior)", async () => {
+			await graphService.upsertNode("Technology", {
+				name: "TypeScript",
+				version: "4.0",
+			});
+			await graphService.upsertNode("Technology", {
+				name: "TypeScript",
+				version: "5.0",
+			});
 
+			const nodes = await graphService.findNodesByLabel("Technology");
+			expect(nodes.length).toBe(1);
+			// Verify the version was updated
+			const node = nodes[0] as { name: string; properties: { version: string } };
+			expect(node.properties?.version || (node as unknown as { version: string }).version).toBe("5.0");
+		});
+
+		it("should throw error if node has no name property", async () => {
+			await expect(
+				graphService.upsertNode("Technology", { version: "5.0" }),
+			).rejects.toThrow("name");
+		});
+
+		it("should handle special characters in property values", async () => {
 			await graphService.upsertNode("Document", {
 				name: "Test's Document",
 				path: '/docs/"special"/',
 			});
 
-			const calls = mockRedis.getMockCalls();
-			const cypher = calls[calls.length - 1][2];
-			expect(cypher).toBeDefined();
-			// Should contain escaped quotes
-			expect(cypher.includes("\\'")).toBe(true);
-		});
-
-		it("should throw error on upsert failure", async () => {
-			const error = new Error("Database error");
-			mockRedis.setMockRejectedError(error);
-
-			try {
-				await graphService.upsertNode("Technology", {
-					name: "TypeScript",
-				});
-				expect(true).toBe(false); // Should not reach here
-			} catch (e) {
-				expect((e as Error).message).toContain("Database error");
-			}
-		});
-
-		it("should throw error if node has no name property", async () => {
-			try {
-				await graphService.upsertNode("Technology", {
-					version: "5.0",
-				});
-				expect(true).toBe(false); // Should not reach here
-			} catch (e) {
-				expect((e as Error).message).toContain("name");
-			}
-		});
-	});
-
-	describe("upsertRelationship()", () => {
-		it("should create or update a relationship", async () => {
-			mockRedis.setMockResolvedValue([
-				[], // headers
-				[], // rows
-				"Relationships created: 1", // stats
-			]);
-			mockRedis.clearMockCalls();
-
-			await graphService.upsertRelationship(
-				"Technology",
-				"TypeScript",
-				"USES",
-				"Technology",
-				"Node.js",
-			);
-
-			const calls = mockRedis.getMockCalls();
-			const cypher = calls[calls.length - 1][2];
-			expect(cypher).toContain("MERGE");
-			expect(cypher).toContain("USES");
-			expect(cypher).toContain("TypeScript");
-			expect(cypher).toContain("Node.js");
-		});
-
-		it("should support relationship properties", async () => {
-			mockRedis.setMockResolvedValue([
-				[], // headers
-				[], // rows
-				"Relationships created: 1", // stats
-			]);
-			mockRedis.clearMockCalls();
-
-			await graphService.upsertRelationship(
-				"Technology",
-				"TypeScript",
-				"USES",
-				"Technology",
-				"Node.js",
-				{ confidence: 0.95 },
-			);
-
-			const calls = mockRedis.getMockCalls();
-			const cypher = calls[calls.length - 1][2];
-			expect(cypher).toContain("confidence");
-		});
-
-		it("should throw error on relationship upsert failure", async () => {
-			mockRedis.setMockRejectedError(new Error("Relationship failed"));
-
-			try {
-				await graphService.upsertRelationship(
-					"Technology",
-					"TypeScript",
-					"USES",
-					"Technology",
-					"Node.js",
-				);
-				expect(true).toBe(false); // Should not reach here
-			} catch (e) {
-				expect((e as Error).message).toContain("Relationship failed");
-			}
+			const nodes = await graphService.findNodesByLabel("Document");
+			expect(nodes.length).toBe(1);
 		});
 	});
 
 	describe("deleteNode()", () => {
 		it("should delete a node by label and name", async () => {
-			mockRedis.setMockResolvedValue([[], [], "Nodes deleted: 1"]);
-			mockRedis.clearMockCalls();
+			await graphService.upsertNode("Technology", { name: "ToDelete" });
+			await graphService.deleteNode("Technology", "ToDelete");
 
-			await graphService.deleteNode("Technology", "TypeScript");
-
-			const calls = mockRedis.getMockCalls();
-			const cypher = calls[calls.length - 1][2];
-			expect(cypher).toContain("MATCH");
-			expect(cypher).toContain("DELETE");
-			expect(cypher).toContain("Technology");
-			expect(cypher).toContain("TypeScript");
+			const nodes = await graphService.findNodesByLabel("Technology");
+			const found = nodes.find(
+				(n) => (n as { name: string }).name === "ToDelete",
+			);
+			expect(found).toBeUndefined();
 		});
 
-		it("should throw error on delete failure", async () => {
-			mockRedis.setMockRejectedError(new Error("Delete failed"));
-
-			try {
-				await graphService.deleteNode("Technology", "TypeScript");
-				expect(true).toBe(false); // Should not reach here
-			} catch (e) {
-				expect((e as Error).message).toContain("Delete failed");
-			}
-		});
-	});
-
-	describe("deleteDocumentRelationships()", () => {
-		it("should delete relationships for a document path", async () => {
-			mockRedis.setMockResolvedValue([
-				[], // headers
-				[], // rows
-				"Relationships deleted: 3", // stats
-			]);
-			mockRedis.clearMockCalls();
-
-			await graphService.deleteDocumentRelationships("docs/research/topic.md");
-
-			const calls = mockRedis.getMockCalls();
-			const cypher = calls[calls.length - 1][2];
-			expect(cypher).toContain("documentPath");
-			expect(cypher).toContain("docs/research/topic.md");
-		});
-
-		it("should handle document paths with special characters", async () => {
-			mockRedis.setMockResolvedValue([
-				[], // headers
-				[], // rows
-				"Relationships deleted: 0", // stats
-			]);
-			mockRedis.clearMockCalls();
-
-			await graphService.deleteDocumentRelationships('docs/"special"/file.md');
-
-			const calls = mockRedis.getMockCalls();
-			const cypher = calls[calls.length - 1][2];
-			expect(cypher).toBeDefined();
+		it("should not throw when deleting non-existent node", async () => {
+			await expect(
+				graphService.deleteNode("Technology", "NonExistent"),
+			).resolves.toBeUndefined();
 		});
 	});
 
 	describe("findNodesByLabel()", () => {
-		it("should find nodes by label", async () => {
-			// FalkorDB returns: [headers, rows, stats]
-			mockRedis.setMockResolvedValue([
-				["n"], // headers
-				[
-					[
-						{
-							name: "TypeScript",
-							version: "5.0",
-						},
-					],
-					[
-						{
-							name: "JavaScript",
-							version: "ES2022",
-						},
-					],
-				], // rows
-				"Query OK", // stats
-			]);
+		beforeEach(async () => {
+			// Set up test data
+			await graphService.upsertNode("Tool", { name: "Git", type: "vcs" });
+			await graphService.upsertNode("Tool", { name: "Docker", type: "container" });
+			await graphService.upsertNode("Tool", { name: "Vim", type: "editor" });
+		});
 
-			const nodes = await graphService.findNodesByLabel("Technology");
-
-			expect(nodes.length).toBe(2);
-			expect(nodes[0]).toEqual({
-				name: "TypeScript",
-				version: "5.0",
-			});
+		it("should find all nodes with a given label", async () => {
+			const nodes = await graphService.findNodesByLabel("Tool");
+			expect(nodes.length).toBe(3);
 		});
 
 		it("should support limit parameter", async () => {
-			// FalkorDB returns: [headers, rows, stats]
-			mockRedis.setMockResolvedValue([
-				["n"], // headers
-				[
-					[
-						{
-							name: "TypeScript",
-						},
-					],
-				], // rows
-				"Query OK", // stats
-			]);
-			mockRedis.clearMockCalls();
-
-			await graphService.findNodesByLabel("Technology", 1);
-
-			const calls = mockRedis.getMockCalls();
-			const cypher = calls[calls.length - 1][2];
-			expect(cypher).toContain("LIMIT 1");
+			const nodes = await graphService.findNodesByLabel("Tool", 2);
+			expect(nodes.length).toBe(2);
 		});
 
 		it("should return empty array when no nodes found", async () => {
-			mockRedis.setMockResolvedValue([[], [], "Query OK"]);
-
 			const nodes = await graphService.findNodesByLabel("NonExistent");
-
 			expect(nodes).toEqual([]);
 		});
 	});
 
+	describe("upsertRelationship()", () => {
+		beforeEach(async () => {
+			await graphService.upsertNode("Technology", { name: "TypeScript" });
+			await graphService.upsertNode("Technology", { name: "Node.js" });
+		});
+
+		it("should create relationship between existing nodes", async () => {
+			await graphService.upsertRelationship(
+				"Technology",
+				"TypeScript",
+				"USES",
+				"Technology",
+				"Node.js",
+			);
+
+			const rels = await graphService.findRelationships("TypeScript");
+			expect(rels.length).toBe(1);
+		});
+
+		it("should create nodes if they don't exist (MERGE behavior)", async () => {
+			await graphService.upsertRelationship(
+				"Technology",
+				"React",
+				"USES",
+				"Technology",
+				"JavaScript",
+			);
+
+			// Both nodes should have been created
+			const nodes = await graphService.findNodesByLabel("Technology");
+			const names = nodes.map((n) => (n as { name: string }).name);
+			expect(names).toContain("React");
+			expect(names).toContain("JavaScript");
+		});
+
+		it("should support relationship properties", async () => {
+			await graphService.upsertRelationship(
+				"Technology",
+				"TypeScript",
+				"USES",
+				"Technology",
+				"Node.js",
+				{ confidence: 0.95, documentPath: "/docs/test.md" },
+			);
+
+			const rels = await graphService.findRelationships("TypeScript");
+			expect(rels.length).toBe(1);
+		});
+	});
+
+	describe("deleteDocumentRelationships()", () => {
+		beforeEach(async () => {
+			await graphService.upsertNode("Document", { name: "/docs/test.md" });
+			await graphService.upsertNode("Technology", { name: "DuckDB" });
+			await graphService.upsertRelationship(
+				"Document",
+				"/docs/test.md",
+				"REFERENCES",
+				"Technology",
+				"DuckDB",
+				{ documentPath: "/docs/test.md" },
+			);
+		});
+
+		it("should delete relationships by documentPath", async () => {
+			await graphService.deleteDocumentRelationships("/docs/test.md");
+
+			const rels = await graphService.findRelationships("/docs/test.md");
+			expect(rels.length).toBe(0);
+		});
+
+		it("should not delete unrelated relationships", async () => {
+			// Create another relationship with different documentPath
+			await graphService.upsertRelationship(
+				"Document",
+				"/docs/other.md",
+				"REFERENCES",
+				"Technology",
+				"DuckDB",
+				{ documentPath: "/docs/other.md" },
+			);
+
+			await graphService.deleteDocumentRelationships("/docs/test.md");
+
+			const rels = await graphService.findRelationships("/docs/other.md");
+			expect(rels.length).toBe(1);
+		});
+	});
+
 	describe("findRelationships()", () => {
-		it("should find relationships for a node", async () => {
-			// FalkorDB returns: [headers, rows, stats]
-			mockRedis.setMockResolvedValue([
-				["type(r)", "endNode.name"], // headers
-				[
-					["USES", "Node.js"],
-					["DEPENDS_ON", "Express"],
-				], // rows
-				"Query OK", // stats
-			]);
+		beforeEach(async () => {
+			await graphService.upsertNode("Technology", { name: "TypeScript" });
+			await graphService.upsertNode("Technology", { name: "Node.js" });
+			await graphService.upsertNode("Technology", { name: "Express" });
+			await graphService.upsertRelationship(
+				"Technology",
+				"TypeScript",
+				"USES",
+				"Technology",
+				"Node.js",
+			);
+			await graphService.upsertRelationship(
+				"Technology",
+				"TypeScript",
+				"DEPENDS_ON",
+				"Technology",
+				"Express",
+			);
+		});
 
+		it("should find all relationships for a node", async () => {
 			const relationships = await graphService.findRelationships("TypeScript");
-
 			expect(relationships.length).toBe(2);
 		});
 
 		it("should return empty array when no relationships found", async () => {
-			mockRedis.setMockResolvedValue([[], [], "Query OK"]);
-
 			const relationships =
 				await graphService.findRelationships("IsolatedNode");
-
 			expect(relationships).toEqual([]);
 		});
 	});
 
-	describe("Cypher escaping", () => {
-		it("should properly escape backslashes", async () => {
-			mockRedis.setMockResolvedValue([[], [], "Nodes created: 1"]);
-			mockRedis.clearMockCalls();
+	describe("Vector Operations", () => {
+		const EMBEDDING_DIM = 512;
+		const createEmbedding = (seed: number): number[] => {
+			// Create a deterministic embedding based on seed
+			return Array.from({ length: EMBEDDING_DIM }, (_, i) =>
+				Math.sin(seed * (i + 1) * 0.01),
+			);
+		};
 
-			await graphService.upsertNode("Document", {
-				name: "Path\\with\\backslash",
-			});
-
-			const calls = mockRedis.getMockCalls();
-			const cypher = calls[calls.length - 1][2];
-			// Should have escaped backslashes in the query
-			expect(cypher).toContain("\\\\");
+		beforeEach(async () => {
+			// Create vector index
+			await graphService.createVectorIndex("Document", "embedding", EMBEDDING_DIM);
 		});
 
-		it("should properly escape single quotes", async () => {
-			mockRedis.setMockResolvedValue([[], [], "Nodes created: 1"]);
-			mockRedis.clearMockCalls();
-
-			await graphService.upsertNode("Document", {
-				name: "O'Reilly",
-			});
-
-			const calls = mockRedis.getMockCalls();
-			const cypher = calls[calls.length - 1][2];
-			expect(cypher).toContain("\\'");
+		it("should create vector index without error", async () => {
+			// Index created in beforeEach
+			// Creating again should not throw (idempotent)
+			await expect(
+				graphService.createVectorIndex("Document", "embedding", EMBEDDING_DIM),
+			).resolves.toBeUndefined();
 		});
 
-		it("should properly escape double quotes", async () => {
-			mockRedis.setMockResolvedValue([[], [], "Nodes created: 1"]);
-			mockRedis.clearMockCalls();
-
+		it("should update node embedding", async () => {
 			await graphService.upsertNode("Document", {
-				name: 'He said "hello"',
+				name: "doc1.md",
+				title: "Test Document",
 			});
 
-			const calls = mockRedis.getMockCalls();
-			const cypher = calls[calls.length - 1][2];
-			expect(cypher).toBeDefined();
+			const embedding = createEmbedding(1);
+			await graphService.updateNodeEmbedding("Document", "doc1.md", embedding);
+
+			// Verify by doing a search
+			const results = await graphService.vectorSearch("Document", embedding, 1);
+			expect(results.length).toBe(1);
+			expect(results[0].name).toBe("doc1.md");
+		});
+
+		it("should return nodes ordered by similarity", async () => {
+			// Create documents with different embeddings
+			await graphService.upsertNode("Document", { name: "doc1.md", title: "Doc 1" });
+			await graphService.upsertNode("Document", { name: "doc2.md", title: "Doc 2" });
+			await graphService.upsertNode("Document", { name: "doc3.md", title: "Doc 3" });
+
+			const embedding1 = createEmbedding(1);
+			const embedding2 = createEmbedding(2);
+			const embedding3 = createEmbedding(3);
+
+			await graphService.updateNodeEmbedding("Document", "doc1.md", embedding1);
+			await graphService.updateNodeEmbedding("Document", "doc2.md", embedding2);
+			await graphService.updateNodeEmbedding("Document", "doc3.md", embedding3);
+
+			// Query with embedding similar to doc1
+			const queryVector = createEmbedding(1);
+			const results = await graphService.vectorSearch("Document", queryVector, 3);
+
+			expect(results.length).toBe(3);
+			expect(results[0].name).toBe("doc1.md"); // Most similar
+			expect(results[0].score).toBeGreaterThan(results[1].score);
+		});
+
+		it("should search across all entity types", async () => {
+			// Create various entity types with embeddings
+			await graphService.createVectorIndex("Technology", "embedding", EMBEDDING_DIM);
+
+			await graphService.upsertNode("Document", { name: "doc.md", title: "Doc" });
+			await graphService.upsertNode("Technology", { name: "DuckDB", description: "Database" });
+
+			await graphService.updateNodeEmbedding("Document", "doc.md", createEmbedding(1));
+			await graphService.updateNodeEmbedding("Technology", "DuckDB", createEmbedding(1.1));
+
+			const results = await graphService.vectorSearchAll(createEmbedding(1), 10);
+
+			expect(results.length).toBeGreaterThanOrEqual(2);
+			// Results should include both labels
+			const labels = results.map((r) => r.label);
+			expect(labels).toContain("Document");
+			expect(labels).toContain("Technology");
+		});
+	});
+
+	describe("query()", () => {
+		it("should execute raw SQL query", async () => {
+			await graphService.upsertNode("Technology", { name: "SQLTest" });
+
+			const result = await graphService.query(
+				"SELECT * FROM nodes WHERE label = 'Technology'",
+			);
+
+			expect(result.resultSet.length).toBeGreaterThan(0);
+		});
+
+		it("should return empty result set for no matches", async () => {
+			const result = await graphService.query(
+				"SELECT * FROM nodes WHERE label = 'NonExistent'",
+			);
+
+			expect(result.resultSet).toEqual([]);
 		});
 	});
 });

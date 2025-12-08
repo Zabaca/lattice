@@ -59,7 +59,7 @@ export class GraphValidatorService {
 						typeof propertiesJson === "string"
 							? JSON.parse(propertiesJson)
 							: propertiesJson;
-				} catch (error) {
+				} catch (_error) {
 					issues.push({
 						type: "error",
 						nodeLabel: label,

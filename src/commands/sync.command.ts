@@ -28,7 +28,7 @@ export class SyncCommand extends CommandRunner {
 
 	constructor(
 		private readonly syncService: SyncService,
-		private readonly graphValidator: GraphValidatorService,
+		readonly _graphValidator: GraphValidatorService,
 	) {
 		super();
 	}
@@ -89,9 +89,9 @@ export class SyncCommand extends CommandRunner {
 			);
 		}
 
-	// TODO: Validation now happens during sync via frontmatter validation
-	// Graph validation is disabled - focusing on markdown as source of truth
-	/*
+		// TODO: Validation now happens during sync via frontmatter validation
+		// Graph validation is disabled - focusing on markdown as source of truth
+		/*
 		// Validate before syncing (unless force mode or dry-run)
 		if (!syncOptions.force && !syncOptions.dryRun) {
 			console.log("🔍 Validating graph before sync...\n");

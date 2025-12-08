@@ -23,7 +23,7 @@ interface ValidateCommandOptions {
 export class ValidateCommand extends CommandRunner {
 	constructor(
 		private readonly parserService: DocumentParserService,
-		private readonly graphValidator: GraphValidatorService,
+		readonly _graphValidator: GraphValidatorService,
 	) {
 		super();
 	}
@@ -88,13 +88,19 @@ export class ValidateCommand extends CommandRunner {
 			}
 
 			// TODO: Re-enable graph validation when needed
-		// Currently focusing on frontmatter validation as source of truth
-		const graphResult = {
-			valid: true,
-			issues: [],
-			stats: { totalNodes: 0, documentsChecked: 0, entitiesChecked: 0, errorsFound: 0, warningsFound: 0 },
-		};
-		/*
+			// Currently focusing on frontmatter validation as source of truth
+			const graphResult = {
+				valid: true,
+				issues: [],
+				stats: {
+					totalNodes: 0,
+					documentsChecked: 0,
+					entitiesChecked: 0,
+					errorsFound: 0,
+					warningsFound: 0,
+				},
+			};
+			/*
 		// Validate graph data
 			console.log("=== Graph Property Validation ===\n");
 			const graphResult = await this.graphValidator.validateGraph();
@@ -143,11 +149,11 @@ export class ValidateCommand extends CommandRunner {
 
 			console.log("\n=== Validation Summary ===");
 			console.log(
-			`Markdown files: ${issues.length === 0 ? "✓ PASSED" : `✗ ${issues.length} errors`}`,
-		);
-		console.log(
-			`Graph database: ${graphResult.stats.errorsFound === 0 ? "✓ PASSED" : `✗ ${graphResult.stats.errorsFound} errors`}`,
-		);
+				`Markdown files: ${issues.length === 0 ? "✓ PASSED" : `✗ ${issues.length} errors`}`,
+			);
+			console.log(
+				`Graph database: ${graphResult.stats.errorsFound === 0 ? "✓ PASSED" : `✗ ${graphResult.stats.errorsFound} errors`}`,
+			);
 			console.log(`Warnings: ${totalWarnings}`);
 			console.log(
 				`\nOverall: ${totalErrors === 0 ? "✓ PASSED" : "✗ FAILED"}${totalWarnings > 0 ? ` (${totalWarnings} warnings)` : ""}\n`,

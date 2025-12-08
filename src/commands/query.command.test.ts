@@ -29,6 +29,7 @@ describe("Query Commands", () => {
 
 		mockEmbeddingService = {
 			generateEmbedding: mock(async () => [0.1, 0.2, 0.3]),
+			generateQueryEmbedding: mock(async () => [0.1, 0.2, 0.3]),
 		};
 
 		consoleLogSpy = spyOn(console, "log") as ConsoleSpy;

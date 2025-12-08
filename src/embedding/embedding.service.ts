@@ -100,12 +100,28 @@ export class EmbeddingService {
 	}
 
 	/**
-	 * Generate embedding for a single text
+	 * Generate embedding for a single text (document storage)
 	 */
 	async generateEmbedding(text: string): Promise<number[]> {
 		if (!text || text.trim().length === 0) {
 			throw new Error("Cannot generate embedding for empty text");
 		}
+		return this.provider.generateEmbedding(text);
+	}
+
+	/**
+	 * Generate embedding optimized for search queries
+	 * Falls back to regular embedding if provider doesn't support query type
+	 */
+	async generateQueryEmbedding(text: string): Promise<number[]> {
+		if (!text || text.trim().length === 0) {
+			throw new Error("Cannot generate embedding for empty text");
+		}
+		// Use query-specific embedding if provider supports it
+		if (this.provider.generateQueryEmbedding) {
+			return this.provider.generateQueryEmbedding(text);
+		}
+		// Fall back to regular embedding
 		return this.provider.generateEmbedding(text);
 	}
 

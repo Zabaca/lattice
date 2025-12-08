@@ -38,7 +38,7 @@ export class VoyageEmbeddingProvider implements EmbeddingProvider {
 	}
 
 	/**
-	 * Generate an embedding for a single text string
+	 * Generate an embedding for a single text string (document storage)
 	 */
 	async generateEmbedding(text: string): Promise<number[]> {
 		const embeddings = await this.generateEmbeddings([text]);
@@ -46,10 +46,29 @@ export class VoyageEmbeddingProvider implements EmbeddingProvider {
 	}
 
 	/**
-	 * Generate embeddings for multiple texts (batch)
+	 * Generate embedding optimized for search queries
+	 * Uses input_type="query" for asymmetric retrieval
+	 */
+	async generateQueryEmbedding(text: string): Promise<number[]> {
+		const embeddings = await this.generateEmbeddingsWithType([text], "query");
+		return embeddings[0];
+	}
+
+	/**
+	 * Generate embeddings for multiple texts (batch, document storage)
 	 * Voyage API supports up to 1000 texts per request
 	 */
 	async generateEmbeddings(texts: string[]): Promise<number[][]> {
+		return this.generateEmbeddingsWithType(texts, this.inputType);
+	}
+
+	/**
+	 * Internal method to generate embeddings with specified input type
+	 */
+	private async generateEmbeddingsWithType(
+		texts: string[],
+		inputType: "document" | "query",
+	): Promise<number[][]> {
 		if (!texts || texts.length === 0) {
 			return [];
 		}
@@ -65,7 +84,7 @@ export class VoyageEmbeddingProvider implements EmbeddingProvider {
 					model: this.model,
 					input: texts,
 					output_dimension: this.dimensions,
-					input_type: this.inputType,
+					input_type: inputType,
 				}),
 			});
 

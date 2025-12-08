@@ -28,9 +28,9 @@ export class SearchCommand extends CommandRunner {
 		const limit = Math.min(parseInt(options.limit || "20", 10), 100);
 
 		try {
-			// Generate embedding for the query
+			// Generate embedding optimized for search queries
 			const queryEmbedding =
-				await this.embeddingService.generateEmbedding(query);
+				await this.embeddingService.generateQueryEmbedding(query);
 
 			let results: Array<{
 				name: string;

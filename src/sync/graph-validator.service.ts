@@ -195,7 +195,7 @@ export class GraphValidatorService {
 
 		try {
 			const result = await this.graph.query(
-				`SELECT label, name, properties FROM nodes WHERE label = 'Document' AND name = '${this.graph.escape(path)}'`,
+				`SELECT label, name, properties FROM nodes WHERE label = 'Document' AND name = '${this.escape(path)}'`,
 			);
 
 			if (result.resultSet.length === 0) {
@@ -226,5 +226,9 @@ export class GraphValidatorService {
 		}
 
 		return issues;
+	}
+
+	private escape(value: string): string {
+		return value.replace(/'/g, "''");
 	}
 }

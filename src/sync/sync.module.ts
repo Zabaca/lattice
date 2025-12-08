@@ -3,6 +3,7 @@ import { EmbeddingModule } from "../embedding/embedding.module.js";
 import { GraphModule } from "../graph/graph.module.js";
 import { CascadeService } from "./cascade.service.js";
 import { DocumentParserService } from "./document-parser.service.js";
+import { GraphValidatorService } from "./graph-validator.service.js";
 import { ManifestService } from "./manifest.service.js";
 import { OntologyService } from "./ontology.service.js";
 import { PathResolverService } from "./path-resolver.service.js";
@@ -17,6 +18,7 @@ import { SyncService } from "./sync.service.js";
 		OntologyService,
 		CascadeService,
 		PathResolverService,
+		GraphValidatorService,
 	],
 	exports: [
 		SyncService,
@@ -25,6 +27,7 @@ import { SyncService } from "./sync.service.js";
 		OntologyService,
 		CascadeService,
 		PathResolverService,
+		GraphValidatorService,
 	],
 })
 export class SyncModule {}

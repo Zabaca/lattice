@@ -2,6 +2,7 @@ import { watch } from "node:fs";
 import { join } from "node:path";
 import { Injectable } from "@nestjs/common";
 import { Command, CommandRunner, Option } from "nest-commander";
+import { GraphValidatorService } from "../sync/graph-validator.service.js";
 import type { ChangeType, DocumentChange } from "../sync/manifest.service.js";
 import { SyncOptions, SyncResult, SyncService } from "../sync/sync.service.js";
 
@@ -25,7 +26,10 @@ export class SyncCommand extends CommandRunner {
 	private watcher: ReturnType<typeof watch> | null = null;
 	private isShuttingDown = false;
 
-	constructor(private readonly syncService: SyncService) {
+	constructor(
+		private readonly syncService: SyncService,
+		private readonly graphValidator: GraphValidatorService,
+	) {
 		super();
 	}
 
@@ -84,6 +88,50 @@ export class SyncCommand extends CommandRunner {
 				`📁 Syncing specific paths: ${syncOptions.paths.join(", ")}\n`,
 			);
 		}
+
+	// TODO: Validation now happens during sync via frontmatter validation
+	// Graph validation is disabled - focusing on markdown as source of truth
+	/*
+		// Validate before syncing (unless force mode or dry-run)
+		if (!syncOptions.force && !syncOptions.dryRun) {
+			console.log("🔍 Validating graph before sync...\n");
+			try {
+				const validationResult = await this.graphValidator.validateGraph();
+				if (!validationResult.valid) {
+					console.log(
+						`\n❌ Graph validation failed with ${validationResult.stats.errorsFound} error(s)\n`,
+					);
+					console.log("Errors found:");
+					validationResult.issues
+						.filter((i) => i.type === "error")
+						.slice(0, 5)
+						.forEach((issue) => {
+							console.log(
+								`  - [${issue.nodeLabel}] ${issue.nodeName}: ${issue.message}`,
+							);
+						});
+					if (validationResult.stats.errorsFound > 5) {
+						console.log(
+							`  ... and ${validationResult.stats.errorsFound - 5} more\n`,
+						);
+					}
+					console.log(
+						"\n💡 Run 'lattice validate --fix' to see all issues and suggestions",
+					);
+					console.log(
+						"💡 Or use 'lattice sync --force' to bypass validation and rebuild graph\n",
+					);
+					process.exit(1);
+				}
+				console.log("✓ Graph validation passed\n");
+			} catch (error) {
+				console.log(
+					`⚠️  Validation check failed: ${error instanceof Error ? error.message : String(error)}`,
+				);
+				console.log("Continuing with sync...\n");
+			}
+		}
+	*/
 
 		try {
 			// Initial sync
@@ -234,20 +282,27 @@ export class SyncCommand extends CommandRunner {
 		}
 
 		if (result.changes && result.changes.length > 0) {
-			console.log("\n📝 Changes:\n");
-			const icons: Record<ChangeType, string> = {
-				new: "➕",
-				updated: "🔄",
-				deleted: "🗑️",
-				unchanged: "⏭️",
-			};
-			result.changes.forEach((c: DocumentChange) => {
-				const icon = icons[c.changeType];
-				console.log(`  ${icon} ${c.changeType}: ${c.path}`);
-				if (c.reason) {
-					console.log(`     ${c.reason}`);
-				}
-			});
+			// Filter out unchanged items
+			const actualChanges = result.changes.filter(
+				(c: DocumentChange) => c.changeType !== "unchanged",
+			);
+
+			if (actualChanges.length > 0) {
+				console.log("\n📝 Changes:\n");
+				const icons: Record<ChangeType, string> = {
+					new: "➕",
+					updated: "🔄",
+					deleted: "🗑️",
+					unchanged: "⏭️",
+				};
+				actualChanges.forEach((c: DocumentChange) => {
+					const icon = icons[c.changeType];
+					console.log(`  ${icon} ${c.changeType}: ${c.path}`);
+					if (c.reason) {
+						console.log(`     ${c.reason}`);
+					}
+				});
+			}
 		}
 
 		// Display cascade impact warnings

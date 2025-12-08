@@ -14,11 +14,60 @@ export interface ValidationError {
 }
 
 /**
- * Validate documents for relationship errors.
+ * Validate documents for property completeness and relationship errors.
  * Returns array of validation errors. Empty array means validation passed.
  */
 export function validateDocuments(docs: ParsedDocument[]): ValidationError[] {
 	const errors: ValidationError[] = [];
+
+	// Validate document properties
+	for (const doc of docs) {
+		// Required fields for documents
+		if (!doc.title || doc.title.trim() === "") {
+			errors.push({
+				path: doc.path,
+				error: "Missing required field: title",
+			});
+		}
+
+		if (!doc.summary || doc.summary.trim() === "") {
+			errors.push({
+				path: doc.path,
+				error: "Missing required field: summary",
+			});
+		}
+
+		if (!doc.created) {
+			errors.push({
+				path: doc.path,
+				error: "Missing required field: created",
+			});
+		}
+
+		if (!doc.updated) {
+			errors.push({
+				path: doc.path,
+				error: "Missing required field: updated",
+			});
+		}
+
+		if (!doc.status) {
+			errors.push({
+				path: doc.path,
+				error: "Missing required field: status",
+			});
+		}
+
+		// Validate entities have required description
+		for (const entity of doc.entities) {
+			if (!entity.description || entity.description.trim() === "") {
+				errors.push({
+					path: doc.path,
+					error: `Entity "${entity.name}" (${entity.type}) missing required field: description`,
+				});
+			}
+		}
+	}
 
 	// Build entity index (name -> documents defining it)
 	const entityIndex = new Map<string, Set<string>>();

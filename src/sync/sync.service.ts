@@ -221,6 +221,9 @@ export class SyncService {
 					options,
 				);
 
+				// Checkpoint after entity sync to ensure persistence
+				await this.graph.checkpoint();
+
 				if (options.verbose) {
 					this.logger.log(
 						`Synced ${uniqueEntities.size} entities, generated ${result.entityEmbeddingsGenerated} embeddings`,
@@ -229,6 +232,9 @@ export class SyncService {
 			}
 
 			// Phase 5 & 6: Process each change (document nodes + relationships)
+			const CHECKPOINT_BATCH_SIZE = 10; // Checkpoint every N documents
+			let processedCount = 0;
+
 			for (const change of changes) {
 				try {
 					const doc = docsByPath.get(change.path);
@@ -259,12 +265,23 @@ export class SyncService {
 					if ((change as DocumentChangeWithEmbedding).embeddingGenerated) {
 						result.embeddingsGenerated++;
 					}
+
+					// Checkpoint periodically to ensure data persistence
+					processedCount++;
+					if (!options.dryRun && processedCount % CHECKPOINT_BATCH_SIZE === 0) {
+						await this.graph.checkpoint();
+					}
 				} catch (error) {
 					const errorMessage =
 						error instanceof Error ? error.message : String(error);
 					result.errors.push({ path: change.path, error: errorMessage });
 					this.logger.warn(`Error processing ${change.path}: ${errorMessage}`);
 				}
+			}
+
+			// Final checkpoint after all documents processed
+			if (!options.dryRun && processedCount > 0) {
+				await this.graph.checkpoint();
 			}
 
 			// Save manifest unless dry-run

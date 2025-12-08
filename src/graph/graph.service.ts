@@ -1,4 +1,3 @@
-import { existsSync, unlinkSync } from "node:fs";
 import { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
 import { Injectable, Logger, OnModuleDestroy } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
@@ -14,12 +13,43 @@ export class GraphService implements OnModuleDestroy {
 	private connecting: Promise<void> | null = null;
 	private vectorIndexes: Set<string> = new Set();
 	private embeddingDimensions: number;
+	private signalHandlersRegistered = false;
 
 	constructor(private configService: ConfigService) {
 		ensureLatticeHome();
 		this.dbPath = getDatabasePath();
 		this.embeddingDimensions =
 			this.configService.get<number>("EMBEDDING_DIMENSIONS") || 512;
+		this.registerSignalHandlers();
+	}
+
+	/**
+	 * Register signal handlers for graceful shutdown with checkpoint
+	 */
+	private registerSignalHandlers(): void {
+		if (this.signalHandlersRegistered) return;
+		this.signalHandlersRegistered = true;
+
+		const gracefulShutdown = async (signal: string) => {
+			this.logger.log(`Received ${signal}, checkpointing before exit...`);
+			try {
+				await this.checkpoint();
+				await this.disconnect();
+			} catch (error) {
+				this.logger.error(
+					`Error during graceful shutdown: ${error instanceof Error ? error.message : String(error)}`,
+				);
+			}
+			process.exit(0);
+		};
+
+		process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+		process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+		process.on("beforeExit", async () => {
+			if (this.connection) {
+				await this.checkpoint();
+			}
+		});
 	}
 
 	async onModuleDestroy(): Promise<void> {
@@ -52,36 +82,31 @@ export class GraphService implements OnModuleDestroy {
 		return this.connection;
 	}
 
+	/**
+	 * Connect to DuckDB using in-memory + ATTACH pattern.
+	 * This ensures VSS extension is loaded BEFORE the database file is opened,
+	 * allowing proper WAL replay for HNSW indexes.
+	 */
 	async connect(): Promise<void> {
 		try {
-			// Remove WAL file if it exists - WAL replay fails with HNSW indexes
-			// because VSS extension can't be loaded before database opens.
-			// Checkpointing on disconnect minimizes data loss.
-			const walPath = `${this.dbPath}.wal`;
-			if (existsSync(walPath)) {
-				this.logger.warn(
-					`Removing WAL file to prevent HNSW index replay failure`,
-				);
-				unlinkSync(walPath);
-			}
-
-			// Allow unsigned extensions for DuckPGQ from custom repository
-			this.instance = await DuckDBInstance.create(this.dbPath, {
+			// Step 1: Create in-memory instance first (no database file)
+			// This allows us to load extensions before any WAL replay occurs
+			this.instance = await DuckDBInstance.create(":memory:", {
 				allow_unsigned_extensions: "true",
 			});
 			this.connection = await this.instance.connect();
 
-			// Load VSS extension for vector similarity search
+			// Step 2: Load VSS extension BEFORE attaching the database
+			// This ensures HNSW index support is available during WAL replay
 			await this.connection.run("INSTALL vss; LOAD vss;");
 
-			// Enable experimental HNSW persistence
+			// Step 3: Enable experimental HNSW persistence
 			await this.connection.run(
 				"SET hnsw_enable_experimental_persistence = true;",
 			);
 
-			// Load DuckPGQ extension for property graph queries (from custom repository)
+			// Step 4: Load DuckPGQ extension (optional)
 			try {
-				// Set custom repo for DuckPGQ
 				await this.connection.run(
 					"SET custom_extension_repository = 'http://duckpgq.s3.eu-north-1.amazonaws.com';",
 				);
@@ -94,10 +119,21 @@ export class GraphService implements OnModuleDestroy {
 				);
 			}
 
-			// Initialize schema
+			// Step 5: ATTACH the persistent database file
+			// WAL replay now happens with VSS extension already loaded
+			await this.connection.run(
+				`ATTACH '${this.dbPath}' AS lattice (READ_WRITE);`,
+			);
+
+			// Step 6: Set lattice as the default database for all operations
+			await this.connection.run("USE lattice;");
+
+			// Initialize schema (in the attached database)
 			await this.initializeSchema();
 
-			this.logger.log(`Connected to DuckDB at ${this.dbPath}`);
+			this.logger.log(
+				`Connected to DuckDB (in-memory + ATTACH) at ${this.dbPath}`,
+			);
 		} catch (error) {
 			this.connection = null;
 			this.instance = null;
@@ -112,18 +148,32 @@ export class GraphService implements OnModuleDestroy {
 		if (this.connection) {
 			// Checkpoint to flush WAL to main database file
 			// This prevents HNSW index replay issues on next startup
-			try {
-				await this.connection.run("CHECKPOINT;");
-			} catch {
-				// Checkpoint may fail if database is read-only or other issues
-				this.logger.debug("Checkpoint failed during disconnect");
-			}
+			await this.checkpoint();
 			this.connection.closeSync();
 			this.connection = null;
 			this.logger.log("Disconnected from DuckDB");
 		}
 		if (this.instance) {
 			this.instance = null;
+		}
+	}
+
+	/**
+	 * Force a checkpoint to flush WAL to main database file.
+	 * Call this after batches of writes to ensure data persistence.
+	 */
+	async checkpoint(): Promise<void> {
+		if (!this.connection) {
+			return;
+		}
+		try {
+			await this.connection.run("CHECKPOINT;");
+			this.logger.debug("Checkpoint completed");
+		} catch (error) {
+			// Checkpoint may fail if database is read-only or other issues
+			this.logger.warn(
+				`Checkpoint failed: ${error instanceof Error ? error.message : String(error)}`,
+			);
 		}
 	}
 

@@ -56,6 +56,7 @@ describe("SyncService", () => {
 			upsertRelationship: mock(() => Promise.resolve()),
 			deleteNode: mock(() => Promise.resolve()),
 			deleteDocumentRelationships: mock(() => Promise.resolve()),
+			checkpoint: mock(() => Promise.resolve()),
 		};
 
 		mockCascade = {

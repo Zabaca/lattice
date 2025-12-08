@@ -8,6 +8,10 @@ const createDoc = (
 ): ParsedDocument => ({
 	path: "docs/test.md",
 	title: "Test Document",
+	summary: "Test document summary",
+	created: new Date("2024-01-01"),
+	updated: new Date("2024-01-01"),
+	status: "active",
 	content: "# Test",
 	contentHash: "abc123",
 	frontmatterHash: "def456",

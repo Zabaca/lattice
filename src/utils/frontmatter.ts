@@ -39,7 +39,7 @@ export type RelationType = z.infer<typeof RelationTypeSchema>;
 export const EntitySchema = z.object({
 	name: z.string().min(1),
 	type: EntityTypeSchema,
-	description: z.string().optional(),
+	description: z.string().min(1),
 });
 export type Entity = z.infer<typeof EntitySchema>;
 

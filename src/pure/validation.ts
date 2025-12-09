@@ -58,15 +58,8 @@ export function validateDocuments(docs: ParsedDocument[]): ValidationError[] {
 			});
 		}
 
-		// Validate entities have required description
-		for (const entity of doc.entities) {
-			if (!entity.description || entity.description.trim() === "") {
-				errors.push({
-					path: doc.path,
-					error: `Entity "${entity.name}" (${entity.type}) missing required field: description`,
-				});
-			}
-		}
+		// Note: Entity validation (name, type, description) is handled by Zod schema
+		// in document-parser.service.ts during parsing. No need to duplicate here.
 	}
 
 	// Build entity index (name -> documents defining it)

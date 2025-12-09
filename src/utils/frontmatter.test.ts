@@ -57,15 +57,7 @@ describe("frontmatter utils", () => {
 		});
 
 		describe("EntitySchema", () => {
-			it("accepts valid entity with required fields", () => {
-				const result = EntitySchema.safeParse({
-					name: "TypeScript",
-					type: "Technology",
-				});
-				expect(result.success).toBe(true);
-			});
-
-			it("accepts entity with optional description", () => {
+			it("accepts valid entity with all required fields", () => {
 				const result = EntitySchema.safeParse({
 					name: "TypeScript",
 					type: "Technology",
@@ -74,13 +66,37 @@ describe("frontmatter utils", () => {
 				expect(result.success).toBe(true);
 			});
 
+			it("rejects entity without description", () => {
+				const result = EntitySchema.safeParse({
+					name: "TypeScript",
+					type: "Technology",
+				});
+				expect(result.success).toBe(false);
+			});
+
+			it("rejects entity with empty description", () => {
+				const result = EntitySchema.safeParse({
+					name: "TypeScript",
+					type: "Technology",
+					description: "",
+				});
+				expect(result.success).toBe(false);
+			});
+
 			it("rejects entity without name", () => {
-				const result = EntitySchema.safeParse({ type: "Technology" });
+				const result = EntitySchema.safeParse({
+					type: "Technology",
+					description: "Some description",
+				});
 				expect(result.success).toBe(false);
 			});
 
 			it("rejects entity with empty name", () => {
-				const result = EntitySchema.safeParse({ name: "", type: "Technology" });
+				const result = EntitySchema.safeParse({
+					name: "",
+					type: "Technology",
+					description: "Some description",
+				});
 				expect(result.success).toBe(false);
 			});
 		});

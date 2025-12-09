@@ -177,9 +177,14 @@ export class DocumentParserService {
 			} else {
 				const entityPreview =
 					typeof e === "string" ? `"${e}"` : JSON.stringify(e);
-				errors.push(
-					`Entity[${i}]: ${entityPreview} - Expected object with {name, type}, got ${typeof e}`,
-				);
+				// Format Zod errors for better debugging
+				const zodErrors = result.error.issues
+					.map((issue) => {
+						const path = issue.path.length > 0 ? issue.path.join(".") : "root";
+						return `${path}: ${issue.message}`;
+					})
+					.join("; ");
+				errors.push(`Entity[${i}]: ${entityPreview} - ${zodErrors}`);
 			}
 		}
 

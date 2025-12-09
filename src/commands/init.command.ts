@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Injectable } from "@nestjs/common";
-import { Command, CommandRunner, Option } from "nest-commander";
+import { Command, CommandRunner } from "nest-commander";
 import {
 	ensureLatticeHome,
 	getDocsPath,
@@ -17,9 +17,7 @@ const __dirname = path.dirname(__filename);
 
 const COMMANDS = ["research.md", "graph-sync.md", "entity-extract.md"];
 
-interface InitCommandOptions {
-	global?: boolean;
-}
+type InitCommandOptions = Record<string, never>;
 
 @Injectable()
 @Command({
@@ -27,7 +25,7 @@ interface InitCommandOptions {
 	description: "Install Claude Code slash commands for Lattice",
 })
 export class InitCommand extends CommandRunner {
-	async run(_inputs: string[], options: InitCommandOptions): Promise<void> {
+	async run(_inputs: string[], _options: InitCommandOptions): Promise<void> {
 		try {
 			// Setup ~/.lattice/ directory structure
 			ensureLatticeHome();
@@ -51,10 +49,8 @@ VOYAGE_API_KEY=
 			console.log(`   Config:    ${envPath}`);
 			console.log();
 
-			// Determine target directory
-			const targetDir = options.global
-				? path.join(homedir(), ".claude", "commands")
-				: path.join(process.cwd(), ".claude", "commands");
+			// Always install to user's home directory
+			const targetDir = path.join(homedir(), ".claude", "commands");
 
 			// Find commands source directory
 			// In built package: dist/cli.js -> commands/ is at package root (one level up)
@@ -153,13 +149,6 @@ VOYAGE_API_KEY=
 			);
 			console.log();
 
-			if (!options.global) {
-				console.log(
-					"💡 Tip: Use 'lattice init --global' to install for all projects",
-				);
-				console.log();
-			}
-
 			console.log(`⚠️  Add your Voyage API key to: ${getEnvPath()}`);
 			console.log();
 
@@ -171,13 +160,5 @@ VOYAGE_API_KEY=
 			);
 			process.exit(1);
 		}
-	}
-
-	@Option({
-		flags: "-g, --global",
-		description: "Install to ~/.claude/commands/ (available in all projects)",
-	})
-	parseGlobal(): boolean {
-		return true;
 	}
 }

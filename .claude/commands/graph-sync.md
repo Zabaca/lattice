@@ -5,6 +5,18 @@ model: haiku
 
 Identify modified documents, extract entities from them, and sync to the knowledge graph.
 
+## Configuration
+
+**⚠️ CRITICAL: All documentation lives in `~/.lattice/docs/`**
+
+| Path | Purpose |
+|------|---------|
+| `~/.lattice/docs/` | Root documentation directory (ALWAYS use this) |
+| `~/.lattice/docs/{topic}/` | Topic directories |
+| `~/.lattice/docs/{topic}/*.md` | Research documents |
+
+**NEVER use project-local `docs/` directories. ALWAYS use absolute path `~/.lattice/docs/`.**
+
 ## Process
 
 ### Step 1: Check What Needs Syncing
@@ -38,16 +50,16 @@ For each new or updated document identified:
 Task(
   subagent_type="general-purpose",
   model="haiku",
-  prompt="Use /entity-extract docs/topic-name/document.md to extract entities. Follow all instructions and report completion."
+  prompt="Use /entity-extract ~/.lattice/docs/topic-name/document.md to extract entities. Follow all instructions and report completion."
 )
 ```
 
 **For multiple documents, launch agents in parallel:**
 ```
 // In a single message, launch multiple Task tool calls:
-Task(subagent_type="general-purpose", model="haiku", prompt="/entity-extract docs/topic-a/README.md ...")
-Task(subagent_type="general-purpose", model="haiku", prompt="/entity-extract docs/topic-b/notes.md ...")
-Task(subagent_type="general-purpose", model="haiku", prompt="/entity-extract docs/topic-c/README.md ...")
+Task(subagent_type="general-purpose", model="haiku", prompt="/entity-extract ~/.lattice/docs/topic-a/README.md ...")
+Task(subagent_type="general-purpose", model="haiku", prompt="/entity-extract ~/.lattice/docs/topic-b/notes.md ...")
+Task(subagent_type="general-purpose", model="haiku", prompt="/entity-extract ~/.lattice/docs/topic-c/README.md ...")
 ```
 
 This is much faster than sequential execution for multiple documents.
@@ -87,15 +99,15 @@ Summarize what was processed:
 
 Processed 3 documents:
 
-1. docs/topic-a/README.md
+1. ~/.lattice/docs/topic-a/README.md
    - 4 entities extracted
    - 3 relationships defined
 
-2. docs/topic-b/document.md
+2. ~/.lattice/docs/topic-b/document.md
    - 8 entities extracted
    - 5 relationships defined
 
-3. docs/topic-c/notes.md
+3. ~/.lattice/docs/topic-c/notes.md
    - 5 entities extracted
    - 4 relationships defined
 

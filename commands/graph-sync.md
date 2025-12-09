@@ -5,6 +5,18 @@ model: sonnet
 
 Identify modified documents in `~/.lattice/docs/`, extract entities from them, and sync to the knowledge graph.
 
+## Configuration
+
+**⚠️ CRITICAL: All documentation lives in `~/.lattice/docs/`**
+
+| Path | Purpose |
+|------|---------|
+| `~/.lattice/docs/` | Root documentation directory (ALWAYS use this) |
+| `~/.lattice/docs/{topic}/` | Topic directories |
+| `~/.lattice/docs/{topic}/*.md` | Research documents |
+
+**NEVER use project-local `docs/` directories. ALWAYS use absolute path `~/.lattice/docs/`.**
+
 ## Process
 
 ### Step 1: Check What Needs Syncing

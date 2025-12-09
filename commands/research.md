@@ -6,6 +6,19 @@ model: sonnet
 
 Research the topic "$ARGUMENTS" by first checking existing documentation, then performing new research if needed.
 
+## Configuration
+
+**⚠️ CRITICAL: All documentation lives in `~/.lattice/docs/`**
+
+| Path | Purpose |
+|------|---------|
+| `~/.lattice/docs/` | Root documentation directory (ALWAYS use this) |
+| `~/.lattice/docs/{topic}/` | Topic directories |
+| `~/.lattice/docs/{topic}/README.md` | Topic index |
+| `~/.lattice/docs/{topic}/*.md` | Research documents |
+
+**NEVER use project-local `docs/` directories. ALWAYS use absolute path `~/.lattice/docs/`.**
+
 ## Process
 
 ### Step 1: Search Existing Research

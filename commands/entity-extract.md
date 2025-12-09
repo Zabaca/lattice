@@ -6,6 +6,20 @@ model: haiku
 
 Extract entities and relationships from the markdown file "$ARGUMENTS" and update its frontmatter.
 
+## Configuration
+
+**⚠️ CRITICAL: All documentation lives in `~/.lattice/docs/`**
+
+| Path | Purpose |
+|------|---------|
+| `~/.lattice/docs/` | Root documentation directory (ALWAYS use this) |
+| `~/.lattice/docs/{topic}/` | Topic directories |
+| `~/.lattice/docs/{topic}/*.md` | Research documents |
+
+**NEVER use project-local `docs/` directories. ALWAYS use absolute path `~/.lattice/docs/`.**
+
+**If the argument "$ARGUMENTS" is a relative path like `docs/topic/file.md`, convert it to `~/.lattice/docs/topic/file.md`.**
+
 ## IMPORTANT: Always Re-Extract
 
 Even if the document already has frontmatter with entities:

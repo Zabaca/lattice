@@ -629,13 +629,17 @@ export class SyncService {
 				(change as DocumentChangeWithEmbedding).embeddingGenerated =
 					embeddingGenerated;
 
-				// Update manifest
+				// Re-read file to get current hash before updating manifest
+				// This prevents race conditions where the file is modified during sync
+				const currentDoc = await this.parser.parseDocument(change.path);
+
+				// Update manifest with current file state
 				this.manifest.updateEntry(
-					doc.path,
-					doc.contentHash,
-					doc.frontmatterHash,
-					doc.entities.length,
-					doc.relationships.length,
+					currentDoc.path,
+					currentDoc.contentHash,
+					currentDoc.frontmatterHash,
+					currentDoc.entities.length,
+					currentDoc.relationships.length,
 				);
 				break;
 			}

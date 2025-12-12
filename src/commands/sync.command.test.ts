@@ -85,14 +85,27 @@ describe("SyncCommand", () => {
 
 		it("should handle force mode with warning", async () => {
 			try {
-				await command.run([], { force: true });
+				await command.run(["docs/test/"], { force: true });
 			} catch (_e) {
 				// Expected - process.exit mock throws
 			}
 
 			const logs = consoleLogSpy.mock.calls.map((call) => call[0]);
 			expect(logs.join("\n")).toContain("Force mode");
-			expect(logs.join("\n")).toContain("cleared and rebuilt");
+			expect(logs.join("\n")).toContain("cleared and re-synced");
+		});
+
+		it("should require paths when using --force", async () => {
+			try {
+				await command.run([], { force: true });
+			} catch (_e) {
+				// Expected - process.exit mock throws
+			}
+
+			const logs = consoleLogSpy.mock.calls.map((call) => call[0]);
+			expect(logs.join("\n")).toContain(
+				"--force requires specific paths to be specified",
+			);
 		});
 
 		it("should handle dry-run mode with message", async () => {
@@ -120,7 +133,7 @@ describe("SyncCommand", () => {
 
 		it("should pass options correctly to SyncService", async () => {
 			try {
-				await command.run([], { force: true, verbose: true });
+				await command.run(["docs/test/"], { force: true, verbose: true });
 			} catch (_e) {
 				// Expected - process.exit mock throws
 			}
@@ -129,6 +142,7 @@ describe("SyncCommand", () => {
 			const callOptions = mockSyncService.sync.mock.calls[0][0];
 			expect(callOptions.force).toBe(true);
 			expect(callOptions.verbose).toBe(true);
+			expect(callOptions.paths).toEqual(["docs/test/"]);
 		});
 
 		it("should handle specific paths", async () => {

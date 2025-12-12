@@ -48,6 +48,13 @@ export class SyncCommand extends CommandRunner {
 			process.exit(1);
 		}
 
+		// --force requires specific paths to prevent accidental full refreshes
+		if (options.force && paths.length === 0) {
+			console.log("\n⚠️  --force requires specific paths to be specified.\n");
+			console.log("   Usage: lattice sync --force <path1> [path2] ...\n");
+			process.exit(1);
+		}
+
 		const syncOptions: SyncOptions = {
 			force: options.force,
 			dryRun: options.dryRun || options.diff,
@@ -60,15 +67,9 @@ export class SyncCommand extends CommandRunner {
 		console.log("\n🔄 Graph Sync\n");
 
 		if (syncOptions.force) {
-			if (syncOptions.paths && syncOptions.paths.length > 0) {
-				console.log(
-					`⚠️  Force mode: ${syncOptions.paths.length} document(s) will be cleared and re-synced\n`,
-				);
-			} else {
-				console.log(
-					"⚠️  Force mode: Entire graph will be cleared and rebuilt\n",
-				);
-			}
+			console.log(
+				`⚠️  Force mode: ${syncOptions.paths?.length} document(s) will be cleared and re-synced\n`,
+			);
 		}
 
 		if (syncOptions.dryRun) {
@@ -367,7 +368,7 @@ export class SyncCommand extends CommandRunner {
 	@Option({
 		flags: "-f, --force",
 		description:
-			"Force re-sync: with paths, clears only those docs; without paths, rebuilds entire graph",
+			"Force re-sync specified documents (requires paths to be specified)",
 	})
 	parseForce(): boolean {
 		return true;

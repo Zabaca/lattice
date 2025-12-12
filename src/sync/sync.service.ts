@@ -232,61 +232,51 @@ export class SyncService {
 			}
 
 			// Phase 5 & 6: Process each change (document nodes + relationships)
+			// Errors now halt sync - no silent failures
 			const CHECKPOINT_BATCH_SIZE = 10; // Checkpoint every N documents
 			let processedCount = 0;
 
 			for (const change of changes) {
-				try {
-					const doc = docsByPath.get(change.path);
-					const cascadeWarnings = await this.processChange(
-						change,
-						options,
-						doc,
-					);
-					result.cascadeWarnings.push(...cascadeWarnings);
+				const doc = docsByPath.get(change.path);
+				const cascadeWarnings = await this.processChange(change, options, doc);
+				result.cascadeWarnings.push(...cascadeWarnings);
 
-					// Update result counts
-					switch (change.changeType) {
-						case "new":
-							result.added++;
-							break;
-						case "updated":
-							result.updated++;
-							break;
-						case "deleted":
-							result.deleted++;
-							break;
-						case "unchanged":
-							result.unchanged++;
-							break;
-					}
+				// Update result counts
+				switch (change.changeType) {
+					case "new":
+						result.added++;
+						break;
+					case "updated":
+						result.updated++;
+						break;
+					case "deleted":
+						result.deleted++;
+						break;
+					case "unchanged":
+						result.unchanged++;
+						break;
+				}
 
-					// Count embeddings generated
-					if ((change as DocumentChangeWithEmbedding).embeddingGenerated) {
-						result.embeddingsGenerated++;
-					}
+				// Count embeddings generated
+				if ((change as DocumentChangeWithEmbedding).embeddingGenerated) {
+					result.embeddingsGenerated++;
+				}
 
-					// Checkpoint periodically to ensure data persistence
-					processedCount++;
-					if (!options.dryRun && processedCount % CHECKPOINT_BATCH_SIZE === 0) {
-						await this.graph.checkpoint();
-					}
-				} catch (error) {
-					const errorMessage =
-						error instanceof Error ? error.message : String(error);
-					result.errors.push({ path: change.path, error: errorMessage });
-					this.logger.warn(`Error processing ${change.path}: ${errorMessage}`);
+				// Save manifest after each successful change (incremental progress)
+				if (!options.dryRun && change.changeType !== "unchanged") {
+					await this.manifest.save();
+				}
+
+				// Checkpoint periodically to ensure database persistence
+				processedCount++;
+				if (!options.dryRun && processedCount % CHECKPOINT_BATCH_SIZE === 0) {
+					await this.graph.checkpoint();
 				}
 			}
 
 			// Final checkpoint after all documents processed
 			if (!options.dryRun && processedCount > 0) {
 				await this.graph.checkpoint();
-			}
-
-			// Save manifest unless dry-run
-			if (!options.dryRun) {
-				await this.manifest.save();
 			}
 		} catch (error) {
 			const errorMessage =
@@ -430,7 +420,7 @@ export class SyncService {
 			} catch (error) {
 				const errorMessage =
 					error instanceof Error ? error.message : String(error);
-				this.logger.warn(
+				throw new Error(
 					`Failed to generate embedding for ${doc.path}: ${errorMessage}`,
 				);
 			}
@@ -765,7 +755,7 @@ export class SyncService {
 				} catch (error) {
 					const errorMessage =
 						error instanceof Error ? error.message : String(error);
-					this.logger.warn(
+					throw new Error(
 						`Failed to generate embedding for ${entity.type}:${entity.name}: ${errorMessage}`,
 					);
 				}

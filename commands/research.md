@@ -104,15 +104,6 @@ Create TWO files:
 
 **1. `~/.lattice/docs/{topic-name}/README.md`** (index):
 ```markdown
----
-created: [TODAY'S DATE]
-updated: [TODAY'S DATE]
-status: active
-topic: {topic-name}
-summary: >
-  Brief description of the topic area for semantic search.
----
-
 # {Topic Title}
 
 Brief description of what this topic covers.
@@ -130,15 +121,6 @@ Brief description of what this topic covers.
 
 **2. `~/.lattice/docs/{topic-name}/{research-filename}.md`** (content):
 ```markdown
----
-created: [TODAY'S DATE]
-updated: [TODAY'S DATE]
-status: complete
-topic: {topic-name}
-summary: >
-  Detailed summary of this specific research for semantic search.
----
-
 # {Research Title}
 
 ## Purpose
@@ -157,13 +139,14 @@ What this research addresses.
 1. [Source](URL)
 ```
 
+**Note:** No frontmatter required - entities, relationships, and summaries are automatically extracted by AI during `lattice sync`.
+
 #### For EXISTING Topics (directory exists)
 
 **1. Create** `~/.lattice/docs/{topic-name}/{research-filename}.md` with content template above
 
 **2. Update** `~/.lattice/docs/{topic-name}/README.md`:
 - Add new row to the Documents table
-- Update the `updated` date in frontmatter
 
 ### Step 8: Confirmation
 
@@ -171,17 +154,17 @@ After creating files, confirm:
 - Topic directory path
 - README.md created/updated
 - Research file created with name
-- Remind user to run `/graph-sync` to extract entities
+- Remind user to run `/graph-sync` to sync to knowledge graph
 
 ## Important Notes
 
-- **Do NOT** auto-run entity extraction - use `/graph-sync` separately
+- **Do NOT** auto-run graph sync - use `/graph-sync` separately
 - **Always create README.md** for new topics (lightweight index)
 - **Always create separate research file** (never put research content in README)
 - Use kebab-case for all directory and file names
-- Include today's date in YYYY-MM-DD format
 - Always cite sources with URLs
 - Cross-link to related research topics when relevant
+- **No frontmatter needed** - AI extracts entities automatically during sync
 
 ## File Structure Standard
 

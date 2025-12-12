@@ -1,9 +1,9 @@
 ---
-description: Extract entities from modified docs and sync to graph
+description: Sync modified docs to knowledge graph
 model: sonnet
 ---
 
-Identify modified documents in `~/.lattice/docs/`, extract entities from them, and sync to the knowledge graph.
+Sync modified documents in `~/.lattice/docs/` to the knowledge graph.
 
 ## Configuration
 
@@ -33,61 +33,26 @@ This will show:
 
 If no documents need syncing, report that and exit.
 
-### Step 2: Run Entity Extraction (Parallel Execution)
+### Step 2: Sync to Graph
 
-For each new or updated document identified:
-
-1. Use the **Task subagent pattern** with Haiku model for parallel execution
-2. Launch multiple Task agents simultaneously (one per document)
-3. Each agent should:
-   - Invoke `/entity-extract <path>`
-   - Follow expanded instructions
-   - Extract entities and update frontmatter
-   - Report completion
-
-**Example Task agent invocation:**
-```
-Task(
-  subagent_type="general-purpose",
-  model="haiku",
-  prompt="Use /entity-extract ~/.lattice/docs/topic/document.md to extract entities. Follow all instructions and report completion."
-)
-```
-
-**For multiple documents, launch agents in parallel:**
-```
-// In a single message, launch multiple Task tool calls:
-Task(subagent_type="general-purpose", model="haiku", prompt="/entity-extract ~/.lattice/docs/topic-a/README.md ...")
-Task(subagent_type="general-purpose", model="haiku", prompt="/entity-extract ~/.lattice/docs/topic-b/notes.md ...")
-Task(subagent_type="general-purpose", model="haiku", prompt="/entity-extract ~/.lattice/docs/topic-c/README.md ...")
-```
-
-This is much faster than sequential execution for multiple documents.
-
-### Step 3: Sync to Graph
-
-After all entity extractions are complete:
+Run sync to process all changed documents:
 
 ```bash
 lattice sync
 ```
 
-**Note:** The sync command validates frontmatter schema and will fail with errors if:
-- Entities are malformed (strings instead of objects with `name`/`type`)
-- Relationships are malformed (strings instead of objects with `source`/`relation`/`target`)
+This will automatically:
+- **Extract entities** using AI (Claude Haiku) for each new/updated document
+- **Generate embeddings** for semantic search
+- **Create entity relationships** in the graph
+- **Update the sync manifest** with new hashes
 
-If sync fails due to schema errors, the entity extraction didn't follow the correct format.
+The sync command includes built-in rate limiting (500ms between extractions) to avoid API throttling.
 
-This will:
-- Update document nodes in FalkorDB
-- Generate embeddings for semantic search
-- Create entity relationships
-- Update the sync manifest
-
-### Step 4: Report Results
+### Step 3: Report Results
 
 Summarize what was processed:
-- Number of documents with entity extraction
+- Number of documents synced
 - Entities extracted per document
 - Graph sync statistics (added, updated, unchanged)
 - Any errors encountered
@@ -95,35 +60,28 @@ Summarize what was processed:
 ## Example Output
 
 ```
-## Entity Extraction
-
-Processed 3 documents:
-
-1. ~/.lattice/docs/american-holidays/README.md
-   - 4 entities extracted
-   - 3 relationships defined
-
-2. ~/.lattice/docs/american-holidays/thanksgiving-vs-christmas.md
-   - 8 entities extracted
-   - 5 relationships defined
-
-3. ~/.lattice/docs/bun-nestjs/notes.md
-   - 5 entities extracted
-   - 4 relationships defined
-
 ## Graph Sync
 
+lattice status:
+- 3 documents need syncing (2 new, 1 updated)
+
+lattice sync:
+- ~/.lattice/docs/american-holidays/README.md → 4 entities extracted
+- ~/.lattice/docs/american-holidays/thanksgiving-vs-christmas.md → 8 entities extracted
+- ~/.lattice/docs/bun-nestjs/notes.md → 5 entities extracted
+
+Summary:
 - Added: 2
 - Updated: 1
 - Unchanged: 126
-- Duration: 1.2s
+- Duration: 3.2s
 ```
 
 ## Important Notes
 
-- **Parallel execution** - Launch all entity extractions simultaneously for speed
-- Entity extraction runs per-document for quality
-- Graph sync is incremental (only processes changes)
-- Safe to run frequently - won't duplicate or corrupt data
-- If extraction fails on a doc, other agents continue - report all errors at end
-- **Batch syncing**: You don't need to run after each `/research` - run once after multiple sessions
+- **AI extraction is automatic** - no need for manual `/entity-extract` calls
+- **Incremental sync** - only processes changed documents
+- **Self-correcting** - Claude validates extractions and fixes errors automatically
+- **Safe to run frequently** - won't duplicate or corrupt data
+- **No frontmatter required** - documents are plain markdown
+- **Batch syncing** - run once after multiple research sessions for efficiency

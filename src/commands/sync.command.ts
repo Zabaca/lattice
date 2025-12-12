@@ -14,6 +14,9 @@ interface SyncCommandOptions {
 	diff?: boolean;
 	skipCascade?: boolean;
 	embeddings?: boolean;
+	// v2 is now default - these flags modify behavior
+	skipExtraction?: boolean;
+	legacy?: boolean;
 }
 
 @Injectable()
@@ -62,6 +65,9 @@ export class SyncCommand extends CommandRunner {
 			paths: paths.length > 0 ? paths : undefined,
 			skipCascade: options.skipCascade,
 			embeddings: options.embeddings !== false, // Default true, --no-embeddings sets to false
+			// v2 is default - legacy flag reverts to v1 behavior
+			legacy: options.legacy,
+			aiExtraction: !options.skipExtraction, // Can skip AI extraction even in v2 mode
 		};
 
 		console.log("\n🔄 Graph Sync\n");
@@ -82,6 +88,15 @@ export class SyncCommand extends CommandRunner {
 
 		if (!syncOptions.embeddings) {
 			console.log("🚫 Embedding generation disabled\n");
+		}
+
+		if (syncOptions.legacy) {
+			console.log("📜 Legacy mode: Using manifest-based change detection\n");
+		} else {
+			// v2 is default
+			if (!syncOptions.aiExtraction) {
+				console.log("⏭️  AI entity extraction skipped (--skip-extraction)\n");
+			}
 		}
 
 		if (syncOptions.paths) {
@@ -420,5 +435,23 @@ export class SyncCommand extends CommandRunner {
 	})
 	parseNoEmbeddings(): boolean {
 		return false;
+	}
+
+	@Option({
+		flags: "--skip-extraction",
+		description:
+			"Skip AI entity extraction (sync without re-extracting entities)",
+	})
+	parseSkipExtraction(): boolean {
+		return true;
+	}
+
+	@Option({
+		flags: "--legacy",
+		description:
+			"Use legacy v1 mode: manifest-based change detection, no AI extraction",
+	})
+	parseLegacy(): boolean {
+		return true;
 	}
 }

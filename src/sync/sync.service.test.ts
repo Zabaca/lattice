@@ -31,6 +31,8 @@ describe("SyncService", () => {
 	let mockGraph: MockService;
 	let mockCascade: MockService;
 	let mockPathResolver: MockService;
+	let mockDbChangeDetector: MockService;
+	let mockEntityExtractor: MockService;
 
 	beforeEach(() => {
 		mockManifest = {
@@ -61,6 +63,7 @@ describe("SyncService", () => {
 			deleteNode: mock(() => Promise.resolve()),
 			deleteDocumentRelationships: mock(() => Promise.resolve()),
 			checkpoint: mock(() => Promise.resolve()),
+			updateDocumentHashes: mock(() => Promise.resolve()),
 		};
 
 		mockCascade = {
@@ -73,12 +76,33 @@ describe("SyncService", () => {
 			isUnderDocs: mock(() => true),
 		};
 
+		mockDbChangeDetector = {
+			loadHashes: mock(() => Promise.resolve()),
+			detectChange: mock(() => "new"),
+			getTrackedPaths: mock(() => []),
+			getCacheSize: mock(() => 0),
+			isEmbeddingStale: mock(() => true),
+		};
+
+		mockEntityExtractor = {
+			extractFromDocument: mock(() =>
+				Promise.resolve({
+					entities: [],
+					relationships: [],
+					summary: "Test summary",
+					success: true,
+				}),
+			),
+		};
+
 		service = new SyncService(
 			mockManifest,
 			mockParser,
 			mockGraph,
 			mockCascade,
 			mockPathResolver,
+			mockDbChangeDetector,
+			mockEntityExtractor,
 		);
 	});
 
@@ -268,12 +292,15 @@ describe("SyncService", () => {
 			mockParser.parseDocument.mockImplementation((path: string) =>
 				Promise.resolve(createDoc({ path })),
 			);
-			mockManifest.detectChange.mockImplementation((path: string) => {
-				if (path === "docs/new.md") return "new";
-				if (path === "docs/updated.md") return "updated";
-				return "unchanged";
-			});
-			mockManifest.getTrackedPaths.mockImplementation(() => [
+			// v2 uses DB change detector by default
+			mockDbChangeDetector.detectChange.mockImplementation(
+				(path: string) => {
+					if (path === "docs/new.md") return "new";
+					if (path === "docs/updated.md") return "updated";
+					return "unchanged";
+				},
+			);
+			mockDbChangeDetector.getTrackedPaths.mockImplementation(() => [
 				"docs/updated.md",
 				"docs/unchanged.md",
 				"docs/deleted.md",

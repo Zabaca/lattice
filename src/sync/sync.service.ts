@@ -11,10 +11,12 @@ import {
 } from "../pure/index.js";
 import type { EntityProperties } from "../schemas/entity.schemas.js";
 import { CascadeAnalysis, CascadeService } from "./cascade.service.js";
+import { DatabaseChangeDetectorService } from "./database-change-detector.service.js";
 import {
 	DocumentParserService,
 	ParsedDocument,
 } from "./document-parser.service.js";
+import { EntityExtractorService } from "./entity-extractor.service.js";
 import { DocumentChange, ManifestService } from "./manifest.service.js";
 import { PathResolverService } from "./path-resolver.service.js";
 
@@ -24,8 +26,12 @@ export interface SyncOptions {
 	verbose?: boolean; // Detailed output
 	paths?: string[]; // Specific paths to sync (undefined = all)
 	skipCascade?: boolean; // Skip cascade analysis (can be slow for large repos)
-	embeddings?: boolean; // Generate embeddings for documents (default: false)
+	embeddings?: boolean; // Generate embeddings for documents (default: true)
 	skipEmbeddings?: boolean; // Explicitly skip embeddings even if enabled
+	// v2 is now the default - use legacy flag to revert to v1 behavior
+	useDbChangeDetection?: boolean; // Use database-based change detection (default: true)
+	aiExtraction?: boolean; // Use AI to extract entities (default: true)
+	legacy?: boolean; // Use v1 manifest-based detection and skip AI extraction
 }
 
 /**
@@ -90,6 +96,8 @@ export class SyncService {
 		private readonly graph: GraphService,
 		private readonly cascade: CascadeService,
 		private readonly pathResolver: PathResolverService,
+		private readonly dbChangeDetector: DatabaseChangeDetectorService,
+		private readonly entityExtractor: EntityExtractorService,
 		private readonly embeddingService?: EmbeddingService,
 	) {}
 
@@ -117,9 +125,27 @@ export class SyncService {
 			entityEmbeddingsGenerated: 0,
 		};
 
+		// Apply v2 defaults (unless legacy mode is explicitly requested)
+		const useDbDetection = options.legacy
+			? false
+			: (options.useDbChangeDetection ?? true);
+		const useAiExtraction = options.legacy
+			? false
+			: (options.aiExtraction ?? true);
+
 		try {
-			// Load manifest
+			// Load manifest (needed for legacy mode and migration)
 			await this.manifest.load();
+
+			// v2: Load DB hashes for database-based change detection
+			if (useDbDetection) {
+				await this.dbChangeDetector.loadHashes();
+				if (options.verbose) {
+					this.logger.log(
+						`v2 mode: Loaded ${this.dbChangeDetector.getCacheSize()} document hashes from database`,
+					);
+				}
+			}
 
 			// Handle force mode - clears manifest only (not graph) to force re-sync
 			// MERGE operations will update existing nodes, preserving relationships
@@ -143,8 +169,8 @@ export class SyncService {
 				}
 			}
 
-			// Detect changes
-			const changes = await this.detectChanges(options.paths);
+			// Detect changes (v2 uses DB detection by default)
+			const changes = await this.detectChanges(options.paths, useDbDetection);
 			result.changes = changes;
 
 			// Phase 1: Parse all documents that need syncing into memory
@@ -166,19 +192,65 @@ export class SyncService {
 				}
 			}
 
-			// Phase 1.5: Validate relationships before proceeding
-			const validationErrors = validateDocuments(docsToSync);
-			if (validationErrors.length > 0) {
-				// Add validation errors to result and fail early
-				for (const err of validationErrors) {
-					result.errors.push(err);
-					this.logger.error(`Validation error in ${err.path}: ${err.error}`);
+			// v2: AI entity extraction (replaces frontmatter parsing)
+			if (useAiExtraction && docsToSync.length > 0) {
+				if (options.verbose) {
+					this.logger.log(
+						`v2 AI extraction: Processing ${docsToSync.length} documents...`,
+					);
 				}
-				this.logger.error(
-					`Sync aborted: ${validationErrors.length} validation error(s) found. Fix the errors and try again.`,
-				);
-				result.duration = Date.now() - startTime;
-				return result;
+
+				for (const doc of docsToSync) {
+					try {
+						const extraction = await this.entityExtractor.extractFromDocument(
+							doc.path,
+						);
+						if (extraction.success) {
+							// Populate doc with AI-extracted entities and relationships
+							doc.entities = extraction.entities;
+							doc.relationships = extraction.relationships;
+							// AI summary takes precedence over frontmatter summary
+							if (extraction.summary) {
+								doc.summary = extraction.summary;
+							}
+							if (options.verbose) {
+								this.logger.log(
+									`  Extracted ${extraction.entities.length} entities from ${doc.path}`,
+								);
+							}
+						} else {
+							this.logger.warn(
+								`AI extraction failed for ${doc.path}: ${extraction.error}`,
+							);
+							// Continue with empty entities - don't fail the sync
+						}
+					} catch (error) {
+						const errorMsg =
+							error instanceof Error ? error.message : String(error);
+						this.logger.warn(
+							`AI extraction error for ${doc.path}: ${errorMsg}`,
+						);
+						// Continue with empty entities
+					}
+				}
+			}
+
+			// Phase 1.5: Validate relationships before proceeding
+			// (Skip validation in AI mode - AI output is already sanitized)
+			if (!useAiExtraction) {
+				const validationErrors = validateDocuments(docsToSync);
+				if (validationErrors.length > 0) {
+					// Add validation errors to result and fail early
+					for (const err of validationErrors) {
+						result.errors.push(err);
+						this.logger.error(`Validation error in ${err.path}: ${err.error}`);
+					}
+					this.logger.error(
+						`Sync aborted: ${validationErrors.length} validation error(s) found. Fix the errors and try again.`,
+					);
+					result.duration = Date.now() - startTime;
+					return result;
+				}
 			}
 
 			// Phase 2: Collect unique entities from all parsed documents
@@ -290,9 +362,12 @@ export class SyncService {
 	}
 
 	/**
-	 * Detect changes between manifest and current documents
+	 * Detect changes between manifest (v1) or database (v2) and current documents
 	 */
-	async detectChanges(paths?: string[]): Promise<DocumentChange[]> {
+	async detectChanges(
+		paths?: string[],
+		useDbDetection = false,
+	): Promise<DocumentChange[]> {
 		const changes: DocumentChange[] = [];
 
 		// Discover all documents
@@ -309,18 +384,27 @@ export class SyncService {
 			allDocPaths = allDocPaths.filter((p) => pathSet.has(p));
 		}
 
-		// Get tracked paths from manifest
-		const trackedPaths = new Set(this.manifest.getTrackedPaths());
+		// Get tracked paths from manifest (v1) or database (v2)
+		const trackedPaths = new Set(
+			useDbDetection
+				? this.dbChangeDetector.getTrackedPaths()
+				: this.manifest.getTrackedPaths(),
+		);
 
 		// Check each document on disk
 		for (const docPath of allDocPaths) {
 			try {
 				const doc = await this.parser.parseDocument(docPath);
-				const changeType = this.manifest.detectChange(
-					docPath,
-					doc.contentHash,
-					doc.frontmatterHash,
-				);
+
+				// v2: Use database change detection
+				// v1: Use manifest change detection
+				const changeType = useDbDetection
+					? this.dbChangeDetector.detectChange(docPath, doc.contentHash)
+					: this.manifest.detectChange(
+							docPath,
+							doc.contentHash,
+							doc.frontmatterHash,
+						);
 
 				changes.push({
 					path: docPath,
@@ -623,7 +707,7 @@ export class SyncService {
 				// This prevents race conditions where the file is modified during sync
 				const currentDoc = await this.parser.parseDocument(change.path);
 
-				// Update manifest with current file state
+				// Update manifest with current file state (v1 compatibility)
 				this.manifest.updateEntry(
 					currentDoc.path,
 					currentDoc.contentHash,
@@ -631,6 +715,22 @@ export class SyncService {
 					currentDoc.entities.length,
 					currentDoc.relationships.length,
 				);
+
+				// v2: Also update database hashes (default behavior unless legacy mode)
+				const shouldUpdateDbHashes = options.legacy
+					? false
+					: (options.useDbChangeDetection ?? true);
+				if (shouldUpdateDbHashes) {
+					// Compute embedding source hash if embedding was generated
+					const embeddingSourceHash = embeddingGenerated
+						? currentDoc.contentHash // Use content hash as embedding source for now
+						: undefined;
+					await this.graph.updateDocumentHashes(
+						currentDoc.path,
+						currentDoc.contentHash,
+						embeddingSourceHash,
+					);
+				}
 				break;
 			}
 

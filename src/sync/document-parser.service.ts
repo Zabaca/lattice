@@ -2,15 +2,11 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { Injectable, Logger } from "@nestjs/common";
 import { glob } from "glob";
+import type { Entity, Relationship } from "../utils/frontmatter.js";
 import {
-	Entity,
-	EntitySchema,
-	GraphMetadata,
+	type GraphMetadata,
 	GraphMetadataSchema,
 	parseFrontmatter,
-	Relationship,
-	RelationshipSchema,
-	RelationTypeSchema,
 } from "../utils/frontmatter.js";
 import {
 	ensureLatticeHome,
@@ -64,7 +60,12 @@ export class DocumentParserService {
 	}
 
 	/**
-	 * Parse a single document
+	 * Parse a single document.
+	 *
+	 * NOTE: In v2, entities and relationships are extracted via AI (EntityExtractorService),
+	 * not from frontmatter. This method returns empty arrays for these fields.
+	 * The summary field may be populated from frontmatter if present, but AI-generated
+	 * summaries from EntityExtractorService should be preferred.
 	 */
 	async parseDocument(filePath: string): Promise<ParsedDocument> {
 		const content = await readFile(filePath, "utf-8");
@@ -79,28 +80,21 @@ export class DocumentParserService {
 			JSON.stringify(parsed.frontmatter || {}),
 		);
 
-		// Extract entities with validation
-		const entities = this.extractEntities(parsed.frontmatter, filePath);
-
-		// Extract relationships with validation
-		const relationships = this.extractRelationships(
-			parsed.frontmatter,
-			filePath,
-		);
-
-		// Extract graph metadata
+		// Extract graph metadata (still useful for domain hints)
 		const graphMetadata = this.extractGraphMetadata(parsed.frontmatter);
 
+		// v2: Entities and relationships come from AI extraction, not frontmatter
+		// Frontmatter entities/relationships are ignored
 		return {
 			path: filePath,
 			title,
 			content: parsed.content,
 			contentHash,
 			frontmatterHash,
-			summary: parsed.frontmatter?.summary,
+			summary: parsed.frontmatter?.summary, // May be overridden by AI extraction
 			topic: parsed.frontmatter?.topic,
-			entities,
-			relationships,
+			entities: [], // v2: Always empty - filled by EntityExtractorService
+			relationships: [], // v2: Always empty - filled by EntityExtractorService
 			graphMetadata,
 			tags: parsed.frontmatter?.tags || [],
 			created: parsed.frontmatter?.created,
@@ -154,109 +148,6 @@ export class DocumentParserService {
 		// Fallback to filename
 		const parts = filePath.split("/");
 		return parts[parts.length - 1].replace(".md", "");
-	}
-
-	/**
-	 * Extract and validate entities from frontmatter
-	 * Throws error if entities exist but have invalid schema
-	 */
-	private extractEntities(frontmatter: unknown, docPath: string): Entity[] {
-		const fm = frontmatter as Record<string, unknown>;
-		if (!fm?.entities || !Array.isArray(fm.entities)) {
-			return [];
-		}
-
-		const validEntities: Entity[] = [];
-		const errors: string[] = [];
-
-		for (let i = 0; i < fm.entities.length; i++) {
-			const e = fm.entities[i];
-			const result = EntitySchema.safeParse(e);
-			if (result.success) {
-				validEntities.push(result.data);
-			} else {
-				const entityPreview =
-					typeof e === "string" ? `"${e}"` : JSON.stringify(e);
-				// Format Zod errors for better debugging
-				const zodErrors = result.error.issues
-					.map((issue) => {
-						const path = issue.path.length > 0 ? issue.path.join(".") : "root";
-						return `${path}: ${issue.message}`;
-					})
-					.join("; ");
-				errors.push(`Entity[${i}]: ${entityPreview} - ${zodErrors}`);
-			}
-		}
-
-		if (errors.length > 0) {
-			const errorMsg = `Invalid entity schema in ${docPath}:\n  ${errors.join("\n  ")}`;
-			throw new Error(errorMsg);
-		}
-
-		return validEntities;
-	}
-
-	/**
-	 * Extract and validate relationships, resolving 'this' to document path
-	 * Throws error if relationships exist but have invalid schema
-	 */
-	private extractRelationships(
-		frontmatter: unknown,
-		docPath: string,
-	): Relationship[] {
-		const fm = frontmatter as Record<string, unknown>;
-		if (!fm?.relationships || !Array.isArray(fm.relationships)) {
-			return [];
-		}
-
-		const validRelationships: Relationship[] = [];
-		const errors: string[] = [];
-
-		const validRelationTypes = RelationTypeSchema.options;
-
-		for (let i = 0; i < fm.relationships.length; i++) {
-			const r = fm.relationships[i];
-			const result = RelationshipSchema.safeParse(r);
-			if (result.success) {
-				const rel = result.data;
-				// Replace 'this' with document path
-				if (rel.source === "this") {
-					rel.source = docPath;
-				}
-				if (rel.target === "this") {
-					rel.target = docPath;
-				}
-				validRelationships.push(rel);
-			} else {
-				if (typeof r === "string") {
-					errors.push(
-						`Relationship[${i}]: "${r}" - Expected object with {source, relation, target}, got string`,
-					);
-				} else if (typeof r === "object" && r !== null) {
-					// Check what's specifically wrong
-					const issues: string[] = [];
-					if (!r.source) issues.push("missing source");
-					if (!r.target) issues.push("missing target");
-					if (!r.relation) {
-						issues.push("missing relation");
-					} else if (!validRelationTypes.includes(r.relation)) {
-						issues.push(
-							`invalid relation "${r.relation}" (allowed: ${validRelationTypes.join(", ")})`,
-						);
-					}
-					errors.push(`Relationship[${i}]: ${issues.join(", ")}`);
-				} else {
-					errors.push(`Relationship[${i}]: Expected object, got ${typeof r}`);
-				}
-			}
-		}
-
-		if (errors.length > 0) {
-			const errorMsg = `Invalid relationship schema in ${docPath}:\n  ${errors.join("\n  ")}`;
-			throw new Error(errorMsg);
-		}
-
-		return validRelationships;
 	}
 
 	/**

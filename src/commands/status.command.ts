@@ -1,10 +1,12 @@
 import { Injectable } from "@nestjs/common";
 import { Command, CommandRunner, Option } from "nest-commander";
+import { DatabaseChangeDetectorService } from "../sync/database-change-detector.service.js";
 import { ManifestService } from "../sync/manifest.service.js";
 import { SyncService } from "../sync/sync.service.js";
 
 interface StatusCommandOptions {
 	verbose?: boolean;
+	legacy?: boolean;
 }
 
 @Injectable()
@@ -16,17 +18,28 @@ export class StatusCommand extends CommandRunner {
 	constructor(
 		private readonly syncService: SyncService,
 		private readonly manifestService: ManifestService,
+		private readonly dbChangeDetector: DatabaseChangeDetectorService,
 	) {
 		super();
 	}
 
 	async run(_inputs: string[], options: StatusCommandOptions): Promise<void> {
 		try {
-			// Load manifest before detecting changes
-			await this.manifestService.load();
+			const useDbDetection = !options.legacy;
 
-			// Detect all changes
-			const changes = await this.syncService.detectChanges();
+			if (useDbDetection) {
+				// v2: Load database hashes
+				await this.dbChangeDetector.loadHashes();
+			} else {
+				// Legacy: Load manifest before detecting changes
+				await this.manifestService.load();
+			}
+
+			// Detect all changes (pass useDbDetection flag)
+			const changes = await this.syncService.detectChanges(
+				undefined,
+				useDbDetection,
+			);
 
 			// Group by change type
 			const newDocs = changes.filter((c) => c.changeType === "new");
@@ -98,6 +111,14 @@ export class StatusCommand extends CommandRunner {
 		description: "Show all documents including unchanged",
 	})
 	parseVerbose(): boolean {
+		return true;
+	}
+
+	@Option({
+		flags: "--legacy",
+		description: "Use legacy v1 mode: manifest-based change detection",
+	})
+	parseLegacy(): boolean {
 		return true;
 	}
 }

@@ -131,6 +131,11 @@ export class GraphService implements OnModuleDestroy {
 			// Initialize schema (in the attached database)
 			await this.initializeSchema();
 
+			// Step 7: Checkpoint immediately to flush any schema changes to disk
+			// This prevents "Catalog 'lattice' does not exist" errors on WAL replay
+			// when the process exits without proper cleanup (e.g., via process.exit())
+			await this.connection.run("FORCE CHECKPOINT lattice;");
+
 			this.logger.log(
 				`Connected to DuckDB (in-memory + ATTACH) at ${this.dbPath}`,
 			);
@@ -167,7 +172,10 @@ export class GraphService implements OnModuleDestroy {
 			return;
 		}
 		try {
-			await this.connection.run("CHECKPOINT;");
+			// FORCE CHECKPOINT on the attached "lattice" database specifically
+			// This ensures WAL is fully flushed before disconnect, preventing
+			// "Catalog 'lattice' does not exist" errors on next ATTACH
+			await this.connection.run("FORCE CHECKPOINT lattice;");
 			this.logger.debug("Checkpoint completed");
 		} catch (error) {
 			// Checkpoint may fail if database is read-only or other issues
@@ -224,6 +232,61 @@ export class GraphService implements OnModuleDestroy {
 		await conn.run(
 			"CREATE INDEX IF NOT EXISTS idx_rels_target ON relationships(target_label, target_name)",
 		);
+
+		// v2 schema additions: columns for database-driven change detection
+		await this.applyV2SchemaMigration(conn);
+	}
+
+	/**
+	 * Apply v2 schema migration: add columns for database-driven change detection.
+	 * These columns eliminate the need for manifest files and enable embedding staleness tracking.
+	 */
+	private async applyV2SchemaMigration(conn: DuckDBConnection): Promise<void> {
+		// Add content_hash column for change detection (replaces manifest)
+		try {
+			await conn.run(
+				"ALTER TABLE nodes ADD COLUMN IF NOT EXISTS content_hash VARCHAR",
+			);
+		} catch {
+			// Column might already exist
+		}
+
+		// Add embedding_source_hash for embedding staleness detection
+		try {
+			await conn.run(
+				"ALTER TABLE nodes ADD COLUMN IF NOT EXISTS embedding_source_hash VARCHAR",
+			);
+		} catch {
+			// Column might already exist
+		}
+
+		// Add extraction_method to track how entities were created
+		try {
+			await conn.run(
+				"ALTER TABLE nodes ADD COLUMN IF NOT EXISTS extraction_method VARCHAR DEFAULT 'frontmatter'",
+			);
+		} catch {
+			// Column might already exist
+		}
+
+		// Create index for efficient document hash lookups
+		try {
+			await conn.run(
+				"CREATE INDEX IF NOT EXISTS idx_nodes_content_hash ON nodes(content_hash) WHERE label = 'Document'",
+			);
+		} catch {
+			// Index might already exist
+		}
+	}
+
+	/**
+	 * Public method to run v2 schema migration.
+	 * Called by MigrateCommand to upgrade from v1 to v2.
+	 */
+	async runV2Migration(): Promise<void> {
+		const conn = await this.ensureConnected();
+		await this.applyV2SchemaMigration(conn);
+		this.logger.log("V2 schema migration completed");
 	}
 
 	async query(
@@ -627,5 +690,151 @@ export class GraphService implements OnModuleDestroy {
 	 */
 	private escape(value: string): string {
 		return value.replace(/'/g, "''");
+	}
+
+	// ==================== v2 API: Database-driven change detection ====================
+
+	/**
+	 * Load all document hashes for batch change detection.
+	 * Returns a map of path -> { contentHash, embeddingSourceHash }
+	 */
+	async loadAllDocumentHashes(): Promise<
+		Map<
+			string,
+			{ contentHash: string | null; embeddingSourceHash: string | null }
+		>
+	> {
+		try {
+			const conn = await this.ensureConnected();
+			const reader = await conn.runAndReadAll(`
+				SELECT name, content_hash, embedding_source_hash
+				FROM nodes
+				WHERE label = 'Document'
+			`);
+
+			const hashMap = new Map<
+				string,
+				{ contentHash: string | null; embeddingSourceHash: string | null }
+			>();
+
+			for (const row of reader.getRows()) {
+				const [name, contentHash, embeddingSourceHash] = row as [
+					string,
+					string | null,
+					string | null,
+				];
+				hashMap.set(name, { contentHash, embeddingSourceHash });
+			}
+
+			return hashMap;
+		} catch (error) {
+			this.logger.error(
+				`Failed to load document hashes: ${error instanceof Error ? error.message : String(error)}`,
+			);
+			return new Map();
+		}
+	}
+
+	/**
+	 * Update a document's content hash and optionally embedding source hash.
+	 * Used after syncing a document to track its current state.
+	 */
+	async updateDocumentHashes(
+		path: string,
+		contentHash: string,
+		embeddingSourceHash?: string,
+	): Promise<void> {
+		try {
+			const conn = await this.ensureConnected();
+
+			if (embeddingSourceHash) {
+				await conn.run(`
+					UPDATE nodes
+					SET content_hash = '${this.escape(contentHash)}',
+					    embedding_source_hash = '${this.escape(embeddingSourceHash)}',
+					    updated_at = NOW()
+					WHERE label = 'Document' AND name = '${this.escape(path)}'
+				`);
+			} else {
+				await conn.run(`
+					UPDATE nodes
+					SET content_hash = '${this.escape(contentHash)}',
+					    updated_at = NOW()
+					WHERE label = 'Document' AND name = '${this.escape(path)}'
+				`);
+			}
+		} catch (error) {
+			this.logger.error(
+				`Failed to update document hashes: ${error instanceof Error ? error.message : String(error)}`,
+			);
+			throw error;
+		}
+	}
+
+	/**
+	 * Batch update document hashes for multiple documents.
+	 * More efficient than individual updates when syncing many documents.
+	 */
+	async batchUpdateDocumentHashes(
+		updates: Array<{
+			path: string;
+			contentHash: string;
+			embeddingSourceHash?: string;
+		}>,
+	): Promise<void> {
+		if (updates.length === 0) return;
+
+		try {
+			const conn = await this.ensureConnected();
+
+			// Use a transaction for batch updates
+			await conn.run("BEGIN TRANSACTION");
+
+			for (const { path, contentHash, embeddingSourceHash } of updates) {
+				if (embeddingSourceHash) {
+					await conn.run(`
+						UPDATE nodes
+						SET content_hash = '${this.escape(contentHash)}',
+						    embedding_source_hash = '${this.escape(embeddingSourceHash)}',
+						    updated_at = NOW()
+						WHERE label = 'Document' AND name = '${this.escape(path)}'
+					`);
+				} else {
+					await conn.run(`
+						UPDATE nodes
+						SET content_hash = '${this.escape(contentHash)}',
+						    updated_at = NOW()
+						WHERE label = 'Document' AND name = '${this.escape(path)}'
+					`);
+				}
+			}
+
+			await conn.run("COMMIT");
+		} catch (error) {
+			this.logger.error(
+				`Failed to batch update document hashes: ${error instanceof Error ? error.message : String(error)}`,
+			);
+			throw error;
+		}
+	}
+
+	/**
+	 * Get all tracked document paths from the database.
+	 * Used for detecting deleted documents.
+	 */
+	async getTrackedDocumentPaths(): Promise<string[]> {
+		try {
+			const conn = await this.ensureConnected();
+			const reader = await conn.runAndReadAll(`
+				SELECT name FROM nodes WHERE label = 'Document'
+			`);
+
+			return reader.getRows().map((row) => row[0] as string);
+		} catch (error) {
+			this.logger.error(
+				`Failed to get tracked document paths: ${error instanceof Error ? error.message : String(error)}`,
+			);
+			return [];
+		}
 	}
 }

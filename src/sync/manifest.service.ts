@@ -20,6 +20,17 @@ export interface DocumentChange {
 	reason?: string;
 }
 
+/**
+ * Manifest-based change detection service for v1 architecture.
+ *
+ * @deprecated Use DatabaseChangeDetectorService instead.
+ * This service is deprecated as of v2.0 in favor of database-based change detection.
+ * It remains available for:
+ * - Migration from v1 to v2 (lattice migrate command)
+ * - Legacy compatibility during transition period
+ *
+ * Will be removed in v3.0. Migrate to v2 using `lattice migrate`.
+ */
 @Injectable()
 export class ManifestService {
 	private manifestPath: string;

@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import {
 	InitCommand,
+	MigrateCommand,
 	OntologyCommand,
 	RelsCommand,
 	SearchCommand,
@@ -37,6 +38,7 @@ import { getEnvPath } from "./utils/paths.js";
 		ValidateCommand,
 		OntologyCommand,
 		InitCommand,
+		MigrateCommand,
 	],
 })
 export class AppModule {}

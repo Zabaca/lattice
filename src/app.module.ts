@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import {
+	ExtractCommand,
 	InitCommand,
 	MigrateCommand,
 	OntologyCommand,
@@ -9,7 +10,6 @@ import {
 	SqlCommand,
 	StatusCommand,
 	SyncCommand,
-	ValidateCommand,
 } from "./commands/index.js";
 import { EmbeddingModule } from "./embedding/embedding.module.js";
 import { GraphModule } from "./graph/graph.module.js";
@@ -30,12 +30,12 @@ import { getEnvPath } from "./utils/paths.js";
 	],
 	providers: [
 		// CLI Commands
+		ExtractCommand,
 		SyncCommand,
 		StatusCommand,
 		SearchCommand,
 		RelsCommand,
 		SqlCommand,
-		ValidateCommand,
 		OntologyCommand,
 		InitCommand,
 		MigrateCommand,

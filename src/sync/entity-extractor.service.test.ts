@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it } from "bun:test";
-import { EntityExtractorService } from "./entity-extractor.service.js";
+import {
+	EntityExtractorService,
+	validateExtraction,
+} from "./entity-extractor.service.js";
 
 describe("EntityExtractorService", () => {
 	let service: EntityExtractorService;
@@ -8,206 +11,114 @@ describe("EntityExtractorService", () => {
 		service = new EntityExtractorService();
 	});
 
-	describe("parseExtractionResult", () => {
-		it("should parse valid JSON response", () => {
-			const response = JSON.stringify({
+	describe("validateExtraction", () => {
+		it("should pass validation when all relationships reference extracted entities", () => {
+			const input = {
 				entities: [
-					{
-						name: "TypeScript",
-						type: "Technology",
-						description: "Programming language",
-					},
-					{
-						name: "NestJS",
-						type: "Technology",
-						description: "Node.js framework",
-					},
+					{ name: "TypeScript", type: "Technology" as const, description: "Language" },
+					{ name: "NestJS", type: "Technology" as const, description: "Framework" },
 				],
 				relationships: [
-					{
-						source: "this",
-						relation: "REFERENCES",
-						target: "TypeScript",
-					},
+					{ source: "this", relation: "REFERENCES" as const, target: "TypeScript" },
+					{ source: "this", relation: "REFERENCES" as const, target: "NestJS" },
 				],
 				summary: "Test document about TypeScript and NestJS.",
-			});
+			};
 
-			const result = service.parseExtractionResult(response, "/test/doc.md");
-
-			expect(result.success).toBe(true);
-			expect(result.entities).toHaveLength(2);
-			expect(result.entities[0].name).toBe("TypeScript");
-			expect(result.entities[0].type).toBe("Technology");
-			expect(result.relationships).toHaveLength(1);
-			expect(result.summary).toContain("TypeScript");
+			const errors = validateExtraction(input, "/test/doc.md");
+			expect(errors).toHaveLength(0);
 		});
 
-		it("should replace 'this' with file path in relationships", () => {
-			const response = JSON.stringify({
-				entities: [],
-				relationships: [
-					{
-						source: "this",
-						relation: "REFERENCES",
-						target: "TypeScript",
-					},
-				],
-				summary: "test",
-			});
-
-			const result = service.parseExtractionResult(response, "/test/doc.md");
-
-			expect(result.relationships[0].source).toBe("/test/doc.md");
-			expect(result.relationships[0].target).toBe("TypeScript");
-		});
-
-		it("should handle JSON wrapped in code fences", () => {
-			const response =
-				'```json\n{"entities":[],"relationships":[],"summary":"test"}\n```';
-
-			const result = service.parseExtractionResult(response, "/test/doc.md");
-
-			expect(result.success).toBe(true);
-			expect(result.summary).toBe("test");
-		});
-
-		it("should handle JSON wrapped in code fences without json label", () => {
-			const response =
-				'```\n{"entities":[],"relationships":[],"summary":"test"}\n```';
-
-			const result = service.parseExtractionResult(response, "/test/doc.md");
-
-			expect(result.success).toBe(true);
-			expect(result.summary).toBe("test");
-		});
-
-		it("should handle invalid JSON gracefully", () => {
-			const response = "not valid json {{{";
-
-			const result = service.parseExtractionResult(response, "/test/doc.md");
-
-			expect(result.success).toBe(false);
-			expect(result.error).toContain("JSON parse error");
-			expect(result.entities).toHaveLength(0);
-		});
-
-		it("should skip invalid entities", () => {
-			const response = JSON.stringify({
+		it("should fail when relationship target is not in extracted entities", () => {
+			const input = {
 				entities: [
-					{ name: "Valid", type: "Technology", description: "desc" },
-					{ type: "Technology", description: "missing name" }, // Invalid
-					"just a string", // Invalid
-					null, // Invalid
-					{ name: "", type: "Technology" }, // Invalid - empty name
+					{ name: "TypeScript", type: "Technology" as const, description: "Language" },
 				],
-				relationships: [],
-				summary: "test",
-			});
-
-			const result = service.parseExtractionResult(response, "/test/doc.md");
-
-			expect(result.success).toBe(true);
-			expect(result.entities).toHaveLength(1);
-			expect(result.entities[0].name).toBe("Valid");
-		});
-
-		it("should skip invalid relationships", () => {
-			const response = JSON.stringify({
-				entities: [],
 				relationships: [
-					{ source: "this", relation: "REFERENCES", target: "Valid" },
-					{ source: "", relation: "REFERENCES", target: "Empty" }, // Invalid
-					{ relation: "REFERENCES", target: "MissingSource" }, // Invalid
-					"just a string", // Invalid
+					{ source: "this", relation: "REFERENCES" as const, target: "Unknown" },
 				],
-				summary: "test",
-			});
+				summary: "Test document.",
+			};
 
-			const result = service.parseExtractionResult(response, "/test/doc.md");
-
-			expect(result.success).toBe(true);
-			expect(result.relationships).toHaveLength(1);
-			expect(result.relationships[0].target).toBe("Valid");
+			const errors = validateExtraction(input, "/test/doc.md");
+			expect(errors).toHaveLength(1);
+			expect(errors[0]).toContain("Unknown");
+			expect(errors[0]).toContain("not found");
 		});
 
-		it("should handle empty entities and relationships arrays", () => {
-			const response = JSON.stringify({
+		it("should fail when relationship source is not 'this' and not in entities", () => {
+			const input = {
+				entities: [
+					{ name: "TypeScript", type: "Technology" as const, description: "Language" },
+				],
+				relationships: [
+					{ source: "Unknown", relation: "REFERENCES" as const, target: "TypeScript" },
+				],
+				summary: "Test document.",
+			};
+
+			const errors = validateExtraction(input, "/test/doc.md");
+			expect(errors).toHaveLength(1);
+			expect(errors[0]).toContain("Unknown");
+			expect(errors[0]).toContain("source");
+		});
+
+		it("should allow 'this' as relationship source", () => {
+			const input = {
+				entities: [
+					{ name: "TypeScript", type: "Technology" as const, description: "Language" },
+				],
+				relationships: [
+					{ source: "this", relation: "REFERENCES" as const, target: "TypeScript" },
+				],
+				summary: "Test document.",
+			};
+
+			const errors = validateExtraction(input, "/test/doc.md");
+			expect(errors).toHaveLength(0);
+		});
+
+		it("should allow entity name as relationship source", () => {
+			const input = {
+				entities: [
+					{ name: "TypeScript", type: "Technology" as const, description: "Language" },
+					{ name: "NestJS", type: "Technology" as const, description: "Framework" },
+				],
+				relationships: [
+					{ source: "NestJS", relation: "REFERENCES" as const, target: "TypeScript" },
+				],
+				summary: "Test document.",
+			};
+
+			const errors = validateExtraction(input, "/test/doc.md");
+			expect(errors).toHaveLength(0);
+		});
+
+		it("should return multiple errors for multiple invalid relationships", () => {
+			const input = {
+				entities: [
+					{ name: "TypeScript", type: "Technology" as const, description: "Language" },
+				],
+				relationships: [
+					{ source: "Invalid1", relation: "REFERENCES" as const, target: "Invalid2" },
+					{ source: "this", relation: "REFERENCES" as const, target: "Invalid3" },
+				],
+				summary: "Test document.",
+			};
+
+			const errors = validateExtraction(input, "/test/doc.md");
+			expect(errors).toHaveLength(3); // Invalid1 source, Invalid2 target, Invalid3 target
+		});
+
+		it("should handle empty entities array", () => {
+			const input = {
 				entities: [],
 				relationships: [],
-				summary: "Summary only document",
-			});
+				summary: "Test document.",
+			};
 
-			const result = service.parseExtractionResult(response, "/test/doc.md");
-
-			expect(result.success).toBe(true);
-			expect(result.entities).toHaveLength(0);
-			expect(result.relationships).toHaveLength(0);
-			expect(result.summary).toBe("Summary only document");
-		});
-
-		it("should handle missing fields gracefully", () => {
-			const response = JSON.stringify({
-				entities: [{ name: "Test", type: "Technology" }], // missing description
-			});
-
-			const result = service.parseExtractionResult(response, "/test/doc.md");
-
-			expect(result.success).toBe(true);
-			expect(result.entities[0].description).toBe("");
-			expect(result.relationships).toHaveLength(0);
-			expect(result.summary).toBe("");
-		});
-	});
-
-	describe("normalizeEntityType", () => {
-		it("should return exact matches (case-insensitive)", () => {
-			expect(service.normalizeEntityType("Technology")).toBe("Technology");
-			expect(service.normalizeEntityType("technology")).toBe("Technology");
-			expect(service.normalizeEntityType("TECHNOLOGY")).toBe("Technology");
-			expect(service.normalizeEntityType("Tool")).toBe("Tool");
-			expect(service.normalizeEntityType("Concept")).toBe("Concept");
-			expect(service.normalizeEntityType("Process")).toBe("Process");
-			expect(service.normalizeEntityType("Person")).toBe("Person");
-			expect(service.normalizeEntityType("Organization")).toBe("Organization");
-			expect(service.normalizeEntityType("Document")).toBe("Document");
-			expect(service.normalizeEntityType("Topic")).toBe("Topic");
-		});
-
-		it("should convert aliases to valid types", () => {
-			// Tool aliases
-			expect(service.normalizeEntityType("platform")).toBe("Tool");
-			expect(service.normalizeEntityType("service")).toBe("Tool");
-
-			// Technology aliases
-			expect(service.normalizeEntityType("framework")).toBe("Technology");
-			expect(service.normalizeEntityType("library")).toBe("Technology");
-			expect(service.normalizeEntityType("language")).toBe("Technology");
-			expect(service.normalizeEntityType("database")).toBe("Technology");
-
-			// Concept aliases
-			expect(service.normalizeEntityType("pattern")).toBe("Concept");
-			expect(service.normalizeEntityType("feature")).toBe("Concept");
-
-			// Process aliases
-			expect(service.normalizeEntityType("methodology")).toBe("Process");
-			expect(service.normalizeEntityType("workflow")).toBe("Process");
-
-			// Organization aliases
-			expect(service.normalizeEntityType("company")).toBe("Organization");
-			expect(service.normalizeEntityType("team")).toBe("Organization");
-
-			// Topic aliases
-			expect(service.normalizeEntityType("project")).toBe("Topic");
-		});
-
-		it("should default to Concept for unknown types", () => {
-			expect(service.normalizeEntityType("unknown")).toBe("Concept");
-			expect(service.normalizeEntityType("random")).toBe("Concept");
-			expect(service.normalizeEntityType("")).toBe("Concept");
-			expect(service.normalizeEntityType(null)).toBe("Concept");
-			expect(service.normalizeEntityType(undefined)).toBe("Concept");
-			expect(service.normalizeEntityType(123)).toBe("Concept");
+			const errors = validateExtraction(input, "/test/doc.md");
+			expect(errors).toHaveLength(0);
 		});
 	});
 
@@ -236,13 +147,20 @@ describe("EntityExtractorService", () => {
 			expect(prompt).toContain("Document");
 		});
 
-		it("should include JSON format instructions", () => {
+		it("should include MCP validation tool instructions", () => {
 			const prompt = service.buildExtractionPrompt("/test/doc.md", "content");
 
-			expect(prompt).toContain("entities");
-			expect(prompt).toContain("relationships");
-			expect(prompt).toContain("summary");
-			expect(prompt).toContain("JSON");
+			expect(prompt).toContain("mcp__entity-validator__validate_extraction");
+			expect(prompt).toContain("Validation Required");
+		});
+
+		it("should include extraction structure instructions", () => {
+			const prompt = service.buildExtractionPrompt("/test/doc.md", "content");
+
+			expect(prompt).toContain("Entities");
+			expect(prompt).toContain("Relationships");
+			expect(prompt).toContain("Summary");
+			expect(prompt).toContain("REFERENCES");
 		});
 	});
 });

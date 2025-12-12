@@ -1,6 +1,11 @@
 import { readFile } from "node:fs/promises";
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import {
+	createSdkMcpServer,
+	query,
+	tool,
+} from "@anthropic-ai/claude-agent-sdk";
 import { Injectable, Logger } from "@nestjs/common";
+import { z } from "zod";
 import type { Entity, Relationship } from "../utils/frontmatter.js";
 
 export interface ExtractionResult {
@@ -9,6 +14,123 @@ export interface ExtractionResult {
 	summary: string;
 	success: boolean;
 	error?: string;
+	rawResponse?: string; // Included when parsing fails for debugging
+}
+
+/**
+ * Validate extracted entities and relationships.
+ * Returns array of error messages (empty = valid).
+ * Exported for testing.
+ */
+export function validateExtraction(
+	input: { entities: Entity[]; relationships: Relationship[]; summary: string },
+	_filePath: string,
+): string[] {
+	const errors: string[] = [];
+	const { entities, relationships } = input ?? {};
+
+	// Defensive checks for malformed input
+	if (!entities || !Array.isArray(entities)) {
+		return ["Entities array is missing or invalid"];
+	}
+	if (!relationships || !Array.isArray(relationships)) {
+		return ["Relationships array is missing or invalid"];
+	}
+
+	// Build entity name set
+	const entityNames = new Set(entities.map((e) => e.name));
+
+	// Validate relationships reference extracted entities
+	for (const rel of relationships) {
+		// Source can be 'this' or an entity name
+		if (rel.source !== "this" && !entityNames.has(rel.source)) {
+			errors.push(
+				`Relationship source "${rel.source}" not found in extracted entities`,
+			);
+		}
+
+		// Target must be an extracted entity name
+		if (!entityNames.has(rel.target)) {
+			errors.push(
+				`Relationship target "${rel.target}" not found in extracted entities`,
+			);
+		}
+	}
+
+	return errors;
+}
+
+/**
+ * Create a validation MCP server with filePath context.
+ * Must be created per-extraction to have access to filePath.
+ */
+function createValidationServer(filePath: string) {
+	return createSdkMcpServer({
+		name: "entity-validator",
+		version: "1.0.0",
+		tools: [
+			tool(
+				"validate_extraction",
+				"Validate your extracted entities and relationships. Call this to check your work before finishing.",
+				{
+					entities: z.array(
+						z.object({
+							name: z.string().min(1),
+							type: z.enum([
+								"Topic",
+								"Technology",
+								"Concept",
+								"Tool",
+								"Process",
+								"Person",
+								"Organization",
+								"Document",
+							]),
+							description: z.string().min(1),
+						}),
+					),
+					relationships: z.array(
+						z.object({
+							source: z.string().min(1),
+							relation: z.enum(["REFERENCES"]),
+							target: z.string().min(1),
+						}),
+					),
+					summary: z.string().min(10),
+				},
+				async (args) => {
+					const errors = validateExtraction(
+						args as {
+							entities: Entity[];
+							relationships: Relationship[];
+							summary: string;
+						},
+						filePath,
+					);
+
+					if (errors.length === 0) {
+						return {
+							content: [
+								{
+									type: "text" as const,
+									text: "✓ Validation passed. Your extraction is correct.",
+								},
+							],
+						};
+					}
+
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `✗ Validation failed:\n${errors.map((e) => `- ${e}`).join("\n")}\n\nPlease fix these errors and call validate_extraction again.`,
+							},
+						],
+					};
+				},
+			),
+		],
+	});
 }
 
 /**
@@ -19,7 +141,9 @@ export interface ExtractionResult {
  * - Relationships between entities
  * - Document summary for embeddings
  *
- * Rate limited to avoid API throttling.
+ * Features:
+ * - MCP validation tool for self-correction
+ * - Rate limited to avoid API throttling
  */
 @Injectable()
 export class EntityExtractorService {
@@ -42,36 +166,88 @@ export class EntityExtractorService {
 		try {
 			// Read document content
 			const content = await readFile(filePath, "utf-8");
+			const promptText = this.buildExtractionPrompt(filePath, content);
 
-			// Build extraction prompt
-			const prompt = this.buildExtractionPrompt(filePath, content);
+			// Create validation server with filePath context
+			const validationServer = createValidationServer(filePath);
 
-			// Call Claude Agent SDK
-			let result = "";
+			// Track last validated extraction
+			let lastValidExtraction: {
+				entities: Entity[];
+				relationships: Relationship[];
+				summary: string;
+			} | null = null;
+
+			// Streaming input generator (required for MCP servers)
+			async function* generateMessages() {
+				yield {
+					type: "user" as const,
+					message: {
+						role: "user" as const,
+						content: promptText,
+					},
+				};
+			}
+
 			for await (const message of query({
-				prompt,
+				prompt: generateMessages(),
 				options: {
-					maxTurns: 1,
+					maxTurns: 3, // extract → validate → fix+validate
 					model: "claude-3-5-haiku-20241022",
-					allowedTools: [], // No tools needed - just text analysis
-					permissionMode: "plan", // Read-only mode
+					mcpServers: {
+						"entity-validator": validationServer,
+					},
+					allowedTools: ["mcp__entity-validator__validate_extraction"],
+					permissionMode: "default",
 				},
 			})) {
-				if (message.type === "assistant" && message.message?.content) {
-					for (const block of message.message.content) {
-						if ("text" in block) {
-							result += block.text;
+				if (message.type === "assistant") {
+					// Track tool calls to capture last extraction
+					for (const block of message.message?.content ?? []) {
+						if (
+							block.type === "tool_use" &&
+							block.name === "mcp__entity-validator__validate_extraction"
+						) {
+							// Tool validated it, store if validation passed
+							const input = block.input as {
+								entities: Entity[];
+								relationships: Relationship[];
+								summary: string;
+							};
+							const validationErrors = validateExtraction(input, filePath);
+							if (validationErrors.length === 0) {
+								lastValidExtraction = input;
+							}
 						}
 					}
 				} else if (message.type === "result") {
-					this.logger.debug(
-						`Extraction for ${filePath} completed in ${message.duration_ms}ms`,
-					);
+					// If we have a validated extraction, return success
+					// (even if max_turns was reached - validation passing is what matters)
+					if (lastValidExtraction) {
+						this.logger.debug(
+							`Extraction for ${filePath} completed in ${message.duration_ms}ms`,
+						);
+						return this.buildSuccessResult(lastValidExtraction, filePath);
+					}
+					// No valid extraction - return error with details
+					const errorReason =
+						message.subtype === "error_max_turns"
+							? "Max turns reached without valid extraction"
+							: message.subtype === "error_tool_use"
+								? `Tool error: ${JSON.stringify(message.errors)}`
+								: `Extraction failed: ${message.subtype}`;
+					return {
+						entities: [],
+						relationships: [],
+						summary: "",
+						success: false,
+						error: errorReason,
+						rawResponse: message.result,
+					};
 				}
 			}
 
-			// Parse the JSON response
-			return this.parseExtractionResult(result, filePath);
+			throw new Error("No result received from SDK");
 		} catch (error) {
 			const errorMsg = error instanceof Error ? error.message : String(error);
 			this.logger.error(
@@ -137,181 +313,64 @@ ${content}
 
 ## Instructions
 
-Extract the following and respond with ONLY valid JSON (no markdown code fences):
+Extract the following and call the validation tool with EXACTLY this schema:
 
-1. **Entities** (3-10 most significant):
-   - Technologies: Languages, frameworks, databases, libraries
-   - Concepts: Patterns, methodologies, theories
-   - Tools: Software, services, platforms
-   - Processes: Workflows, procedures
-   - Organizations: Companies, projects
+### 1. Entities (array of 3-10 objects)
+Each entity must have:
+- "name": string (entity name)
+- "type": one of "Topic", "Technology", "Concept", "Tool", "Process", "Person", "Organization", "Document"
+- "description": string (brief description)
 
-2. **Relationships** between entities:
-   - Use "this" as source when the document references an entity
-   - Use REFERENCES as the relation type
+### 2. Relationships (array of objects)
+Each relationship must have:
+- "source": "this" (for document-to-entity) or an entity name
+- "relation": "REFERENCES" (IMPORTANT: use "relation", not "type")
+- "target": an entity name from your entities list
 
-3. **Summary** (50-100 words):
-   - Document's main purpose
-   - Key technologies/concepts
-   - Primary conclusions
+### 3. Summary
+A 50-100 word summary of the document's main purpose and key concepts.
 
-## Entity Types
-Valid types: Topic, Technology, Concept, Tool, Process, Person, Organization, Document
+## IMPORTANT: Validation Required
 
-## Response Format
+You MUST call mcp__entity-validator__validate_extraction tool.
+Pass the three fields DIRECTLY as top-level arguments (NOT wrapped in an "extraction" object):
+- entities: your entities array
+- relationships: your relationships array
+- summary: your summary string
+
+Example tool call structure:
 {
-  "entities": [
-    {"name": "EntityName", "type": "Technology", "description": "Brief description"}
-  ],
-  "relationships": [
-    {"source": "this", "relation": "REFERENCES", "target": "EntityName"}
-  ],
-  "summary": "2-3 sentence summary..."
+  "entities": [...],
+  "relationships": [...],
+  "summary": "..."
 }
 
-Respond with ONLY the JSON object, no other text.`;
+If validation fails, fix the errors and call the tool again.
+Only finish after validation passes.`;
 	}
 
 	/**
-	 * Parse Claude's response into ExtractionResult.
-	 * Public for testing purposes.
+	 * Build success result from validated extraction.
 	 */
-	parseExtractionResult(response: string, filePath: string): ExtractionResult {
-		try {
-			// Try to extract JSON from the response
-			// Claude sometimes wraps in code fences despite instructions
-			let jsonStr = response.trim();
+	private buildSuccessResult(
+		extraction: {
+			entities: Entity[];
+			relationships: Relationship[];
+			summary: string;
+		},
+		filePath: string,
+	): ExtractionResult {
+		// Transform "this" to file path in relationships
+		const relationships = extraction.relationships.map((rel) => ({
+			...rel,
+			source: rel.source === "this" ? filePath : rel.source,
+		}));
 
-			// Remove markdown code fences if present
-			const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
-			if (jsonMatch) {
-				jsonStr = jsonMatch[1].trim();
-			}
-
-			// Parse JSON
-			const parsed = JSON.parse(jsonStr);
-
-			// Validate and sanitize entities
-			const entities: Entity[] = [];
-			if (Array.isArray(parsed.entities)) {
-				for (const e of parsed.entities) {
-					if (this.isValidEntity(e)) {
-						entities.push({
-							name: String(e.name),
-							type: this.normalizeEntityType(e.type),
-							description: String(e.description || ""),
-						});
-					}
-				}
-			}
-
-			// Validate and sanitize relationships
-			const relationships: Relationship[] = [];
-			if (Array.isArray(parsed.relationships)) {
-				for (const r of parsed.relationships) {
-					if (this.isValidRelationship(r)) {
-						relationships.push({
-							source: r.source === "this" ? filePath : String(r.source),
-							relation: "REFERENCES", // Only valid relation type
-							target: String(r.target),
-						});
-					}
-				}
-			}
-
-			const summary = String(parsed.summary || "");
-
-			return {
-				entities,
-				relationships,
-				summary,
-				success: true,
-			};
-		} catch (error) {
-			const errorMsg = error instanceof Error ? error.message : String(error);
-			this.logger.warn(
-				`Failed to parse extraction result for ${filePath}: ${errorMsg}`,
-			);
-			this.logger.debug(`Raw response: ${response.substring(0, 500)}...`);
-
-			return {
-				entities: [],
-				relationships: [],
-				summary: "",
-				success: false,
-				error: `JSON parse error: ${errorMsg}`,
-			};
-		}
-	}
-
-	/**
-	 * Check if an object is a valid entity.
-	 */
-	private isValidEntity(e: unknown): boolean {
-		if (typeof e !== "object" || e === null) return false;
-		const obj = e as Record<string, unknown>;
-		return typeof obj.name === "string" && obj.name.length > 0;
-	}
-
-	/**
-	 * Check if an object is a valid relationship.
-	 */
-	private isValidRelationship(r: unknown): boolean {
-		if (typeof r !== "object" || r === null) return false;
-		const obj = r as Record<string, unknown>;
-		return (
-			typeof obj.source === "string" &&
-			typeof obj.target === "string" &&
-			obj.source.length > 0 &&
-			obj.target.length > 0
-		);
-	}
-
-	/**
-	 * Normalize entity type to valid enum value.
-	 * Public for testing purposes.
-	 */
-	normalizeEntityType(type: unknown): Entity["type"] {
-		const validTypes = [
-			"Topic",
-			"Technology",
-			"Concept",
-			"Tool",
-			"Process",
-			"Person",
-			"Organization",
-			"Document",
-		] as const;
-
-		if (typeof type === "string") {
-			// Try exact match first
-			const exactMatch = validTypes.find(
-				(t) => t.toLowerCase() === type.toLowerCase(),
-			);
-			if (exactMatch) return exactMatch;
-
-			// Common aliases
-			const aliases: Record<string, Entity["type"]> = {
-				platform: "Tool",
-				service: "Tool",
-				framework: "Technology",
-				library: "Technology",
-				language: "Technology",
-				database: "Technology",
-				pattern: "Concept",
-				methodology: "Process",
-				workflow: "Process",
-				company: "Organization",
-				team: "Organization",
-				project: "Topic",
-				feature: "Concept",
-			};
-
-			const aliasMatch = aliases[type.toLowerCase()];
-			if (aliasMatch) return aliasMatch;
-		}
-
-		// Default to Concept
-		return "Concept";
+		return {
+			entities: extraction.entities,
+			relationships,
+			summary: extraction.summary,
+			success: true,
+		};
 	}
 }

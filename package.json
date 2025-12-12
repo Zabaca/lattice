@@ -19,9 +19,9 @@
 		"check:fix": "tsc --noEmit && biome check --write .",
 		"lattice": "bun run src/main.ts",
 		"prepublishOnly": "bun run build",
-		"release:patch": "bun run check && bun test && bun pm version patch && bun publish && git push && git push --tags",
-		"release:minor": "bun run check && bun test && bun pm version minor && bun publish && git push && git push --tags",
-		"release:major": "bun run check && bun test && bun pm version major && bun publish && git push && git push --tags",
+		"release:patch": "bun run check && bun test && bun pm version patch && git push && git push --tags && bun publish",
+		"release:minor": "bun run check && bun test && bun pm version minor && git push && git push && bun publish",
+		"release:major": "bun run check && bun test && bun pm version major && git push && git push && bun publish",
 		"release:dry": "bun publish --dry-run"
 	},
 	"keywords": [

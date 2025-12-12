@@ -15,11 +15,23 @@ describe("EntityExtractorService", () => {
 		it("should pass validation when all relationships reference extracted entities", () => {
 			const input = {
 				entities: [
-					{ name: "TypeScript", type: "Technology" as const, description: "Language" },
-					{ name: "NestJS", type: "Technology" as const, description: "Framework" },
+					{
+						name: "TypeScript",
+						type: "Technology" as const,
+						description: "Language",
+					},
+					{
+						name: "NestJS",
+						type: "Technology" as const,
+						description: "Framework",
+					},
 				],
 				relationships: [
-					{ source: "this", relation: "REFERENCES" as const, target: "TypeScript" },
+					{
+						source: "this",
+						relation: "REFERENCES" as const,
+						target: "TypeScript",
+					},
 					{ source: "this", relation: "REFERENCES" as const, target: "NestJS" },
 				],
 				summary: "Test document about TypeScript and NestJS.",
@@ -32,10 +44,18 @@ describe("EntityExtractorService", () => {
 		it("should fail when relationship target is not in extracted entities", () => {
 			const input = {
 				entities: [
-					{ name: "TypeScript", type: "Technology" as const, description: "Language" },
+					{
+						name: "TypeScript",
+						type: "Technology" as const,
+						description: "Language",
+					},
 				],
 				relationships: [
-					{ source: "this", relation: "REFERENCES" as const, target: "Unknown" },
+					{
+						source: "this",
+						relation: "REFERENCES" as const,
+						target: "Unknown",
+					},
 				],
 				summary: "Test document.",
 			};
@@ -49,10 +69,18 @@ describe("EntityExtractorService", () => {
 		it("should fail when relationship source is not 'this' and not in entities", () => {
 			const input = {
 				entities: [
-					{ name: "TypeScript", type: "Technology" as const, description: "Language" },
+					{
+						name: "TypeScript",
+						type: "Technology" as const,
+						description: "Language",
+					},
 				],
 				relationships: [
-					{ source: "Unknown", relation: "REFERENCES" as const, target: "TypeScript" },
+					{
+						source: "Unknown",
+						relation: "REFERENCES" as const,
+						target: "TypeScript",
+					},
 				],
 				summary: "Test document.",
 			};
@@ -66,10 +94,18 @@ describe("EntityExtractorService", () => {
 		it("should allow 'this' as relationship source", () => {
 			const input = {
 				entities: [
-					{ name: "TypeScript", type: "Technology" as const, description: "Language" },
+					{
+						name: "TypeScript",
+						type: "Technology" as const,
+						description: "Language",
+					},
 				],
 				relationships: [
-					{ source: "this", relation: "REFERENCES" as const, target: "TypeScript" },
+					{
+						source: "this",
+						relation: "REFERENCES" as const,
+						target: "TypeScript",
+					},
 				],
 				summary: "Test document.",
 			};
@@ -81,11 +117,23 @@ describe("EntityExtractorService", () => {
 		it("should allow entity name as relationship source", () => {
 			const input = {
 				entities: [
-					{ name: "TypeScript", type: "Technology" as const, description: "Language" },
-					{ name: "NestJS", type: "Technology" as const, description: "Framework" },
+					{
+						name: "TypeScript",
+						type: "Technology" as const,
+						description: "Language",
+					},
+					{
+						name: "NestJS",
+						type: "Technology" as const,
+						description: "Framework",
+					},
 				],
 				relationships: [
-					{ source: "NestJS", relation: "REFERENCES" as const, target: "TypeScript" },
+					{
+						source: "NestJS",
+						relation: "REFERENCES" as const,
+						target: "TypeScript",
+					},
 				],
 				summary: "Test document.",
 			};
@@ -97,11 +145,23 @@ describe("EntityExtractorService", () => {
 		it("should return multiple errors for multiple invalid relationships", () => {
 			const input = {
 				entities: [
-					{ name: "TypeScript", type: "Technology" as const, description: "Language" },
+					{
+						name: "TypeScript",
+						type: "Technology" as const,
+						description: "Language",
+					},
 				],
 				relationships: [
-					{ source: "Invalid1", relation: "REFERENCES" as const, target: "Invalid2" },
-					{ source: "this", relation: "REFERENCES" as const, target: "Invalid3" },
+					{
+						source: "Invalid1",
+						relation: "REFERENCES" as const,
+						target: "Invalid2",
+					},
+					{
+						source: "this",
+						relation: "REFERENCES" as const,
+						target: "Invalid3",
+					},
 				],
 				summary: "Test document.",
 			};

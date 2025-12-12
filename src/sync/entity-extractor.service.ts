@@ -178,19 +178,8 @@ export class EntityExtractorService {
 				summary: string;
 			} | null = null;
 
-			// Streaming input generator (required for MCP servers)
-			async function* generateMessages() {
-				yield {
-					type: "user" as const,
-					message: {
-						role: "user" as const,
-						content: promptText,
-					},
-				};
-			}
-
 			for await (const message of query({
-				prompt: generateMessages(),
+				prompt: promptText,
 				options: {
 					maxTurns: 3, // extract → validate → fix+validate
 					model: "claude-haiku-4-5-20251001",
@@ -233,8 +222,8 @@ export class EntityExtractorService {
 					const errorReason =
 						message.subtype === "error_max_turns"
 							? "Max turns reached without valid extraction"
-							: message.subtype === "error_tool_use"
-								? `Tool error: ${JSON.stringify(message.errors)}`
+							: message.subtype === "error_during_execution"
+								? "Error during execution"
 								: `Extraction failed: ${message.subtype}`;
 					return {
 						entities: [],
@@ -242,7 +231,6 @@ export class EntityExtractorService {
 						summary: "",
 						success: false,
 						error: errorReason,
-						rawResponse: message.result,
 					};
 				}
 			}

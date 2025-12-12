@@ -293,13 +293,11 @@ describe("SyncService", () => {
 				Promise.resolve(createDoc({ path })),
 			);
 			// v2 uses DB change detector by default
-			mockDbChangeDetector.detectChange.mockImplementation(
-				(path: string) => {
-					if (path === "docs/new.md") return "new";
-					if (path === "docs/updated.md") return "updated";
-					return "unchanged";
-				},
-			);
+			mockDbChangeDetector.detectChange.mockImplementation((path: string) => {
+				if (path === "docs/new.md") return "new";
+				if (path === "docs/updated.md") return "updated";
+				return "unchanged";
+			});
 			mockDbChangeDetector.getTrackedPaths.mockImplementation(() => [
 				"docs/updated.md",
 				"docs/unchanged.md",

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { Injectable } from "@nestjs/common";
 import { query } from "@anthropic-ai/claude-agent-sdk";
+import { Injectable } from "@nestjs/common";
 import { Command, CommandRunner, Option } from "nest-commander";
 import { EntityExtractorService } from "../sync/entity-extractor.service.js";
 
@@ -74,10 +74,13 @@ export class ExtractCommand extends CommandRunner {
 	 */
 	private async extractRaw(filePath: string): Promise<void> {
 		const content = readFileSync(filePath, "utf-8");
-		const prompt = this.entityExtractor.buildExtractionPrompt(filePath, content);
+		const prompt = this.entityExtractor.buildExtractionPrompt(
+			filePath,
+			content,
+		);
 
 		console.error("--- Prompt ---");
-		console.error(prompt.substring(0, 500) + "...\n");
+		console.error(`${prompt.substring(0, 500)}...\n`);
 		console.error("--- Raw Response ---");
 
 		let rawResponse = "";

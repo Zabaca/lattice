@@ -500,40 +500,39 @@ export class GraphService implements OnModuleDestroy {
 	}
 
 	/**
-	 * Create a vector index for semantic search
+	 * Create a vector index for semantic search.
+	 * Only ONE HNSW index is created on the embedding column since DuckDB doesn't
+	 * support partial indexes - all nodes share the same index regardless of label.
 	 */
 	async createVectorIndex(
-		label: string,
+		_label: string,
 		property: string,
 		dimensions: number,
 	): Promise<void> {
 		try {
-			const indexKey = `${label}_${property}`;
+			// Use a single index key - only one HNSW index needed for all nodes
+			const indexKey = `nodes_${property}`;
 			if (this.vectorIndexes.has(indexKey)) {
 				return; // Index already created in this session
 			}
 
 			const conn = await this.ensureConnected();
 
-			// First, alter the table to ensure the embedding column has the right dimensions
-			// DuckDB VSS requires a fixed-size array
 			try {
 				await conn.run(`
-					CREATE INDEX idx_embedding_${this.escape(label)}
+					CREATE INDEX idx_embedding_nodes
 					ON nodes USING HNSW (embedding)
 					WITH (metric = 'cosine')
 				`);
-			} catch {
-				// Index might already exist, that's okay
-				this.logger.debug(
-					`Vector index on ${label}.${property} already exists`,
+				this.logger.log(
+					`Created HNSW vector index on nodes.${property} with ${dimensions} dimensions`,
 				);
+			} catch {
+				// Index already exists, that's okay
+				this.logger.debug(`Vector index on nodes.${property} already exists`);
 			}
 
 			this.vectorIndexes.add(indexKey);
-			this.logger.log(
-				`Created vector index on ${label}.${property} with ${dimensions} dimensions`,
-			);
 		} catch (error) {
 			const errorMessage =
 				error instanceof Error ? error.message : String(error);

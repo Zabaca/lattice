@@ -173,15 +173,6 @@ Show relationships for a node.
 lattice rels "TypeScript"       # Show all relationships for an entity
 ```
 
-### `lattice validate`
-
-Validate entity references and relationships.
-
-```bash
-lattice validate                # Check for broken references
-lattice validate --fix          # Attempt to fix validation issues
-```
-
 ### `lattice ontology`
 
 Display the derived ontology from your documents.
@@ -218,23 +209,12 @@ You can back up, copy, or version control this file like any other.
 
 ### Entity Extraction
 
-When you run `/graph-sync`, Claude Code extracts entities from your documents and writes them to YAML frontmatter. The Lattice CLI then syncs this to DuckDB.
+When you run `/graph-sync`, Claude Code extracts entities from your documents and writes them directly to the DuckDB database. No frontmatter required — your markdown files stay clean.
 
-```yaml
----
-entities:
-  - name: React
-    type: technology
-    description: JavaScript library for building user interfaces
-
-relationships:
-  - source: React
-    target: Component Architecture
-    relation: REFERENCES
----
-```
-
-You don't need to write this manually — Claude Code handles it automatically.
+The extraction identifies:
+- **Entities**: People, technologies, concepts, tools, etc.
+- **Relationships**: How entities connect to each other
+- **Document metadata**: Title, summary, topic classification
 
 ### Database Schema
 

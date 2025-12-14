@@ -293,6 +293,17 @@ export class SyncService {
 					options,
 				);
 
+				// Phase 4.5: Repair any existing entities with missing embeddings
+				if (
+					options.embeddings &&
+					!options.skipEmbeddings &&
+					this.embeddingService
+				) {
+					const repairedCount =
+						await this.repairMissingEntityEmbeddings(options);
+					result.entityEmbeddingsGenerated += repairedCount;
+				}
+
 				// Checkpoint after entity sync to ensure persistence
 				await this.graph.checkpoint();
 
@@ -884,5 +895,76 @@ export class SyncService {
 				);
 			}
 		}
+	}
+
+	/**
+	 * Repair entities with missing embeddings.
+	 * Queries for all entity nodes with NULL embeddings and generates them.
+	 * This handles cases where previous sync runs failed to generate embeddings.
+	 */
+	private async repairMissingEntityEmbeddings(
+		options: SyncOptions,
+	): Promise<number> {
+		if (!this.embeddingService) {
+			return 0;
+		}
+
+		// Find all entity types with missing embeddings (including Document)
+		const labelsToCheck = [...ENTITY_TYPES, "Document"];
+		const nodesWithMissingEmbeddings =
+			await this.graph.findNodesWithMissingEmbeddings(labelsToCheck);
+
+		if (nodesWithMissingEmbeddings.length === 0) {
+			return 0;
+		}
+
+		if (options.verbose) {
+			this.logger.log(
+				`Found ${nodesWithMissingEmbeddings.length} nodes with missing embeddings, repairing...`,
+			);
+		}
+
+		let repairedCount = 0;
+
+		for (const node of nodesWithMissingEmbeddings) {
+			try {
+				// Compose embedding text based on node type
+				const text =
+					node.label === "Document"
+						? node.name // For documents, use path as fallback
+						: composeEntityEmbeddingText({
+								type: node.label,
+								name: node.name,
+								description: node.description,
+								documentPaths: [],
+							});
+
+				if (text.trim()) {
+					const embedding = await this.embeddingService.generateEmbedding(text);
+					await this.graph.updateNodeEmbedding(
+						node.label,
+						node.name,
+						embedding,
+					);
+					repairedCount++;
+					this.logger.debug(
+						`Repaired embedding for ${node.label}:${node.name}`,
+					);
+				}
+			} catch (error) {
+				const errorMessage =
+					error instanceof Error ? error.message : String(error);
+				this.logger.warn(
+					`Failed to repair embedding for ${node.label}:${node.name}: ${errorMessage}`,
+				);
+				// Continue with other nodes - don't fail entire repair on single error
+			}
+		}
+
+		if (options.verbose && repairedCount > 0) {
+			this.logger.log(`Repaired ${repairedCount} missing embeddings`);
+		}
+
+		return repairedCount;
 	}
 }

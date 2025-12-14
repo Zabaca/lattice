@@ -28,10 +28,7 @@ export interface SyncOptions {
 	skipCascade?: boolean; // Skip cascade analysis (can be slow for large repos)
 	embeddings?: boolean; // Generate embeddings for documents (default: true)
 	skipEmbeddings?: boolean; // Explicitly skip embeddings even if enabled
-	// v2 is now the default - use legacy flag to revert to v1 behavior
-	useDbChangeDetection?: boolean; // Use database-based change detection (default: true)
 	aiExtraction?: boolean; // Use AI to extract entities (default: true)
-	legacy?: boolean; // Use v1 manifest-based detection and skip AI extraction
 }
 
 /**
@@ -125,52 +122,51 @@ export class SyncService {
 			entityEmbeddingsGenerated: 0,
 		};
 
-		// Apply v2 defaults (unless legacy mode is explicitly requested)
-		const useDbDetection = options.legacy
-			? false
-			: (options.useDbChangeDetection ?? true);
-		const useAiExtraction = options.legacy
-			? false
-			: (options.aiExtraction ?? true);
+		// v2 defaults: database-based detection + AI extraction
+		const useAiExtraction = options.aiExtraction ?? true;
 
 		try {
-			// Load manifest (needed for legacy mode and migration)
+			// Load manifest (still used for incremental progress tracking)
 			await this.manifest.load();
 
-			// v2: Load DB hashes for database-based change detection
-			if (useDbDetection) {
-				await this.dbChangeDetector.loadHashes();
-				if (options.verbose) {
-					this.logger.log(
-						`v2 mode: Loaded ${this.dbChangeDetector.getCacheSize()} document hashes from database`,
-					);
-				}
+			// Load DB hashes for database-based change detection
+			await this.dbChangeDetector.loadHashes();
+			if (options.verbose) {
+				this.logger.log(
+					`Loaded ${this.dbChangeDetector.getCacheSize()} document hashes from database`,
+				);
 			}
 
-			// Handle force mode - clears manifest only (not graph) to force re-sync
+			// Handle force mode - clears tracking data to force re-sync
 			// MERGE operations will update existing nodes, preserving relationships
 			if (options.force) {
 				if (options.paths && options.paths.length > 0) {
-					// Force with specific paths: clear those entries from manifest
+					// Force with specific paths: clear those entries
+					const normalizedPaths = this.pathResolver.resolveDocPaths(
+						options.paths,
+						{ requireExists: true, requireInDocs: true },
+					);
 					if (options.verbose) {
 						this.logger.log(
-							`Force mode: marking ${options.paths.length} document(s) for re-sync`,
+							`Force mode: marking ${normalizedPaths.length} document(s) for re-sync`,
 						);
 					}
 					await this.clearManifestEntries(options.paths);
+					this.dbChangeDetector.clearEntries(normalizedPaths);
 				} else {
-					// Force without paths: clear entire manifest to re-sync everything
+					// Force without paths: clear all tracking data to re-sync everything
 					if (options.verbose) {
 						this.logger.log(
-							"Force mode: clearing manifest to force full re-sync",
+							"Force mode: clearing tracking data to force full re-sync",
 						);
 					}
 					await this.clearManifest();
+					this.dbChangeDetector.reset();
 				}
 			}
 
-			// Detect changes (v2 uses DB detection by default)
-			const changes = await this.detectChanges(options.paths, useDbDetection);
+			// Detect changes using database-based detection
+			const changes = await this.detectChanges(options.paths);
 			result.changes = changes;
 
 			// Phase 1: Parse all documents that need syncing into memory
@@ -293,17 +289,6 @@ export class SyncService {
 					options,
 				);
 
-				// Phase 4.5: Repair any existing entities with missing embeddings
-				if (
-					options.embeddings &&
-					!options.skipEmbeddings &&
-					this.embeddingService
-				) {
-					const repairedCount =
-						await this.repairMissingEntityEmbeddings(options);
-					result.entityEmbeddingsGenerated += repairedCount;
-				}
-
 				// Checkpoint after entity sync to ensure persistence
 				await this.graph.checkpoint();
 
@@ -373,12 +358,9 @@ export class SyncService {
 	}
 
 	/**
-	 * Detect changes between manifest (v1) or database (v2) and current documents
+	 * Detect changes between database and current documents
 	 */
-	async detectChanges(
-		paths?: string[],
-		useDbDetection = false,
-	): Promise<DocumentChange[]> {
+	async detectChanges(paths?: string[]): Promise<DocumentChange[]> {
 		const changes: DocumentChange[] = [];
 
 		// Discover all documents
@@ -395,27 +377,19 @@ export class SyncService {
 			allDocPaths = allDocPaths.filter((p) => pathSet.has(p));
 		}
 
-		// Get tracked paths from manifest (v1) or database (v2)
-		const trackedPaths = new Set(
-			useDbDetection
-				? this.dbChangeDetector.getTrackedPaths()
-				: this.manifest.getTrackedPaths(),
-		);
+		// Get tracked paths from database
+		const trackedPaths = new Set(this.dbChangeDetector.getTrackedPaths());
 
 		// Check each document on disk
 		for (const docPath of allDocPaths) {
 			try {
 				const doc = await this.parser.parseDocument(docPath);
 
-				// v2: Use database change detection
-				// v1: Use manifest change detection
-				const changeType = useDbDetection
-					? this.dbChangeDetector.detectChange(docPath, doc.contentHash)
-					: this.manifest.detectChange(
-							docPath,
-							doc.contentHash,
-							doc.frontmatterHash,
-						);
+				// Use database change detection
+				const changeType = this.dbChangeDetector.detectChange(
+					docPath,
+					doc.contentHash,
+				);
 
 				changes.push({
 					path: docPath,
@@ -718,7 +692,7 @@ export class SyncService {
 				// This prevents race conditions where the file is modified during sync
 				const currentDoc = await this.parser.parseDocument(change.path);
 
-				// Update manifest with current file state (v1 compatibility)
+				// Update manifest with current file state (for incremental progress tracking)
 				this.manifest.updateEntry(
 					currentDoc.path,
 					currentDoc.contentHash,
@@ -727,21 +701,15 @@ export class SyncService {
 					currentDoc.relationships.length,
 				);
 
-				// v2: Also update database hashes (default behavior unless legacy mode)
-				const shouldUpdateDbHashes = options.legacy
-					? false
-					: (options.useDbChangeDetection ?? true);
-				if (shouldUpdateDbHashes) {
-					// Compute embedding source hash if embedding was generated
-					const embeddingSourceHash = embeddingGenerated
-						? currentDoc.contentHash // Use content hash as embedding source for now
-						: undefined;
-					await this.graph.updateDocumentHashes(
-						currentDoc.path,
-						currentDoc.contentHash,
-						embeddingSourceHash,
-					);
-				}
+				// Update database hashes for change detection
+				const embeddingSourceHash = embeddingGenerated
+					? currentDoc.contentHash // Use content hash as embedding source for now
+					: undefined;
+				await this.graph.updateDocumentHashes(
+					currentDoc.path,
+					currentDoc.contentHash,
+					embeddingSourceHash,
+				);
 				break;
 			}
 
@@ -895,76 +863,5 @@ export class SyncService {
 				);
 			}
 		}
-	}
-
-	/**
-	 * Repair entities with missing embeddings.
-	 * Queries for all entity nodes with NULL embeddings and generates them.
-	 * This handles cases where previous sync runs failed to generate embeddings.
-	 */
-	private async repairMissingEntityEmbeddings(
-		options: SyncOptions,
-	): Promise<number> {
-		if (!this.embeddingService) {
-			return 0;
-		}
-
-		// Find all entity types with missing embeddings (including Document)
-		const labelsToCheck = [...ENTITY_TYPES, "Document"];
-		const nodesWithMissingEmbeddings =
-			await this.graph.findNodesWithMissingEmbeddings(labelsToCheck);
-
-		if (nodesWithMissingEmbeddings.length === 0) {
-			return 0;
-		}
-
-		if (options.verbose) {
-			this.logger.log(
-				`Found ${nodesWithMissingEmbeddings.length} nodes with missing embeddings, repairing...`,
-			);
-		}
-
-		let repairedCount = 0;
-
-		for (const node of nodesWithMissingEmbeddings) {
-			try {
-				// Compose embedding text based on node type
-				const text =
-					node.label === "Document"
-						? node.name // For documents, use path as fallback
-						: composeEntityEmbeddingText({
-								type: node.label,
-								name: node.name,
-								description: node.description,
-								documentPaths: [],
-							});
-
-				if (text.trim()) {
-					const embedding = await this.embeddingService.generateEmbedding(text);
-					await this.graph.updateNodeEmbedding(
-						node.label,
-						node.name,
-						embedding,
-					);
-					repairedCount++;
-					this.logger.debug(
-						`Repaired embedding for ${node.label}:${node.name}`,
-					);
-				}
-			} catch (error) {
-				const errorMessage =
-					error instanceof Error ? error.message : String(error);
-				this.logger.warn(
-					`Failed to repair embedding for ${node.label}:${node.name}: ${errorMessage}`,
-				);
-				// Continue with other nodes - don't fail entire repair on single error
-			}
-		}
-
-		if (options.verbose && repairedCount > 0) {
-			this.logger.log(`Repaired ${repairedCount} missing embeddings`);
-		}
-
-		return repairedCount;
 	}
 }

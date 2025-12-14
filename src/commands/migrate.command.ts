@@ -94,7 +94,6 @@ export class MigrateCommand extends CommandRunner {
 				if (!options.dryRun) {
 					const result = await this.syncService.sync({
 						force: false, // Don't force - let change detection handle it
-						useDbChangeDetection: true,
 						aiExtraction: true,
 						verbose: options.verbose,
 						embeddings: true,

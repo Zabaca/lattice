@@ -58,6 +58,16 @@ export class DatabaseChangeDetectorService {
 	}
 
 	/**
+	 * Clear specific paths from the cache (for force mode).
+	 * Makes those documents appear as "new" on next detectChange().
+	 */
+	clearEntries(paths: string[]): void {
+		for (const path of paths) {
+			this.hashCache.delete(path);
+		}
+	}
+
+	/**
 	 * Get SHA256 hash for content.
 	 */
 	getContentHash(content: string): string {

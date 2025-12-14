@@ -836,44 +836,4 @@ export class GraphService implements OnModuleDestroy {
 			return [];
 		}
 	}
-
-	/**
-	 * Find nodes with missing embeddings.
-	 * Used to repair entities that failed to get embeddings during sync.
-	 */
-	async findNodesWithMissingEmbeddings(
-		labels: string[],
-	): Promise<Array<{ label: string; name: string; description?: string }>> {
-		try {
-			const conn = await this.ensureConnected();
-
-			// Build label filter
-			const labelFilter = labels.map((l) => `'${this.escape(l)}'`).join(", ");
-
-			const reader = await conn.runAndReadAll(`
-				SELECT label, name, properties->>'description' as description
-				FROM nodes
-				WHERE label IN (${labelFilter})
-				  AND embedding IS NULL
-			`);
-
-			return reader.getRows().map((row) => {
-				const [label, name, description] = row as [
-					string,
-					string,
-					string | null,
-				];
-				return {
-					label,
-					name,
-					description: description || undefined,
-				};
-			});
-		} catch (error) {
-			this.logger.error(
-				`Failed to find nodes with missing embeddings: ${error instanceof Error ? error.message : String(error)}`,
-			);
-			return [];
-		}
-	}
 }

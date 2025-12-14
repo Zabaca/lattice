@@ -82,6 +82,8 @@ describe("SyncService", () => {
 			getTrackedPaths: mock(() => []),
 			getCacheSize: mock(() => 0),
 			isEmbeddingStale: mock(() => true),
+			reset: mock(() => {}),
+			clearEntries: mock(() => {}),
 		};
 
 		mockEntityExtractor = {
@@ -123,7 +125,7 @@ describe("SyncService", () => {
 		});
 
 		it("returns deleted documents no longer on disk", async () => {
-			mockManifest.getTrackedPaths.mockImplementation(() => [
+			mockDbChangeDetector.getTrackedPaths.mockImplementation(() => [
 				"docs/deleted.md",
 			]);
 
@@ -141,8 +143,8 @@ describe("SyncService", () => {
 			mockParser.parseDocument.mockImplementation(() =>
 				Promise.resolve(createDoc({ path: "docs/updated.md" })),
 			);
-			mockManifest.detectChange.mockImplementation(() => "updated");
-			mockManifest.getTrackedPaths.mockImplementation(() => [
+			mockDbChangeDetector.detectChange.mockImplementation(() => "updated");
+			mockDbChangeDetector.getTrackedPaths.mockImplementation(() => [
 				"docs/updated.md",
 			]);
 

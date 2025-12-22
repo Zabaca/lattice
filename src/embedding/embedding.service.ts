@@ -13,15 +13,25 @@ import { VoyageEmbeddingProvider } from "./providers/voyage.provider";
 @Injectable()
 export class EmbeddingService {
 	private readonly logger = new Logger(EmbeddingService.name);
-	private provider: EmbeddingProvider;
+	private provider: EmbeddingProvider | null = null;
 	private config: EmbeddingConfig;
 
 	constructor(private configService: ConfigService) {
 		this.config = this.loadConfig();
-		this.provider = this.createProvider();
-		this.logger.log(
-			`Initialized embedding service with provider: ${this.provider.name}`,
-		);
+		// Provider is created lazily on first use to allow commands like `init`
+		// to run without requiring VOYAGE_API_KEY
+	}
+
+	/**
+	 * Lazily initialize and return the embedding provider.
+	 * Throws if API key is missing when provider is actually needed.
+	 */
+	private getProvider(): EmbeddingProvider {
+		if (!this.provider) {
+			this.provider = this.createProvider();
+			this.logger.log(`Initialized embedding provider: ${this.provider.name}`);
+		}
+		return this.provider;
 	}
 
 	private loadConfig(): EmbeddingConfig {
@@ -89,14 +99,14 @@ export class EmbeddingService {
 	 * Get the current provider name
 	 */
 	getProviderName(): string {
-		return this.provider.name;
+		return this.getProvider().name;
 	}
 
 	/**
 	 * Get embedding dimensions
 	 */
 	getDimensions(): number {
-		return this.provider.dimensions;
+		return this.getProvider().dimensions;
 	}
 
 	/**
@@ -106,7 +116,7 @@ export class EmbeddingService {
 		if (!text || text.trim().length === 0) {
 			throw new Error("Cannot generate embedding for empty text");
 		}
-		return this.provider.generateEmbedding(text);
+		return this.getProvider().generateEmbedding(text);
 	}
 
 	/**
@@ -118,11 +128,12 @@ export class EmbeddingService {
 			throw new Error("Cannot generate embedding for empty text");
 		}
 		// Use query-specific embedding if provider supports it
-		if (this.provider.generateQueryEmbedding) {
-			return this.provider.generateQueryEmbedding(text);
+		const provider = this.getProvider();
+		if (provider.generateQueryEmbedding) {
+			return provider.generateQueryEmbedding(text);
 		}
 		// Fall back to regular embedding
-		return this.provider.generateEmbedding(text);
+		return provider.generateEmbedding(text);
 	}
 
 	/**
@@ -133,13 +144,13 @@ export class EmbeddingService {
 		if (validTexts.length === 0) {
 			return [];
 		}
-		return this.provider.generateEmbeddings(validTexts);
+		return this.getProvider().generateEmbeddings(validTexts);
 	}
 
 	/**
 	 * Check if the service is configured for real embeddings (not mock)
 	 */
 	isRealProvider(): boolean {
-		return this.provider.name !== "mock";
+		return this.getProvider().name !== "mock";
 	}
 }

@@ -646,7 +646,8 @@ export class GraphService implements OnModuleDestroy {
 		// Query all labels at once
 		// Cast to fixed-size array for VSS compatibility
 		// NOTE: Do NOT use ORDER BY + LIMIT in SQL - it causes NULL similarity scores
-		// due to a DuckDB VSS bug with HNSW index. Sort and limit in application code instead.
+		// due to a DuckDB bug (#19377) fixed in main but not yet in 1.4.x LTS.
+		// Sort and limit in application code instead.
 		const sql = `
 				SELECT
 					name,

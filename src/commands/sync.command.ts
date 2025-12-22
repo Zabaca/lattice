@@ -2,6 +2,7 @@ import { watch } from "node:fs";
 import { join } from "node:path";
 import { Injectable } from "@nestjs/common";
 import { Command, CommandRunner, Option } from "nest-commander";
+import { GraphService } from "../graph/graph.service.js";
 import { GraphValidatorService } from "../sync/graph-validator.service.js";
 import type { ChangeType, DocumentChange } from "../sync/manifest.service.js";
 import { SyncOptions, SyncResult, SyncService } from "../sync/sync.service.js";
@@ -29,16 +30,31 @@ export class SyncCommand extends CommandRunner {
 
 	constructor(
 		private readonly syncService: SyncService,
+		private readonly graphService: GraphService,
 		readonly _graphValidator: GraphValidatorService,
 	) {
 		super();
+	}
+
+	/**
+	 * Safely exit the process after ensuring database cleanup.
+	 * This prevents HNSW index corruption by flushing all pending changes.
+	 */
+	private async safeExit(code: number): Promise<never> {
+		try {
+			await this.graphService.checkpoint();
+		} catch (error) {
+			// Log but don't fail - we're exiting anyway
+			console.error("Warning: checkpoint failed during exit");
+		}
+		process.exit(code);
 	}
 
 	async run(paths: string[], options: SyncCommandOptions): Promise<void> {
 		// Watch mode is incompatible with dry-run
 		if (options.watch && options.dryRun) {
 			console.log("\n⚠️  Watch mode is not compatible with --dry-run mode\n");
-			process.exit(1);
+			await this.safeExit(1);
 		}
 
 		// Watch mode is incompatible with force mode (for safety)
@@ -46,14 +62,14 @@ export class SyncCommand extends CommandRunner {
 			console.log(
 				"\n⚠️  Watch mode is not compatible with --force mode (for safety)\n",
 			);
-			process.exit(1);
+			await this.safeExit(1);
 		}
 
 		// --force requires specific paths to prevent accidental full refreshes
 		if (options.force && paths.length === 0) {
 			console.log("\n⚠️  --force requires specific paths to be specified.\n");
 			console.log("   Usage: lattice sync --force <path1> [path2] ...\n");
-			process.exit(1);
+			await this.safeExit(1);
 		}
 
 		const syncOptions: SyncOptions = {
@@ -153,14 +169,14 @@ export class SyncCommand extends CommandRunner {
 			if (options.watch) {
 				await this.enterWatchMode(syncOptions);
 			} else {
-				process.exit(initialResult.errors.length > 0 ? 1 : 0);
+				await this.safeExit(initialResult.errors.length > 0 ? 1 : 0);
 			}
 		} catch (error) {
 			console.error(
 				"\n❌ Sync failed:",
 				error instanceof Error ? error.message : String(error),
 			);
-			process.exit(1);
+			await this.safeExit(1);
 		}
 	}
 
@@ -251,13 +267,15 @@ export class SyncCommand extends CommandRunner {
 		});
 
 		// Handle graceful shutdown on SIGINT (Ctrl+C)
-		process.on("SIGINT", () => this.shutdown());
+		process.on("SIGINT", () => {
+			this.shutdown().catch(console.error);
+		});
 
 		// Keep the process running (never resolves)
 		await new Promise(() => {});
 	}
 
-	private shutdown(): void {
+	private async shutdown(): Promise<void> {
 		if (this.isShuttingDown) return;
 		this.isShuttingDown = true;
 
@@ -267,7 +285,7 @@ export class SyncCommand extends CommandRunner {
 			this.watcher.close();
 		}
 
-		process.exit(0);
+		await this.safeExit(0);
 	}
 
 	private printSyncResults(result: SyncResult, isWatchMode = false): void {

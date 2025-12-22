@@ -645,8 +645,9 @@ export class GraphService implements OnModuleDestroy {
 
 		// Query all labels at once
 		// Cast to fixed-size array for VSS compatibility
-		try {
-			const reader = await conn.runAndReadAll(`
+		// NOTE: Do NOT use ORDER BY + LIMIT in SQL - it causes NULL similarity scores
+		// due to a DuckDB VSS bug with HNSW index. Sort and limit in application code instead.
+		const sql = `
 				SELECT
 					name,
 					label,
@@ -655,11 +656,12 @@ export class GraphService implements OnModuleDestroy {
 					array_cosine_similarity(embedding, ${vectorStr}::FLOAT[${this.embeddingDimensions}]) as similarity
 				FROM nodes
 				WHERE embedding IS NOT NULL
-				ORDER BY similarity DESC
-				LIMIT ${k}
-			`);
+			`;
+		try {
+			const reader = await conn.runAndReadAll(sql);
+			const rows = reader.getRows();
 
-			for (const row of reader.getRows()) {
+			for (const row of rows) {
 				const [name, label, title, description, similarity] = row as [
 					string,
 					string,

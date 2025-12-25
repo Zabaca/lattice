@@ -7,6 +7,7 @@ import {
 	OntologyCommand,
 	RelsCommand,
 	SearchCommand,
+	SiteCommand,
 	SqlCommand,
 	StatusCommand,
 	SyncCommand,
@@ -39,6 +40,7 @@ import { getEnvPath } from "./utils/paths.js";
 		OntologyCommand,
 		InitCommand,
 		MigrateCommand,
+		SiteCommand,
 	],
 })
 export class AppModule {}

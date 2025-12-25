@@ -17,12 +17,23 @@ const __dirname = path.dirname(__filename);
 
 const COMMANDS = ["research.md", "graph-sync.md", "entity-extract.md"];
 
+// Site template files to copy (relative paths from site-template/)
+const SITE_TEMPLATE_FILES = [
+	"astro.config.ts",
+	"package.json",
+	"tsconfig.json",
+	"src/content.config.ts",
+	"src/collections/authors.ts",
+	"src/collections/documents.ts",
+	"src/collections/tags.ts",
+];
+
 type InitCommandOptions = Record<string, never>;
 
 @Injectable()
 @Command({
 	name: "init",
-	description: "Install Claude Code slash commands for Lattice",
+	description: "Initialize Lattice with Claude Code commands and site generator",
 })
 export class InitCommand extends CommandRunner {
 	async run(_inputs: string[], _options: InitCommandOptions): Promise<void> {
@@ -30,127 +41,75 @@ export class InitCommand extends CommandRunner {
 			// Setup ~/.lattice/ directory structure
 			ensureLatticeHome();
 
-			// Create .env file with placeholder if it doesn't exist
+			const latticeHome = getLatticeHome();
 			const envPath = getEnvPath();
+
+			// Create .env file with placeholder if it doesn't exist
 			if (!existsSync(envPath)) {
 				writeFileSync(
 					envPath,
 					`# Lattice Configuration
 # Get your API key from: https://www.voyageai.com/
-
 VOYAGE_API_KEY=
+
+# Site Configuration (for lattice site command)
+SPACESHIP_AUTHOR="Lattice"
+SPACESHIP_BASE="/"
+SPACESHIP_SITE="https://example.com"
+SPACESHIP_TITLE="Lattice"
+SPACESHIP_DESCRIPTION="Research Knowledge Base"
+OBSIDIAN_VAULT_DIR=docs
 `,
 				);
+			} else {
+				// Check if .env needs Spaceship config added
+				const envContent = await fs.readFile(envPath, "utf-8");
+				if (!envContent.includes("SPACESHIP_")) {
+					await fs.appendFile(
+						envPath,
+						`
+# Site Configuration (for lattice site command)
+SPACESHIP_AUTHOR="Lattice"
+SPACESHIP_BASE="/"
+SPACESHIP_SITE="https://example.com"
+SPACESHIP_TITLE="Lattice"
+SPACESHIP_DESCRIPTION="Research Knowledge Base"
+OBSIDIAN_VAULT_DIR=docs
+`,
+					);
+					console.log("✅ Added site configuration to .env");
+				}
 			}
 
 			// Show Lattice home setup info
-			console.log(`✅ Lattice home directory: ${getLatticeHome()}`);
+			console.log(`✅ Lattice home directory: ${latticeHome}`);
 			console.log(`   Documents: ${getDocsPath()}`);
 			console.log(`   Config:    ${envPath}`);
 			console.log();
 
-			// Always install to user's home directory
-			const targetDir = path.join(homedir(), ".claude", "commands");
+			// Setup site template files
+			await this.setupSiteTemplate(latticeHome);
 
-			// Find commands source directory
-			// In built package: dist/cli.js -> commands/ is at package root (one level up)
-			// In dev: src/commands/init.command.ts -> commands/ is at package root (two levels up)
-			// Try both paths
-			let commandsSourceDir = path.resolve(__dirname, "..", "commands");
-			try {
-				await fs.access(commandsSourceDir);
-			} catch {
-				// Fall back to dev path (two levels up)
-				commandsSourceDir = path.resolve(__dirname, "..", "..", "commands");
-			}
-
-			// Verify source directory exists
-			try {
-				await fs.access(commandsSourceDir);
-			} catch {
-				console.error(
-					"Error: Commands source directory not found at",
-					commandsSourceDir,
-				);
-				console.error(
-					"This may indicate a corrupted installation. Try reinstalling @zabaca/lattice.",
-				);
-				process.exit(1);
-			}
-
-			// Create target directory
-			await fs.mkdir(targetDir, { recursive: true });
-
-			// Copy commands
-			let copied = 0;
-			let skipped = 0;
-			const installed: string[] = [];
-
-			for (const file of COMMANDS) {
-				const sourcePath = path.join(commandsSourceDir, file);
-				const targetPath = path.join(targetDir, file);
-
-				try {
-					// Check if source exists
-					await fs.access(sourcePath);
-
-					// Check if target already exists
-					try {
-						await fs.access(targetPath);
-						// File exists - check if it's different
-						const sourceContent = await fs.readFile(sourcePath, "utf-8");
-						const targetContent = await fs.readFile(targetPath, "utf-8");
-
-						if (sourceContent === targetContent) {
-							skipped++;
-							continue;
-						}
-					} catch {
-						// Target doesn't exist, will copy
-					}
-
-					// Copy the file
-					await fs.copyFile(sourcePath, targetPath);
-					installed.push(file);
-					copied++;
-				} catch (err) {
-					console.error(
-						`Warning: Could not copy ${file}:`,
-						err instanceof Error ? err.message : String(err),
-					);
-				}
-			}
-
-			// Report results
-			console.log();
-			console.log(`✅ Lattice commands installed to ${targetDir}`);
-			console.log();
-
-			if (copied > 0) {
-				console.log(`Installed ${copied} command(s):`);
-				installed.forEach((f) => {
-					const name = f.replace(".md", "");
-					console.log(`  - /${name}`);
-				});
-			}
-
-			if (skipped > 0) {
-				console.log(`Skipped ${skipped} unchanged command(s)`);
-			}
+			// Install Claude Code commands
+			await this.installClaudeCommands();
 
 			console.log();
-			console.log("Available commands in Claude Code:");
+			console.log("Available commands:");
+			console.log("  lattice site         - Build and run the documentation site");
+			console.log("  lattice sync         - Sync documents to knowledge graph");
+			console.log("  lattice status       - Show documents needing sync");
+			console.log("  lattice search       - Semantic search across documents");
+			console.log();
+			console.log("Claude Code slash commands:");
 			console.log("  /research <topic>    - AI-assisted research workflow");
-			console.log(
-				"  /graph-sync          - Extract entities and sync to graph",
-			);
-			console.log(
-				"  /entity-extract      - Extract entities from a single document",
-			);
+			console.log("  /graph-sync          - Extract entities and sync to graph");
+			console.log("  /entity-extract      - Extract entities from a document");
 			console.log();
 
-			console.log(`⚠️  Add your Voyage API key to: ${getEnvPath()}`);
-			console.log();
+			if (!(await fs.readFile(envPath, "utf-8")).includes("pa-")) {
+				console.log(`⚠️  Add your Voyage API key to: ${envPath}`);
+				console.log();
+			}
 
 			process.exit(0);
 		} catch (error) {
@@ -159,6 +118,136 @@ VOYAGE_API_KEY=
 				error instanceof Error ? error.message : String(error),
 			);
 			process.exit(1);
+		}
+	}
+
+	private async setupSiteTemplate(latticeHome: string): Promise<void> {
+		// Find site-template directory
+		// In built package: dist/commands/init.command.js -> site-template/ at package root
+		// In dev: src/commands/init.command.ts -> site-template/ at package root
+		let templateDir = path.resolve(__dirname, "..", "site-template");
+		try {
+			await fs.access(templateDir);
+		} catch {
+			// Fall back to package root (two levels up from src/commands)
+			templateDir = path.resolve(__dirname, "..", "..", "site-template");
+		}
+
+		// Verify template directory exists
+		try {
+			await fs.access(templateDir);
+		} catch {
+			console.log("⚠️  Site template not found - skipping site setup");
+			return;
+		}
+
+		// Create necessary directories
+		await fs.mkdir(path.join(latticeHome, "src", "collections"), {
+			recursive: true,
+		});
+
+		// Copy template files
+		let copied = 0;
+		let skipped = 0;
+
+		for (const file of SITE_TEMPLATE_FILES) {
+			const sourcePath = path.join(templateDir, file);
+			const targetPath = path.join(latticeHome, file);
+
+			try {
+				await fs.access(sourcePath);
+
+				// Check if target exists and is the same
+				try {
+					await fs.access(targetPath);
+					const sourceContent = await fs.readFile(sourcePath, "utf-8");
+					const targetContent = await fs.readFile(targetPath, "utf-8");
+					if (sourceContent === targetContent) {
+						skipped++;
+						continue;
+					}
+				} catch {
+					// Target doesn't exist, will copy
+				}
+
+				// Ensure parent directory exists
+				await fs.mkdir(path.dirname(targetPath), { recursive: true });
+				await fs.copyFile(sourcePath, targetPath);
+				copied++;
+			} catch (err) {
+				// Source file doesn't exist, skip
+			}
+		}
+
+		if (copied > 0) {
+			console.log(`✅ Site template: ${copied} file(s) installed`);
+		}
+		if (skipped > 0) {
+			console.log(`   Site template: ${skipped} file(s) unchanged`);
+		}
+	}
+
+	private async installClaudeCommands(): Promise<void> {
+		// Always install to user's home directory
+		const targetDir = path.join(homedir(), ".claude", "commands");
+
+		// Find commands source directory
+		let commandsSourceDir = path.resolve(__dirname, "..", "commands");
+		try {
+			await fs.access(commandsSourceDir);
+		} catch {
+			commandsSourceDir = path.resolve(__dirname, "..", "..", "commands");
+		}
+
+		// Verify source directory exists
+		try {
+			await fs.access(commandsSourceDir);
+		} catch {
+			console.log("⚠️  Claude commands not found - skipping");
+			return;
+		}
+
+		// Create target directory
+		await fs.mkdir(targetDir, { recursive: true });
+
+		// Copy commands
+		let copied = 0;
+		let skipped = 0;
+		const installed: string[] = [];
+
+		for (const file of COMMANDS) {
+			const sourcePath = path.join(commandsSourceDir, file);
+			const targetPath = path.join(targetDir, file);
+
+			try {
+				await fs.access(sourcePath);
+
+				try {
+					await fs.access(targetPath);
+					const sourceContent = await fs.readFile(sourcePath, "utf-8");
+					const targetContent = await fs.readFile(targetPath, "utf-8");
+
+					if (sourceContent === targetContent) {
+						skipped++;
+						continue;
+					}
+				} catch {
+					// Target doesn't exist, will copy
+				}
+
+				await fs.copyFile(sourcePath, targetPath);
+				installed.push(file);
+				copied++;
+			} catch (err) {
+				// Source doesn't exist, skip
+			}
+		}
+
+		if (copied > 0) {
+			console.log(`✅ Claude commands: ${copied} installed to ${targetDir}`);
+		}
+		if (skipped > 0) {
+			console.log(`   Claude commands: ${skipped} unchanged`);
 		}
 	}
 }

@@ -1,0 +1,19 @@
+{
+  "name": "lattice-site",
+  "type": "module",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build --sync",
+    "preview": "astro preview"
+  },
+  "dependencies": {
+    "astro": "^5.12.8",
+    "astro-loader-obsidian": "^0.9.1",
+    "astro-spaceship": "^0.9.8",
+    "sharp": "^0.32.5",
+    "spaceship-monolith": "^0.9.8",
+    "varlock": "^0.0.11"
+  }
+}

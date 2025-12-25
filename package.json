@@ -1,6 +1,6 @@
 {
 	"name": "@zabaca/lattice",
-	"version": "1.1.0",
+	"version": "1.1.1",
 	"description": "Human-initiated, AI-powered knowledge graph for markdown documentation",
 	"type": "module",
 	"bin": {
@@ -9,6 +9,7 @@
 	"files": [
 		"dist",
 		"commands",
+		"site-template",
 		"README.md"
 	],
 	"scripts": {

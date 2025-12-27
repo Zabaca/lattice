@@ -26,6 +26,7 @@ const SITE_TEMPLATE_FILES = [
 	"src/collections/authors.ts",
 	"src/collections/documents.ts",
 	"src/collections/tags.ts",
+	"src/plugins/rehype-strip-md-extension.ts",
 ];
 
 type InitCommandOptions = Record<string, never>;
@@ -154,6 +155,9 @@ OBSIDIAN_VAULT_DIR=docs
 
 		// Create necessary directories
 		await fs.mkdir(path.join(latticeHome, "src", "collections"), {
+			recursive: true,
+		});
+		await fs.mkdir(path.join(latticeHome, "src", "plugins"), {
 			recursive: true,
 		});
 

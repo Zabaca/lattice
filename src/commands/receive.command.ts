@@ -37,10 +37,15 @@ export class ReceiveCommand extends CommandRunner {
 		const crocPath = await ensureCroc();
 
 		// Run croc receive with --yes to auto-accept and --out to specify destination
+		// Use --classic mode to allow passing code as argument (new secure mode requires env var)
 		const receiveCode = await new Promise<number>((resolve, reject) => {
-			const child = spawn(crocPath, ["--yes", "--out", docsDir, code], {
-				stdio: "inherit",
-			});
+			const child = spawn(
+				crocPath,
+				["--classic", "--yes", "--out", docsDir, code],
+				{
+					stdio: "inherit",
+				},
+			);
 
 			child.on("close", (code) => {
 				resolve(code ?? 0);

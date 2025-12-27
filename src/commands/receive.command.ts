@@ -37,15 +37,12 @@ export class ReceiveCommand extends CommandRunner {
 		const crocPath = await ensureCroc();
 
 		// Run croc receive with --yes to auto-accept and --out to specify destination
-		// Use --classic mode to allow passing code as argument (new secure mode requires env var)
+		// Pass secret via CROC_SECRET env var (secure mode, doesn't expose secret in process list)
 		const receiveCode = await new Promise<number>((resolve, reject) => {
-			const child = spawn(
-				crocPath,
-				["--classic", "--yes", "--out", docsDir, code],
-				{
-					stdio: "inherit",
-				},
-			);
+			const child = spawn(crocPath, ["--yes", "--out", docsDir], {
+				stdio: "inherit",
+				env: { ...process.env, CROC_SECRET: code },
+			});
 
 			child.on("close", (code) => {
 				resolve(code ?? 0);

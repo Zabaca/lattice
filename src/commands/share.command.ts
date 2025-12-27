@@ -46,14 +46,9 @@ export class ShareCommand extends CommandRunner {
 
 		// Spawn croc send with piped output to filter it
 		// Global flags come before the command in croc
-		// Use --classic mode for simpler code sharing (new secure mode requires env var on receiver)
-		const child = spawn(
-			crocPath,
-			["--classic", "--disable-clipboard", "send", fullPath],
-			{
-				stdio: ["inherit", "pipe", "pipe"],
-			},
-		);
+		const child = spawn(crocPath, ["--disable-clipboard", "send", fullPath], {
+			stdio: ["inherit", "pipe", "pipe"],
+		});
 
 		let codeExtracted = false;
 		let outputBuffer = "";

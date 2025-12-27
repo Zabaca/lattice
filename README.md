@@ -10,12 +10,11 @@ Lattice turns your markdown documentation into a searchable knowledge graph. Unl
 ## The Workflow
 
 ```bash
-/research "knowledge graphs"   # Find existing docs or create new research
-/graph-sync                    # Extract entities & sync (automatic)
+/research "knowledge graphs"   # Find existing docs, create new research, auto-sync
 lattice search "your query"    # Semantic search your knowledge base
 ```
 
-That's it. Two commands to build a knowledge base.
+That's it. One command to build a knowledge base.
 
 ---
 
@@ -28,7 +27,7 @@ That's it. Two commands to build a knowledge base.
 | **Database** | Embedded DuckDB (zero config) | Docker containers required |
 | **External dependencies** | None | 2-3 (DB + vector + graph) |
 | **API keys needed** | 1 (Voyage AI for embeddings) | 2-3 (LLM + embedding + rerank) |
-| **Workflow** | `/research` → `/graph-sync` | Custom scripts |
+| **Workflow** | `/research` (auto-syncs) | Custom scripts |
 
 ---
 
@@ -53,8 +52,7 @@ That's it. No Docker. No containers. DuckDB is embedded.
 
 ```bash
 claude                        # Launch Claude Code
-/research "your topic"        # Find or create documentation
-/graph-sync                   # Build knowledge graph (automatic)
+/research "your topic"        # Find or create documentation (auto-syncs)
 lattice search "your query"   # Semantic search
 ```
 
@@ -64,11 +62,7 @@ The `/research` command will:
 - Search your existing docs for related content
 - Ask if you need new research
 - Create organized documentation with AI assistance
-
-The `/graph-sync` command will:
-- Detect all new/changed documents
-- Extract entities using Claude Code (your subscription)
-- Sync to DuckDB for semantic search
+- **Automatically sync** to the knowledge graph
 
 ---
 
@@ -95,21 +89,53 @@ Claude will:
 
 If no existing docs match, Claude will:
 1. Perform web research
-2. Create a new topic directory (`docs/new-topic/`)
+2. Create a new topic directory (`~/.lattice/docs/new-topic/`)
 3. Generate README.md index and research document
-4. Remind you to run `/graph-sync`
+4. Automatically sync to the knowledge graph
 
-### Batch Syncing
+---
 
-`/graph-sync` doesn't need to run after each research session. It identifies all documents needing sync:
+## Question Tracking
+
+Track research questions and link them to answers in your knowledge base.
 
 ```bash
-# After multiple research sessions
-/graph-sync
-
-# Shows: "4 documents need syncing"
-# Extracts entities and syncs all at once
+lattice question:add "How does X work?"           # Track a question
+lattice question:link "How does X work?" --doc ~/.lattice/docs/topic/answer.md  # Link to answer
+lattice question:unanswered                       # Find unanswered questions
 ```
+
+Questions become searchable entities with `ANSWERED_BY` relationships to documents.
+
+---
+
+## P2P Knowledge Sharing
+
+Share your research with others via encrypted peer-to-peer transfer.
+
+```bash
+# Sender
+lattice share duckdb                    # Share the duckdb topic
+# Output: 5443-madam-bandit-river
+
+# Receiver
+lattice receive 5443-madam-bandit-river # Receive and auto-sync to graph
+```
+
+Uses [croc](https://github.com/schollz/croc) for secure transfers. The binary is auto-downloaded on first use.
+
+---
+
+## Site Generation
+
+Generate a browsable documentation site from your knowledge base.
+
+```bash
+lattice site              # Build and serve at localhost:4321
+lattice site --build      # Build only (output to .lattice/site/)
+```
+
+Uses [Astro](https://astro.build/) with a clean documentation theme. Your entities and relationships become navigable pages.
 
 ---
 
@@ -181,6 +207,57 @@ Display the derived ontology from your documents.
 lattice ontology                # Show entity types and relationship types
 ```
 
+### `lattice site`
+
+Build and serve a documentation site.
+
+```bash
+lattice site                    # Build and serve at localhost:4321
+lattice site --build            # Build only (output to .lattice/site/)
+```
+
+### `lattice share`
+
+Share a topic directory via P2P transfer.
+
+```bash
+lattice share <path>            # Share docs, outputs a receive code
+```
+
+### `lattice receive`
+
+Receive shared documents.
+
+```bash
+lattice receive <code>          # Receive and auto-sync to graph
+lattice receive <code> --no-sync  # Receive without syncing
+```
+
+### `lattice question:add`
+
+Track a research question.
+
+```bash
+lattice question:add "question"                    # Create question entity
+lattice question:add "question" --answered-by path # Create and link
+```
+
+### `lattice question:link`
+
+Link a question to an answering document.
+
+```bash
+lattice question:link "question" --doc path
+```
+
+### `lattice question:unanswered`
+
+List questions without answers.
+
+```bash
+lattice question:unanswered
+```
+
 </details>
 
 ---
@@ -192,12 +269,12 @@ lattice ontology                # Show entity types and relationship types
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `VOYAGE_API_KEY` | Voyage AI API key for embeddings | *required* |
-| `DUCKDB_PATH` | Path to DuckDB database file | `./.lattice.duckdb` |
+| `DUCKDB_PATH` | Path to DuckDB database file | `~/.lattice/lattice.duckdb` |
 | `EMBEDDING_DIMENSIONS` | Embedding vector dimensions | `512` |
 
 ### Database Location
 
-Lattice stores its knowledge graph in a single `.lattice.duckdb` file in your docs directory. This file contains:
+Lattice stores its knowledge graph in `~/.lattice/lattice.duckdb`. This file contains:
 - All extracted entities (nodes)
 - Relationships between entities
 - Vector embeddings for semantic search
@@ -209,7 +286,7 @@ You can back up, copy, or version control this file like any other.
 
 ### Entity Extraction
 
-When you run `/graph-sync`, Claude Code extracts entities from your documents and writes them directly to the DuckDB database. No frontmatter required — your markdown files stay clean.
+When you run `/research` or `lattice sync`, Claude Code extracts entities from your documents and writes them directly to the DuckDB database. No frontmatter required — your markdown files stay clean.
 
 The extraction identifies:
 - **Entities**: People, technologies, concepts, tools, etc.

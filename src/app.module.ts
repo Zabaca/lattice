@@ -3,7 +3,6 @@ import { ConfigModule } from "@nestjs/config";
 import {
 	ExtractCommand,
 	InitCommand,
-	MigrateCommand,
 	OntologyCommand,
 	QuestionAddCommand,
 	QuestionLinkCommand,
@@ -44,7 +43,6 @@ import { getEnvPath } from "./utils/paths.js";
 		SqlCommand,
 		OntologyCommand,
 		InitCommand,
-		MigrateCommand,
 		SiteCommand,
 		ShareCommand,
 		ReceiveCommand,

@@ -8,7 +8,7 @@ Research the topic "$ARGUMENTS" by first checking existing documentation, then p
 
 ## Configuration
 
-**⚠️ CRITICAL: All documentation lives in `~/.lattice/docs/`**
+**CRITICAL: All documentation lives in `~/.lattice/docs/`**
 
 | Path | Purpose |
 |------|---------|
@@ -21,22 +21,37 @@ Research the topic "$ARGUMENTS" by first checking existing documentation, then p
 
 ## Process
 
-### Step 1: Search Existing Research
+### Step 1: Create or Find Question
 
-Run semantic search to find related documents:
+First, search to see if this question (or similar) already exists:
+
+```bash
+lattice search "$ARGUMENTS" --limit 5
+```
+
+Look for results with `[Question]` label and high similarity (>70%).
+
+**If similar question exists:** Use that existing question (don't duplicate).
+
+**If no similar question:** Create the question entity:
+
+```bash
+lattice question:add "$ARGUMENTS"
+```
+
+This ensures the question is tracked regardless of whether we find an answer.
+
+### Step 2: Search for Answers
+
+Search for documents that might answer this question:
 
 ```bash
 lattice search "$ARGUMENTS" --limit 10
 ```
 
-### Step 2: Review Search Results
-
-Review the top results from the semantic search:
-
-1. **Read top results** regardless of path - high similarity may indicate related content
-2. **Path/title matching** is a bonus signal, not a filter
-3. **Don't dismiss** high-similarity docs just because path doesn't match query
-4. Use judgment after reading - the doc content determines relevance, not the filename
+Review results focusing on:
+- Documents (`[Document]` label) with relevant content
+- High similarity scores (>40% often indicates relevance)
 
 **Calibration notes:**
 - Exact topic matches often show 30-40% similarity
@@ -48,12 +63,20 @@ For each promising result:
 - Check if it answers the user's question
 - Note relevant sections
 
-### Step 3: Present Findings to User
+### Step 3: Present Findings and Link Answer
 
 Summarize what you found in existing docs:
 - What topics are covered
 - Quote relevant sections if helpful
 - Identify gaps in existing research
+
+**If existing documentation answers the question:**
+
+Link the question to the answering document:
+
+```bash
+lattice question:link "$ARGUMENTS" --doc {path-to-doc}
+```
 
 Ask the user: **"Does this existing research cover your question?"**
 
@@ -148,23 +171,43 @@ What this research addresses.
 **2. Update** `~/.lattice/docs/{topic-name}/README.md`:
 - Add new row to the Documents table
 
-### Step 8: Confirmation
+### Step 8: Sync and Link Question
 
-After creating files, confirm:
+After creating files, sync to the knowledge graph:
+
+```bash
+lattice sync
+```
+
+This will:
+- Add documents to the graph
+- Extract entities automatically via AI
+- Generate embeddings for semantic search
+
+Then link the question to the new document:
+
+```bash
+lattice question:link "$ARGUMENTS" --doc ~/.lattice/docs/{topic-name}/{research-filename}.md
+```
+
+### Step 9: Confirmation
+
+Confirm to the user:
+- Question entity created/found
 - Topic directory path
-- README.md created/updated
-- Research file created with name
-- Remind user to run `/graph-sync` to sync to knowledge graph
+- Research file created
+- Question linked to document via ANSWERED_BY
+- Sync completed
 
 ## Important Notes
 
-- **Do NOT** auto-run graph sync - use `/graph-sync` separately
 - **Always create README.md** for new topics (lightweight index)
 - **Always create separate research file** (never put research content in README)
 - Use kebab-case for all directory and file names
 - Always cite sources with URLs
 - Cross-link to related research topics when relevant
 - **No frontmatter needed** - AI extracts entities automatically during sync
+- **Questions track user intent** - even if a doc exists, the question helps future discovery
 
 ## File Structure Standard
 
@@ -177,3 +220,12 @@ After creating files, confirm:
 ```
 
 This structure allows topics to grow organically while keeping README as a clean navigation index.
+
+## Question Commands Reference
+
+| Command | Purpose |
+|---------|---------|
+| `lattice question:add "question"` | Create a question entity |
+| `lattice question:add "question" --answered-by path` | Create and link in one step |
+| `lattice question:link "question" --doc path` | Link question to answering doc |
+| `lattice question:unanswered` | List questions without answers |

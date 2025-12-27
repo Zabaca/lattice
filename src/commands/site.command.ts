@@ -86,11 +86,7 @@ export class SiteCommand extends CommandRunner {
 		);
 	}
 
-	private runCommand(
-		cmd: string,
-		args: string[],
-		cwd: string,
-	): Promise<void> {
+	private runCommand(cmd: string, args: string[], cwd: string): Promise<void> {
 		return new Promise((resolve, reject) => {
 			const child = spawn(cmd, args, {
 				cwd,
@@ -209,7 +205,7 @@ export class SiteCommand extends CommandRunner {
 			// Clean up PID file
 			unlinkSync(pidFile);
 			console.log(`✅ Killed Lattice site process (PID: ${pid})`);
-		} catch (err) {
+		} catch (_err) {
 			// Process might already be dead, clean up PID file
 			try {
 				unlinkSync(pidFile);

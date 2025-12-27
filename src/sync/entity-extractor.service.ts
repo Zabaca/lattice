@@ -6,6 +6,7 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import { Injectable, Logger } from "@nestjs/common";
 import { z } from "zod";
+import { EntityTypeSchema, RelationTypeSchema } from "../graph/graph.types.js";
 import type { Entity, Relationship } from "../utils/frontmatter.js";
 
 export interface ExtractionResult {
@@ -76,23 +77,14 @@ function createValidationServer(filePath: string) {
 					entities: z.array(
 						z.object({
 							name: z.string().min(1),
-							type: z.enum([
-								"Topic",
-								"Technology",
-								"Concept",
-								"Tool",
-								"Process",
-								"Person",
-								"Organization",
-								"Document",
-							]),
+							type: EntityTypeSchema,
 							description: z.string().min(1),
 						}),
 					),
 					relationships: z.array(
 						z.object({
 							source: z.string().min(1),
-							relation: z.enum(["REFERENCES"]),
+							relation: RelationTypeSchema,
 							target: z.string().min(1),
 						}),
 					),
@@ -306,14 +298,16 @@ Extract the following and call the validation tool with EXACTLY this schema:
 ### 1. Entities (array of 3-10 objects)
 Each entity must have:
 - "name": string (entity name)
-- "type": one of "Topic", "Technology", "Concept", "Tool", "Process", "Person", "Organization", "Document"
+- "type": one of "Topic", "Technology", "Concept", "Tool", "Process", "Person", "Organization", "Document", "Question"
 - "description": string (brief description)
 
 ### 2. Relationships (array of objects)
 Each relationship must have:
 - "source": "this" (for document-to-entity) or an entity name
-- "relation": "REFERENCES" (IMPORTANT: use "relation", not "type")
+- "relation": "REFERENCES" or "ANSWERED_BY" (IMPORTANT: use "relation", not "type")
 - "target": an entity name from your entities list
+
+Use ANSWERED_BY when a Question entity is answered by this document (source: Question name, target: "this").
 
 ### 3. Summary
 A 50-100 word summary of the document's main purpose and key concepts.

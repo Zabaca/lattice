@@ -43,7 +43,7 @@ export class SyncCommand extends CommandRunner {
 	private async safeExit(code: number): Promise<never> {
 		try {
 			await this.graphService.checkpoint();
-		} catch (error) {
+		} catch (_error) {
 			// Log but don't fail - we're exiting anyway
 			console.error("Warning: checkpoint failed during exit");
 		}

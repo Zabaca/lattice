@@ -5,6 +5,9 @@ import {
 	InitCommand,
 	MigrateCommand,
 	OntologyCommand,
+	QuestionAddCommand,
+	QuestionLinkCommand,
+	QuestionUnansweredCommand,
 	RelsCommand,
 	SearchCommand,
 	SiteCommand,
@@ -41,6 +44,9 @@ import { getEnvPath } from "./utils/paths.js";
 		InitCommand,
 		MigrateCommand,
 		SiteCommand,
+		QuestionAddCommand,
+		QuestionLinkCommand,
+		QuestionUnansweredCommand,
 	],
 })
 export class AppModule {}

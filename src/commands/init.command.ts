@@ -15,7 +15,7 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const COMMANDS = ["research.md", "graph-sync.md", "entity-extract.md"];
+const COMMANDS = ["research.md", "entity-extract.md"];
 
 // Site template files to copy (relative paths from site-template/)
 const SITE_TEMPLATE_FILES = [
@@ -33,7 +33,8 @@ type InitCommandOptions = Record<string, never>;
 @Injectable()
 @Command({
 	name: "init",
-	description: "Initialize Lattice with Claude Code commands and site generator",
+	description:
+		"Initialize Lattice with Claude Code commands and site generator",
 })
 export class InitCommand extends CommandRunner {
 	async run(_inputs: string[], _options: InitCommandOptions): Promise<void> {
@@ -95,15 +96,25 @@ OBSIDIAN_VAULT_DIR=docs
 
 			console.log();
 			console.log("Available commands:");
-			console.log("  lattice site         - Build and run the documentation site");
+			console.log(
+				"  lattice site         - Build and run the documentation site",
+			);
 			console.log("  lattice sync         - Sync documents to knowledge graph");
 			console.log("  lattice status       - Show documents needing sync");
 			console.log("  lattice search       - Semantic search across documents");
 			console.log();
 			console.log("Claude Code slash commands:");
 			console.log("  /research <topic>    - AI-assisted research workflow");
-			console.log("  /graph-sync          - Extract entities and sync to graph");
 			console.log("  /entity-extract      - Extract entities from a document");
+			console.log();
+			console.log("Question tracking:");
+			console.log("  lattice question:add <question>      - Add a question");
+			console.log(
+				"  lattice question:link <q> --doc <p>  - Link question to answer",
+			);
+			console.log(
+				"  lattice question:unanswered          - List unanswered questions",
+			);
 			console.log();
 
 			if (!(await fs.readFile(envPath, "utf-8")).includes("pa-")) {
@@ -174,7 +185,7 @@ OBSIDIAN_VAULT_DIR=docs
 				await fs.mkdir(path.dirname(targetPath), { recursive: true });
 				await fs.copyFile(sourcePath, targetPath);
 				copied++;
-			} catch (err) {
+			} catch (_err) {
 				// Source file doesn't exist, skip
 			}
 		}
@@ -238,7 +249,7 @@ OBSIDIAN_VAULT_DIR=docs
 				await fs.copyFile(sourcePath, targetPath);
 				installed.push(file);
 				copied++;
-			} catch (err) {
+			} catch (_err) {
 				// Source doesn't exist, skip
 			}
 		}

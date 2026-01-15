@@ -19,6 +19,7 @@ import {
 import { EmbeddingModule } from "./embedding/embedding.module.js";
 import { GraphModule } from "./graph/graph.module.js";
 import { QueryModule } from "./query/query.module.js";
+import { SiteModule } from "./site/index.js";
 import { SyncModule } from "./sync/sync.module.js";
 import { getEnvPath } from "./utils/paths.js";
 
@@ -32,6 +33,7 @@ import { getEnvPath } from "./utils/paths.js";
 		SyncModule,
 		EmbeddingModule,
 		QueryModule,
+		SiteModule,
 	],
 	providers: [
 		// CLI Commands

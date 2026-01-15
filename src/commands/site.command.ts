@@ -3,6 +3,7 @@ import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import * as path from "node:path";
 import { Injectable } from "@nestjs/common";
 import { Command, CommandRunner, Option } from "nest-commander";
+import { WelcomeGeneratorService } from "../site/index.js";
 import { getLatticeHome } from "../utils/paths.js";
 
 interface SiteCommandOptions {
@@ -10,6 +11,7 @@ interface SiteCommandOptions {
 	dev?: boolean;
 	kill?: boolean;
 	port?: string;
+	noWelcome?: boolean;
 }
 
 @Injectable()
@@ -18,6 +20,10 @@ interface SiteCommandOptions {
 	description: "Build and run the Lattice documentation site",
 })
 export class SiteCommand extends CommandRunner {
+	constructor(private readonly welcomeGenerator: WelcomeGeneratorService) {
+		super();
+	}
+
 	private getPidFile(): string {
 		return path.join(getLatticeHome(), "site.pid");
 	}
@@ -51,6 +57,18 @@ export class SiteCommand extends CommandRunner {
 			console.log("📦 Installing dependencies...");
 			await this.runCommand("bun", ["install"], latticeHome);
 			console.log();
+		}
+
+		// Generate welcome.md unless --no-welcome flag
+		if (!options.noWelcome) {
+			console.log("📝 Generating welcome.md...");
+			try {
+				await this.welcomeGenerator.generate();
+			} catch (error) {
+				console.warn(
+					`⚠️  Warning: Failed to generate welcome.md: ${error instanceof Error ? error.message : String(error)}`,
+				);
+			}
 		}
 
 		// If --build flag, just build and exit
@@ -245,6 +263,14 @@ export class SiteCommand extends CommandRunner {
 		description: "Kill the running Lattice site process",
 	})
 	parseKill(): boolean {
+		return true;
+	}
+
+	@Option({
+		flags: "--no-welcome",
+		description: "Skip welcome.md generation",
+	})
+	parseNoWelcome(): boolean {
 		return true;
 	}
 }

@@ -22,6 +22,7 @@ const SITE_TEMPLATE_FILES = [
 	"astro.config.ts",
 	"package.json",
 	"tsconfig.json",
+	"public/robots.txt",
 	"src/content.config.ts",
 	"src/collections/authors.ts",
 	"src/collections/documents.ts",

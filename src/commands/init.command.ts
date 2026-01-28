@@ -19,6 +19,7 @@ const COMMANDS = ["research.md", "entity-extract.md"];
 
 // Site template files to copy (relative paths from site-template/)
 const SITE_TEMPLATE_FILES = [
+	".env.schema",
 	"astro.config.ts",
 	"package.json",
 	"tsconfig.json",

@@ -29,6 +29,21 @@ const SITE_TEMPLATE_FILES = [
 	"src/collections/documents.ts",
 	"src/collections/tags.ts",
 	"src/plugins/rehype-strip-md-extension.ts",
+	// Pages
+	"src/pages/index.astro",
+	"src/pages/404.astro",
+	"src/pages/[...slug].astro",
+	"src/pages/tags/[...tag].astro",
+	// Styles
+	"src/styles/global.css",
+	"src/styles/landing.css",
+	// Assets
+	"src/assets/stars.png",
+	"src/assets/twinkling.png",
+	"src/assets/clouds.png",
+	"src/assets/texture-dark.png",
+	"src/assets/texture-light.png",
+	"src/assets/logo.png",
 ];
 
 type InitCommandOptions = Record<string, never>;
@@ -160,6 +175,15 @@ OBSIDIAN_VAULT_DIR=docs
 			recursive: true,
 		});
 		await fs.mkdir(path.join(latticeHome, "src", "plugins"), {
+			recursive: true,
+		});
+		await fs.mkdir(path.join(latticeHome, "src", "pages", "tags"), {
+			recursive: true,
+		});
+		await fs.mkdir(path.join(latticeHome, "src", "styles"), {
+			recursive: true,
+		});
+		await fs.mkdir(path.join(latticeHome, "src", "assets"), {
 			recursive: true,
 		});
 

@@ -38,7 +38,6 @@ export class SyncCommand extends CommandRunner {
 
 	/**
 	 * Safely exit the process after ensuring database cleanup.
-	 * This prevents HNSW index corruption by flushing all pending changes.
 	 */
 	private async safeExit(code: number): Promise<never> {
 		try {

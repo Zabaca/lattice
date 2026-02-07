@@ -11,7 +11,6 @@ export class GraphService implements OnModuleDestroy {
 	private connection: DuckDBConnection | null = null;
 	private dbPath: string;
 	private connecting: Promise<void> | null = null;
-	private vectorIndexes: Set<string> = new Set();
 	private embeddingDimensions: number;
 	private signalHandlersRegistered = false;
 
@@ -84,26 +83,14 @@ export class GraphService implements OnModuleDestroy {
 
 	/**
 	 * Connect to DuckDB using in-memory + ATTACH pattern.
-	 * This ensures VSS extension is loaded BEFORE the database file is opened,
-	 * allowing proper WAL replay for HNSW indexes.
 	 */
 	async connect(): Promise<void> {
 		try {
 			// Step 1: Create in-memory instance first (no database file)
-			// This allows us to load extensions before any WAL replay occurs
 			this.instance = await DuckDBInstance.create(":memory:", {
 				allow_unsigned_extensions: "true",
 			});
 			this.connection = await this.instance.connect();
-
-			// Step 2: Load VSS extension BEFORE attaching the database
-			// This ensures HNSW index support is available during WAL replay
-			await this.connection.run("INSTALL vss; LOAD vss;");
-
-			// Step 3: Enable experimental HNSW persistence
-			await this.connection.run(
-				"SET hnsw_enable_experimental_persistence = true;",
-			);
 
 			// Step 4: Load DuckPGQ extension (optional)
 			try {
@@ -151,8 +138,6 @@ export class GraphService implements OnModuleDestroy {
 
 	async disconnect(): Promise<void> {
 		if (this.connection) {
-			// Checkpoint to flush WAL to main database file
-			// This prevents HNSW index replay issues on next startup
 			await this.checkpoint();
 			this.connection.closeSync();
 			this.connection = null;
@@ -500,47 +485,16 @@ export class GraphService implements OnModuleDestroy {
 	}
 
 	/**
-	 * Create a vector index for semantic search.
-	 * Only ONE HNSW index is created on the embedding column since DuckDB doesn't
-	 * support partial indexes - all nodes share the same index regardless of label.
+	 * No-op: HNSW vector index removed due to DuckDB VSS bugs (NULL similarity
+	 * scores, WAL replay failures, 20x database bloat). Brute-force
+	 * array_cosine_similarity is used instead — fast enough for <10k nodes.
 	 */
 	async createVectorIndex(
 		_label: string,
-		property: string,
-		dimensions: number,
+		_property: string,
+		_dimensions: number,
 	): Promise<void> {
-		try {
-			// Use a single index key - only one HNSW index needed for all nodes
-			const indexKey = `nodes_${property}`;
-			if (this.vectorIndexes.has(indexKey)) {
-				return; // Index already created in this session
-			}
-
-			const conn = await this.ensureConnected();
-
-			try {
-				await conn.run(`
-					CREATE INDEX idx_embedding_nodes
-					ON nodes USING HNSW (embedding)
-					WITH (metric = 'cosine')
-				`);
-				this.logger.log(
-					`Created HNSW vector index on nodes.${property} with ${dimensions} dimensions`,
-				);
-			} catch {
-				// Index already exists, that's okay
-				this.logger.debug(`Vector index on nodes.${property} already exists`);
-			}
-
-			this.vectorIndexes.add(indexKey);
-		} catch (error) {
-			const errorMessage =
-				error instanceof Error ? error.message : String(error);
-			if (!errorMessage.includes("already exists")) {
-				this.logger.error(`Failed to create vector index: ${errorMessage}`);
-				throw error;
-			}
-		}
+		// Intentionally empty - vector search uses brute-force cosine similarity
 	}
 
 	/**

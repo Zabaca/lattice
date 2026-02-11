@@ -10,6 +10,7 @@ export {
 	QuestionUnansweredCommand,
 } from "./question.command.js";
 export { ReceiveCommand } from "./receive.command.js";
+export { ResearchCommand } from "./research.command.js";
 export { ShareCommand } from "./share.command.js";
 export { SiteCommand } from "./site.command.js";
 export { StatusCommand } from "./status.command.js";

@@ -9,6 +9,7 @@ import {
 	QuestionUnansweredCommand,
 	ReceiveCommand,
 	RelsCommand,
+	ResearchCommand,
 	SearchCommand,
 	ShareCommand,
 	SiteCommand,
@@ -19,6 +20,7 @@ import {
 import { EmbeddingModule } from "./embedding/embedding.module.js";
 import { GraphModule } from "./graph/graph.module.js";
 import { QueryModule } from "./query/query.module.js";
+import { ResearchModule } from "./research/research.module.js";
 import { SiteModule } from "./site/index.js";
 import { SyncModule } from "./sync/sync.module.js";
 import { getEnvPath } from "./utils/paths.js";
@@ -33,6 +35,7 @@ import { getEnvPath } from "./utils/paths.js";
 		SyncModule,
 		EmbeddingModule,
 		QueryModule,
+		ResearchModule,
 		SiteModule,
 	],
 	providers: [
@@ -48,6 +51,7 @@ import { getEnvPath } from "./utils/paths.js";
 		SiteCommand,
 		ShareCommand,
 		ReceiveCommand,
+		ResearchCommand,
 		QuestionAddCommand,
 		QuestionLinkCommand,
 		QuestionUnansweredCommand,

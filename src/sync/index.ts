@@ -22,3 +22,8 @@ export { PathResolverService } from "./path-resolver.service.js";
 export { SyncModule } from "./sync.module.js";
 export type { SyncOptions, SyncResult, UniqueEntity } from "./sync.service.js";
 export { SyncService, validateDocuments } from "./sync.service.js";
+export {
+	EntityExtractorService,
+	validateExtraction,
+	type ExtractionResult,
+} from "./entity-extractor.service.js";

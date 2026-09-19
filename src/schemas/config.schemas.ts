@@ -25,3 +25,16 @@ export const EmbeddingConfigSchema = z.object({
 });
 
 export type EmbeddingConfig = z.infer<typeof EmbeddingConfigSchema>;
+
+/**
+ * LLM provider configuration schema for entity extraction
+ */
+export const LLMConfigSchema = z.object({
+	provider: z.enum(["claude", "openai"]).default("claude"),
+	apiKey: z.string().optional(),
+	baseUrl: z.string().optional(),
+	model: z.string().min(1).optional(),
+	maxTurns: z.coerce.number().int().positive().optional().default(3),
+});
+
+export type LLMConfig = z.infer<typeof LLMConfigSchema>;

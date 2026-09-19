@@ -11,6 +11,7 @@ export interface OpenAIEmbeddingConfig {
 	apiKey?: string;
 	model?: string;
 	dimensions?: number;
+	baseUrl?: string;
 }
 
 export class OpenAIEmbeddingProvider implements EmbeddingProvider {
@@ -31,6 +32,7 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
 		this.apiKey = apiKey;
 		this.model = config?.model || "text-embedding-3-small";
 		this.dimensions = config?.dimensions || 1536;
+		this.baseUrl = config?.baseUrl || process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
 	}
 
 	/**

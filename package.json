@@ -43,6 +43,7 @@
 		"url": "https://github.com/Zabaca/lattice.git"
 	},
 	"dependencies": {
+		"@huggingface/transformers": "^4.3.0",
 		"gray-matter": "^4.0.3",
 		"zod": "^4.1.13"
 	},

@@ -40,10 +40,21 @@ export async function runEmbed(
 	try {
 		const db = openDatabase(paths.database);
 		try {
+			// Load the model before the loop, not inside it: a model that
+			// cannot be loaded at all would otherwise be recorded as a
+			// failure against every chunk in the bundle, one at a time.
+			const progress: string[] = [];
+			await provider.ensureReady?.((line) => progress.push(line));
+			const downloaded =
+				progress.length > 0
+					? `Downloading ${provider.model}:\n${progress.join("\n")}\n`
+					: "";
+
 			const report = await embedPending(db, provider, {
 				retryFailed: context.flags["retry-failed"] === true,
+				reembed: context.flags.reembed === true,
 			});
-			return { code: 0, stdout: embedReportText(report) };
+			return { code: 0, stdout: `${downloaded}${embedReportText(report)}` };
 		} finally {
 			db.close();
 		}
@@ -60,6 +71,13 @@ export function embedReportText(report: EmbedReport): string {
 			`with ${report.model} (${report.dim} dimensions).`,
 	];
 
+	if (report.replacing !== undefined) {
+		lines.push(
+			report.flipped
+				? `Replaced ${report.replacing}: the index now reads ${report.model}.`
+				: `Re-embedding from ${report.replacing}: ${report.replacing} is still the index's model until the new vectors are complete. Run \`lattice embed --reembed\` again to finish.`,
+		);
+	}
 	if (report.failed > 0) {
 		lines.push(`Failed: ${report.failed}`);
 	}

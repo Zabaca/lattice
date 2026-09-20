@@ -9,9 +9,13 @@
  * tables later is fine, renaming them is not.
  */
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 export const SCHEMA_SQL = `
+-- Index-wide facts. One key matters to retrieval: 'embedding_model' is the
+-- model the index is FOR. Vectors from two models are not comparable even at
+-- the same dimension, so this pointer — not the rows themselves — decides
+-- which vectors a search may read, and moving it is how a re-embed commits.
 CREATE TABLE IF NOT EXISTS meta (
 	key   TEXT PRIMARY KEY,
 	value TEXT NOT NULL
@@ -105,14 +109,18 @@ CREATE TRIGGER IF NOT EXISTS chunks_au AFTER UPDATE ON chunks BEGIN
 	VALUES (new.id, new.heading_path, new.content);
 END;
 
--- At most one embedding per chunk. The model and dimension ride with the
--- vector so a model change can be detected rather than silently mixed in.
+-- At most one embedding per chunk PER MODEL. The second key column is what
+-- makes a safe re-embed possible: the new model's vectors are written beside
+-- the old ones, and the old set is deleted only in the same transaction that
+-- moves 'meta.embedding_model'. Until that flip, a reader scoped to the
+-- active model sees the complete old index and never a half-built new one.
 CREATE TABLE IF NOT EXISTS chunk_embeddings (
-	chunk_id   INTEGER PRIMARY KEY REFERENCES chunks(id) ON DELETE CASCADE,
+	chunk_id   INTEGER NOT NULL REFERENCES chunks(id) ON DELETE CASCADE,
 	model      TEXT NOT NULL,
 	dim        INTEGER NOT NULL,
 	vector     BLOB NOT NULL,
-	created_at TEXT NOT NULL DEFAULT (datetime('now'))
+	created_at TEXT NOT NULL DEFAULT (datetime('now')),
+	PRIMARY KEY (chunk_id, model)
 );
 
 CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_model ON chunk_embeddings(model);
@@ -120,11 +128,12 @@ CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_model ON chunk_embeddings(model)
 -- A short vector for the concept itself, built from its title, description
 -- and tags rather than its text, so a query can match a document as a whole.
 CREATE TABLE IF NOT EXISTS concept_embeddings (
-	concept_id INTEGER PRIMARY KEY REFERENCES concepts(id) ON DELETE CASCADE,
+	concept_id INTEGER NOT NULL REFERENCES concepts(id) ON DELETE CASCADE,
 	model      TEXT NOT NULL,
 	dim        INTEGER NOT NULL,
 	vector     BLOB NOT NULL,
-	created_at TEXT NOT NULL DEFAULT (datetime('now'))
+	created_at TEXT NOT NULL DEFAULT (datetime('now')),
+	PRIMARY KEY (concept_id, model)
 );
 
 CREATE INDEX IF NOT EXISTS idx_concept_embeddings_model ON concept_embeddings(model);

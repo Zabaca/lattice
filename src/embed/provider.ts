@@ -5,10 +5,15 @@
  * interface, so swapping the deterministic hash provider for a real local
  * model later is one module, not a rewrite.
  *
- * The default provider derives its vector from a hash of the text. It is not
- * semantic and is not meant to be: it is reproducible, needs no model on disk
- * and touches no network, which is what makes the whole pipeline testable.
+ * The default is `local`: a real model, downloaded once and run in this
+ * process. The `hash` provider derives its vector from a hash of the text —
+ * not semantic and not meant to be, but reproducible, needing no model on
+ * disk and touching no network, which is what makes the pipeline testable.
  */
+
+import { resolvePaths } from "../utils/paths.js";
+import { createLocalProvider } from "./local.js";
+import { resolveModel } from "./models.js";
 
 /** Dimensions the hash provider emits unless `LATTICE_EMBED_DIM` says otherwise. */
 const DEFAULT_DIM = 512;
@@ -17,8 +22,21 @@ export interface EmbeddingProvider {
 	/** Recorded with every vector, so a model change can be spotted later. */
 	readonly model: string;
 	readonly dim: number;
+	/**
+	 * Where this choice of model came from — an environment variable name, or
+	 * a phrase like "the default". A model-change refusal prints it, because
+	 * the first thing a surprised user needs is what made the change.
+	 */
+	readonly source: string;
 	/** One vector per input, in the same order. */
 	embed(texts: string[]): Promise<Float32Array[]>;
+	/** Embed a search query, which some models require to be prefixed. */
+	embedQuery(text: string): Promise<Float32Array>;
+	/**
+	 * Get whatever the provider needs before it can embed — for a local model,
+	 * the weights. Optional: a provider with nothing to fetch omits it.
+	 */
+	ensureReady?(report?: (line: string) => void): Promise<void>;
 }
 
 /**
@@ -46,13 +64,30 @@ export class EmbeddingError extends Error {
 export function selectProvider(
 	env: Record<string, string | undefined>,
 ): EmbeddingProvider {
-	const name = env.LATTICE_EMBED_PROVIDER?.trim() || "hash";
+	const name = env.LATTICE_EMBED_PROVIDER?.trim() || "local";
+
+	if (name === "local") {
+		const { entry, source } = resolveModel(env);
+		return createLocalProvider({
+			entry,
+			source,
+			env,
+			cacheDir: resolvePaths(env).models,
+		});
+	}
+
 	if (name !== "hash") {
 		throw new Error(
-			`Unknown embedding provider: ${name}. Known providers: hash.`,
+			`Unknown embedding provider: ${name}. Known providers: local, hash.`,
 		);
 	}
-	return new HashProvider(resolveDim(env), env.LATTICE_EMBED_FAIL?.trim());
+
+	const dim = resolveDim(env);
+	return new HashProvider(
+		dim,
+		dim === DEFAULT_DIM ? "the default" : "LATTICE_EMBED_DIM",
+		env.LATTICE_EMBED_FAIL?.trim(),
+	);
 }
 
 function resolveDim(env: Record<string, string | undefined>): number {
@@ -74,13 +109,20 @@ function resolveDim(env: Record<string, string | undefined>): number {
 class HashProvider implements EmbeddingProvider {
 	readonly model: string;
 	readonly dim: number;
+	readonly source: string;
 	/** `retryable:<substring>` or `permanent:<substring>` — see `parseFault`. */
 	private readonly fault?: { retryable: boolean; match: string };
 
-	constructor(dim: number, fault?: string) {
+	constructor(dim: number, source: string, fault?: string) {
 		this.dim = dim;
 		this.model = `hash-${dim}`;
+		this.source = source;
 		this.fault = parseFault(fault);
+	}
+
+	async embedQuery(text: string): Promise<Float32Array> {
+		const [vector] = await this.embed([text]);
+		return vector;
 	}
 
 	async embed(texts: string[]): Promise<Float32Array[]> {

@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { openDatabase } from "../../db/open.js";
 import { selectProvider } from "../../embed/provider.js";
-import { embedPending } from "../../embed/run.js";
+import { assertModelMatches, embedPending } from "../../embed/run.js";
 import { applySync, planSync, type SyncReport } from "../../sync/index.js";
 import { acquireLock, LockHeldError } from "../../sync/lock.js";
 import { resolvePaths } from "../../utils/paths.js";
@@ -45,12 +45,26 @@ export async function runSync(context: CommandContext): Promise<CommandOutput> {
 	try {
 		const db = openDatabase(paths.database);
 		try {
+			// Before a single document is re-read: indexing under a model the
+			// index was not built with would leave chunks whose vectors can
+			// never be compared to the ones already there.
+			assertModelMatches(db, provider);
+
 			const plan = planSync(db, paths.docs);
 			const indexed = isNoOp(plan)
 				? `Nothing to sync. ${plan.unchanged} concept${plan.unchanged === 1 ? "" : "s"} already indexed.\n`
 				: reportText(applySync(db, plan));
+			// A sync before the model is on disk downloads it rather than
+			// failing: someone who skipped `init` still gets a working index.
+			const progress: string[] = [];
+			await provider.ensureReady?.((line) => progress.push(line));
+			const downloaded =
+				progress.length > 0
+					? `Downloading ${provider.model}:\n${progress.join("\n")}\n`
+					: "";
+
 			const embedded = embedReportText(await embedPending(db, provider));
-			return { code: 0, stdout: `${indexed}${embedded}` };
+			return { code: 0, stdout: `${indexed}${downloaded}${embedded}` };
 		} finally {
 			db.close();
 		}

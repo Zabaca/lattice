@@ -4,6 +4,7 @@
  * All Lattice data lives under a single home directory:
  * - docs/        Markdown documentation
  * - lattice.db   SQLite index (concepts, chunks, links, embeddings)
+ * - models/      Downloaded embedding models, so a machine downloads once
  * - .env         Local configuration
  *
  * The home directory is resolved from an explicit environment rather than a
@@ -24,6 +25,8 @@ export interface LatticePaths {
 	env: string;
 	/** The lock a running sync holds. */
 	syncLock: string;
+	/** Downloaded embedding models. */
+	models: string;
 }
 
 /**
@@ -43,6 +46,7 @@ export function resolvePaths(
 		database: join(home, "lattice.db"),
 		env: join(home, ".env"),
 		syncLock: join(home, ".sync.lock"),
+		models: join(home, "models"),
 	};
 }
 

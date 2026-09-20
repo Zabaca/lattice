@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { openDatabase } from "../../db/open.js";
 import { selectProvider } from "../../embed/provider.js";
-import { pendingChunkCount } from "../../embed/run.js";
+import { activeModel, pendingChunkCount } from "../../embed/run.js";
 import { planSync } from "../../sync/index.js";
 import { parseConcept } from "../../sync/okf.js";
 import { resolvePaths } from "../../utils/paths.js";
@@ -47,9 +47,18 @@ export function runStatus(context: CommandContext): CommandOutput {
 		// The model and its dimensions, plus the backlog, are what separate a
 		// partial index from a complete one at a glance.
 		const provider = selectProvider(context.env);
+		const indexModel = activeModel(db) ?? provider.model;
 		lines.push("");
 		lines.push(`Model:  ${provider.model} (${provider.dim} dimensions)`);
-		lines.push(`Awaiting vectors: ${pendingChunkCount(db)}`);
+		if (indexModel !== provider.model) {
+			// Reported rather than refused: `status` is how someone finds out
+			// what is wrong, so it is the one command a mismatch must not stop.
+			lines.push(
+				`Index model: ${indexModel} — differs from the configured ${provider.model} (from ${provider.source}).`,
+			);
+			lines.push("Run `lattice embed --reembed` to rebuild the vectors.");
+		}
+		lines.push(`Awaiting vectors: ${pendingChunkCount(db, indexModel)}`);
 
 		// Permanently failed targets are not in the backlog — nothing will pick
 		// them up again on its own — so they are counted where they cannot be

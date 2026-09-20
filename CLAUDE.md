@@ -6,7 +6,7 @@ A CLI tool for syncing markdown documents with an embedded DuckDB database, enab
 
 - **Backend**: DuckDB (embedded, zero external dependencies)
 - **Vector Search**: DuckDB VSS extension (HNSW index with cosine similarity)
-- **Embeddings**: in-process, behind the `EmbeddingProvider` seam in `src/embed/provider.ts`. The default `hash` provider is deterministic — 512 dimensions derived from a hash of the text — so the pipeline needs no model on disk and no network.
+- **Embeddings**: in-process, behind the `EmbeddingProvider` seam in `src/embed/provider.ts`. The default `local` provider runs a real ONNX model through transformers.js on the user's own machine — downloaded once by `lattice init`, cached under `<LATTICE_HOME>/models`, offline thereafter. The `hash` provider stays selectable and is what the test suite drives.
 - **Runtime**: Bun + NestJS
 
 ## Key Commands
@@ -14,7 +14,7 @@ A CLI tool for syncing markdown documents with an embedded DuckDB database, enab
 ```bash
 lattice status   # Show documents needing sync
 lattice sync     # Index the bundle, then embed whatever has no vector
-lattice embed    # Embed the backlog alone (`--retry-failed` retries permanent failures)
+lattice embed    # Embed the backlog alone (`--retry-failed` retries permanent failures, `--reembed` rebuilds under a changed model)
 lattice search   # Semantic search
 lattice sql      # Raw SQL queries
 lattice rels     # Show a concept's links, backlinks, siblings and unresolved links
@@ -30,9 +30,9 @@ All data is stored in `~/.lattice/`:
 ```
 ~/.lattice/
 ├── docs/                  # Markdown documentation
-├── lattice.duckdb         # Graph database
+├── lattice.db             # Index (SQLite)
 ├── .sync-manifest.json    # Sync state tracking
-└── .env                   # API keys (VOYAGE_API_KEY)
+└── models/                # Downloaded embedding models (offline after the first run)
 ```
 
 Run `lattice init` to setup the directory structure.
@@ -50,6 +50,29 @@ The embed phase runs at the end of `lattice sync` and is the whole of
 vector is simply a row missing from `chunk_embeddings` / `concept_embeddings`,
 so an interruption leaves a backlog rather than a half-written document.
 
+### The model registry and model-change safety
+
+`src/embed/models.ts` describes each supported model: its repo, ONNX dtype,
+pooling, the prefixes it wants in front of a query as against a document, its
+native and stored dimensions, whether it is matryoshka (only those may be
+truncated and re-normalised), and its context ceiling. The default was chosen
+on measured cost; the registry's comment records the numbers.
+
+`meta.embedding_model` is the model the index is FOR. Embedding tables are
+keyed `(target, model)`, so a re-embed writes the new model's vectors beside
+the old ones; the old set is deleted and the pointer moved in one transaction,
+and only once the new set is complete. An interrupted re-embed therefore
+leaves the old, complete index in place and simply resumes.
+
+A re-embed discards the previous model's failure records first: a passage one
+model could never read is not evidence about the next one, and keeping the row
+would leave that chunk with no vector at all once the old set is deleted.
+
+`sync`, `embed` and `search` refuse under a changed model, naming the old
+model, the new one, the affected chunk count, where the change came from and
+`lattice embed --reembed`. `status` reports the mismatch instead of refusing,
+because `status` is how someone finds out what is wrong.
+
 A provider failure is recorded per target in `chunk_embed_failures` /
 `concept_embed_failures` as retryable or permanent. Retryable failures are
 picked up by the next run; permanent ones only under
@@ -60,9 +83,14 @@ Environment:
 
 | Variable | Meaning |
 |---|---|
-| `LATTICE_EMBED_PROVIDER` | Provider name; `hash` (the default) is the only one so far. An unknown name is an error, never a silent fallback. |
+| `LATTICE_EMBED_PROVIDER` | `local` (the default) or `hash`. An unknown name is an error, never a silent fallback. |
+| `LATTICE_EMBED_MODEL` | Which registry model the `local` provider uses. Default `all-minilm-l6-v2`; also `bge-base-en-v1.5` and `nomic-embed-text-v1.5`. Names are normalised before comparison, so `Xenova/all-MiniLM-L6-v2` is the same model. |
+| `LATTICE_MODEL_DIR` | A directory holding pre-placed models (`<dir>/<org>/<repo>/…`). Used as-is, with downloads switched off. |
+| `HF_HUB_OFFLINE` | Refuse to download; the model must already be cached. |
+| `HF_ENDPOINT` | Download from a mirror instead of `huggingface.co`. |
 | `LATTICE_EMBED_DIM` | Dimensions for the hash provider (default 512). The model name carries it: `hash-512`. |
 | `LATTICE_EMBED_FAIL` | Fault injection for tests: `retryable:<substring>` or `permanent:<substring>` makes the provider fail on any text containing the substring. |
+| `LATTICE_E2E_MODEL` | Set to `1` to run the one end-to-end test against a real downloaded model. |
 
 ## Links
 
@@ -77,10 +105,10 @@ links to unresolved.
 
 ## Development Notes
 
-- No external dependencies required (DuckDB is embedded)
-- Uses SQL for queries (replaced Cypher)
-- VSS extension provides HNSW vector indexing
-- DuckPGQ extension available for property graph queries (optional)
+- No services to run: SQLite is embedded and embeddings are computed in-process
+- `@huggingface/transformers` (and its `onnxruntime-node` native runtime) is the
+  one heavy dependency; it is imported lazily so commands that never embed do
+  not pay for it
 - Path utilities in `src/utils/paths.ts` for centralized storage
 
 ## Testing Philosophy

@@ -26,7 +26,7 @@ That's it. One command to build a knowledge base.
 | **Setup time** | 2 minutes | 30+ minutes |
 | **Database** | Embedded DuckDB (zero config) | Docker containers required |
 | **External dependencies** | None | 2-3 (DB + vector + graph) |
-| **API keys needed** | 1 (Voyage AI for embeddings) | 2-3 (LLM + embedding + rerank) |
+| **API keys needed** | 0 (embeddings run on your machine) | 2-3 (LLM + embedding + rerank) |
 | **Workflow** | `/research` (auto-syncs) | Custom scripts |
 
 ---
@@ -36,14 +36,14 @@ That's it. One command to build a knowledge base.
 ### What You Need
 
 - **Claude Code** (you probably already have it)
-- **Voyage AI API key** ([get one here](https://www.voyageai.com/) - embeddings only, ~$0.01/1M tokens)
+- Nothing else. Embeddings are computed locally; `lattice init` downloads the
+  model once (~24 MB) and every command after that works offline.
 
 ### 1. Install
 
 ```bash
-bun add -g @zabaca/lattice          # Install CLI
-export VOYAGE_API_KEY=your-key-here  # Set API key
-lattice init --global                # Install Claude Code commands
+bun add -g @zabaca/lattice   # Install CLI
+lattice init                 # Create ~/.lattice and download the model
 ```
 
 That's it. No Docker. No containers. DuckDB is embedded.
@@ -278,9 +278,12 @@ lattice question:unanswered
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `VOYAGE_API_KEY` | Voyage AI API key for embeddings | *required* |
-| `DUCKDB_PATH` | Path to DuckDB database file | `~/.lattice/lattice.duckdb` |
-| `EMBEDDING_DIMENSIONS` | Embedding vector dimensions | `512` |
+| `LATTICE_HOME` | Where Lattice keeps its index, docs and models | `~/.lattice` |
+| `LATTICE_EMBED_PROVIDER` | `local` (a real model, the default) or `hash` (deterministic, for tests) | `local` |
+| `LATTICE_EMBED_MODEL` | `all-minilm-l6-v2`, `bge-base-en-v1.5` or `nomic-embed-text-v1.5` | `all-minilm-l6-v2` |
+| `LATTICE_MODEL_DIR` | A directory of pre-placed models to use instead of downloading | *unset* |
+| `HF_HUB_OFFLINE` | Forbid any download; the model must already be cached | *unset* |
+| `HF_ENDPOINT` | A Hugging Face mirror to download from | *unset* |
 
 ### Database Location
 
@@ -400,4 +403,4 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ---
 
-Built with [DuckDB](https://duckdb.org/), [Voyage AI](https://www.voyageai.com/), and [Claude Code](https://claude.ai/code)
+Built with [SQLite](https://sqlite.org/), [transformers.js](https://huggingface.co/docs/transformers.js), and [Claude Code](https://claude.ai/code)

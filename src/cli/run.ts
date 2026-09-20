@@ -11,6 +11,7 @@ import { parseArgs } from "./args.js";
 import { runEmbed } from "./commands/embed.js";
 import { runInit } from "./commands/init.js";
 import { runRels } from "./commands/rels.js";
+import { runSearch } from "./commands/search.js";
 import { runSql } from "./commands/sql.js";
 import { runStatus } from "./commands/status.js";
 import { runSync } from "./commands/sync.js";
@@ -69,7 +70,7 @@ const COMMANDS: Record<string, CommandSpec> = {
 		run: runSync,
 	},
 	embed: {
-		usage: "lattice embed [--retry-failed]",
+		usage: "lattice embed [--retry-failed] [--reembed]",
 		summary: "Embed whatever is still waiting for a vector",
 		requiredArgs: [],
 		run: runEmbed,
@@ -91,10 +92,7 @@ const COMMANDS: Record<string, CommandSpec> = {
 		usage: "lattice search <query>",
 		summary: "Search the index",
 		requiredArgs: ["query"],
-		run: () => ({
-			code: 1,
-			stderr: "search is not implemented yet.",
-		}),
+		run: runSearch,
 	},
 };
 

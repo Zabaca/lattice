@@ -24,7 +24,12 @@ function freshHome(): string {
 }
 
 function invoke(argv: string[], home: string = freshHome()) {
-	return runCli({ argv, env: { LATTICE_HOME: home } });
+	// The deterministic provider, pinned: the shipped default is a real local
+	// model, and the suite must neither download it nor depend on it.
+	return runCli({
+		argv,
+		env: { LATTICE_HOME: home, LATTICE_EMBED_PROVIDER: "hash" },
+	});
 }
 
 /** An initialised home whose docs directory holds the fixture OKF bundle. */
@@ -797,7 +802,11 @@ describe("interrupting a sync", () => {
 		}
 
 		const running = Bun.spawn(["bun", "run", "src/main.ts", "sync"], {
-			env: { ...process.env, LATTICE_HOME: home },
+			env: {
+				...process.env,
+				LATTICE_HOME: home,
+				LATTICE_EMBED_PROVIDER: "hash",
+			},
 			stdout: "ignore",
 			stderr: "ignore",
 		});
@@ -880,7 +889,11 @@ describe("provider failures", () => {
 	function withFault(argv: string[], home: string, fault: string) {
 		return runCli({
 			argv,
-			env: { LATTICE_HOME: home, LATTICE_EMBED_FAIL: fault },
+			env: {
+				LATTICE_HOME: home,
+				LATTICE_EMBED_PROVIDER: "hash",
+				LATTICE_EMBED_FAIL: fault,
+			},
 		});
 	}
 
@@ -987,7 +1000,11 @@ describe("lattice status and the embedding backlog", () => {
 
 		await runCli({
 			argv: ["sync"],
-			env: { LATTICE_HOME: home, LATTICE_EMBED_FAIL: "retryable:Chunking" },
+			env: {
+				LATTICE_HOME: home,
+				LATTICE_EMBED_PROVIDER: "hash",
+				LATTICE_EMBED_FAIL: "retryable:Chunking",
+			},
 		});
 		const waiting = await invoke(["status"], home);
 
@@ -1003,5 +1020,158 @@ describe("lattice status and the embedding backlog", () => {
 		const done = await invoke(["status"], home);
 
 		expect(done.stdout).toContain("Awaiting vectors: 0");
+	});
+});
+
+describe("model-change safety", () => {
+	/** The CLI with the deterministic provider pinned to a given dimension. */
+	function withDim(argv: string[], home: string, dim: string) {
+		return runCli({
+			argv,
+			env: {
+				LATTICE_HOME: home,
+				LATTICE_EMBED_PROVIDER: "hash",
+				LATTICE_EMBED_DIM: dim,
+			},
+		});
+	}
+
+	test("a sync under a changed model refuses and names the way out", async () => {
+		const home = await bundledHome();
+		await withDim(["sync"], home, "64");
+
+		const [before] = await sql<{ n: number }>(
+			home,
+			"SELECT count(*) AS n FROM chunk_embeddings",
+		);
+		expect(before.n).toBeGreaterThan(0);
+
+		const changed = await withDim(["sync"], home, "128");
+
+		expect(changed.code).not.toBe(0);
+		expect(changed.stderr).toContain("hash-64");
+		expect(changed.stderr).toContain("hash-128");
+		expect(changed.stderr).toContain(`${before.n} chunk`);
+		expect(changed.stderr).toContain("LATTICE_EMBED_DIM");
+		expect(changed.stderr).toContain("lattice embed --reembed");
+
+		// The refusal is a refusal: not one vector of the new model landed.
+		expect(
+			await sql(
+				home,
+				"SELECT count(*) AS n FROM chunk_embeddings WHERE model = 'hash-128'",
+			),
+		).toEqual([{ n: 0 }]);
+	});
+
+	test("search refuses on a mismatch and runs on a match", async () => {
+		const home = await bundledHome();
+		await withDim(["sync"], home, "64");
+
+		const mismatched = await withDim(["search", "users"], home, "128");
+
+		expect(mismatched.code).not.toBe(0);
+		expect(mismatched.stderr).toContain("hash-64");
+		expect(mismatched.stderr).toContain("lattice embed --reembed");
+
+		const matched = await withDim(["search", "users"], home, "64");
+
+		expect(matched.stderr).not.toContain("--reembed");
+	});
+
+	test("a re-embed retries what only the old model could not embed", async () => {
+		const home = await bundledHome();
+		// One document the old model refuses outright.
+		await runCli({
+			argv: ["sync"],
+			env: {
+				LATTICE_HOME: home,
+				LATTICE_EMBED_PROVIDER: "hash",
+				LATTICE_EMBED_DIM: "64",
+				LATTICE_EMBED_FAIL: "permanent:Chunking",
+			},
+		});
+		const [failed] = await sql<{ n: number }>(
+			home,
+			"SELECT count(*) AS n FROM chunk_embed_failures WHERE retryable = 0",
+		);
+		expect(failed.n).toBeGreaterThan(0);
+
+		// A different model is a different judgement: what one model could
+		// never read is not evidence about the next one.
+		const reembedded = await withDim(["embed", "--reembed"], home, "128");
+
+		expect(reembedded.code).toBe(0);
+		expect(reembedded.stdout).toContain("Replaced hash-64");
+		expect(
+			await sql(
+				home,
+				"SELECT count(*) AS n FROM chunks WHERE id NOT IN" +
+					" (SELECT chunk_id FROM chunk_embeddings WHERE model = 'hash-128')",
+			),
+		).toEqual([{ n: 0 }]);
+	});
+
+	test("an interrupted re-embed keeps the old vectors and resumes", async () => {
+		const home = await bundledHome();
+		await withDim(["sync"], home, "64");
+		const [old] = await sql<{ n: number }>(
+			home,
+			"SELECT count(*) AS n FROM chunk_embeddings WHERE model = 'hash-64'",
+		);
+
+		// A re-embed that cannot finish: some chunks fail retryably, so the
+		// new set stays incomplete and the pointer must not move.
+		const interrupted = await runCli({
+			argv: ["embed", "--reembed"],
+			env: {
+				LATTICE_HOME: home,
+				LATTICE_EMBED_PROVIDER: "hash",
+				LATTICE_EMBED_DIM: "128",
+				LATTICE_EMBED_FAIL: "retryable:Chunking",
+			},
+		});
+
+		expect(interrupted.code).toBe(0);
+		expect(
+			await sql(home, "SELECT value FROM meta WHERE key = 'embedding_model'"),
+		).toEqual([{ value: "hash-64" }]);
+		expect(
+			await sql(
+				home,
+				"SELECT count(*) AS n FROM chunk_embeddings WHERE model = 'hash-64'",
+			),
+		).toEqual([{ n: old.n }]);
+		// The half-built set is present beside it, not instead of it.
+		const [partial] = await sql<{ n: number }>(
+			home,
+			"SELECT count(*) AS n FROM chunk_embeddings WHERE model = 'hash-128'",
+		);
+		expect(partial.n).toBeGreaterThan(0);
+		expect(partial.n).toBeLessThan(old.n);
+
+		// The old model is still the index's, so reading it still works.
+		const reading = await withDim(["search", "users"], home, "64");
+		expect(reading.stderr).not.toContain("--reembed");
+
+		const finished = await withDim(["embed", "--reembed"], home, "128");
+
+		expect(finished.code).toBe(0);
+		expect(finished.stdout).toContain("Replaced hash-64");
+		expect(
+			await sql(home, "SELECT value FROM meta WHERE key = 'embedding_model'"),
+		).toEqual([{ value: "hash-128" }]);
+		expect(
+			await sql(
+				home,
+				"SELECT count(*) AS n FROM chunk_embeddings WHERE model = 'hash-64'",
+			),
+		).toEqual([{ n: 0 }]);
+		expect(
+			await sql(
+				home,
+				"SELECT count(*) AS n FROM chunk_embeddings WHERE model = 'hash-128'",
+			),
+		).toEqual([{ n: old.n }]);
 	});
 });

@@ -129,7 +129,7 @@ export function deriveTrust(verified: unknown): Trust {
 
 	const human = records.some((record) => {
 		const by = asString((record as Record<string, unknown> | null)?.by);
-		return by !== undefined && by.startsWith("human:");
+		return by?.startsWith("human:") === true;
 	});
 
 	return human ? "human-reviewed" : "machine-confirmed";

@@ -35,13 +35,19 @@ All data is stored under one home directory, resolved by `resolvePaths` in
 ```
 ~/.lattice/
 ├── docs/          # The markdown bundle
-├── lattice.db     # The SQLite index
-├── .env           # Local configuration
+├── lattice.db     # The SQLite index (plus SQLite's own -wal/-shm sidecars)
+├── models/        # Cached embedding weights (`LATTICE_MODEL_DIR` moves it)
 └── .sync.lock     # Held while a sync is running
 ```
 
-`lattice init` creates the home directory, `docs/` and `lattice.db`; the lock
-file appears only while a sync holds it.
+`lattice init` creates the home directory, `docs/` and `lattice.db`, and fills
+`models/` with the weights the `local` provider needs; the lock file appears
+only while a sync holds it.
+
+Configuration is environment variables only — there is no config file and no
+sync manifest. `resolvePaths` still names an `.env` under the home directory,
+but nothing reads it. Sync state is the content hash stored per concept in the
+index.
 
 ### Database
 

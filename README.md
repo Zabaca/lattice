@@ -175,12 +175,31 @@ lattice status                  # Show new/changed documents
 
 ### `lattice search`
 
-Semantic search across the knowledge graph.
+Keyword search over indexed passages. Results are ranked — a match in a
+concept's title outranks one in a heading, which outranks one in body text —
+grouped by concept, and capped at a couple of passages each so one long
+document cannot crowd out the rest. Deprecated concepts are left out unless
+asked for, and concepts past their `stale_after` date rank lower rather than
+disappearing. No embedding model is involved.
 
 ```bash
-lattice search "query"          # Search all entity types
-lattice search "query" -l Tool  # Filter by label
+lattice search "query"                     # Ranked passages, grouped by concept
+lattice search "query" --json              # Machine-readable, with file offsets
+lattice search "query" --limit 20          # More concepts (default 10)
+lattice search "query" --chunks 3          # More passages per concept (default 2)
+lattice search "query" --type Guide        # Filter by OKF type
+lattice search "query" --tag data,core     # Filter by tag (comma-separated)
+lattice search "query" --dir concepts      # Filter by directory, subtree included
+lattice search "query" --status stable     # Filter by lifecycle status
+lattice search "query" --trust human-reviewed
+lattice search "query" --include-deprecated
 ```
+
+Flags are read after the query, so put the query first.
+
+Each `--json` result carries the concept's path, title, type, status, trust,
+staleness and score, and for every passage its heading path, ordinal, line and
+character offsets into the original file, and a snippet.
 
 ### `lattice sql`
 

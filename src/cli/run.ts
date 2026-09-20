@@ -9,6 +9,7 @@
 
 import { parseArgs } from "./args.js";
 import { runInit } from "./commands/init.js";
+import { runSearch } from "./commands/search.js";
 import { runSql } from "./commands/sql.js";
 import { runStatus } from "./commands/status.js";
 import { runSync } from "./commands/sync.js";
@@ -74,12 +75,9 @@ const COMMANDS: Record<string, CommandSpec> = {
 	},
 	search: {
 		usage: "lattice search <query>",
-		summary: "Search the index",
+		summary: "Search the index for passages matching a query",
 		requiredArgs: ["query"],
-		run: () => ({
-			code: 1,
-			stderr: "search is not implemented yet.",
-		}),
+		run: runSearch,
 	},
 };
 

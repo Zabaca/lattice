@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
 	cpSync,
 	existsSync,
+	mkdirSync,
 	mkdtempSync,
 	readFileSync,
 	renameSync,
@@ -9,7 +10,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { runCli } from "./run.js";
 
 const FIXTURE_BUNDLE = join(import.meta.dir, "..", "fixtures", "bundle");
@@ -39,6 +40,22 @@ async function sql<Row>(home: string, query: string): Promise<Row[]> {
 	const result = await invoke(["sql", query], home);
 	expect(result.stderr).toBe("");
 	return JSON.parse(result.stdout);
+}
+
+/** Write a minimal OKF document into a home's bundle. */
+function writeDoc(
+	home: string,
+	path: string,
+	title: string,
+	body: string,
+	frontmatter: Record<string, string> = {},
+): void {
+	const fields = Object.entries({ type: "Note", title, ...frontmatter })
+		.map(([key, value]) => `${key}: ${value}`)
+		.join("\n");
+	const file = join(home, "docs", path);
+	mkdirSync(dirname(file), { recursive: true });
+	writeFileSync(file, `---\n${fields}\n---\n\n# ${title}\n\n${body}\n`);
 }
 
 describe("runCli argument handling", () => {
@@ -582,3 +599,326 @@ describe("interrupting a sync", () => {
 	});
 });
 
+describe("lattice search", () => {
+	test("exits non-zero when the index does not exist", async () => {
+		const result = await invoke(["search", "anything"]);
+
+		expect(result.code).not.toBe(0);
+		expect(result.stderr).toContain("No Lattice index");
+		expect(result.stderr).toContain("lattice init");
+	});
+
+	test("finds the passage holding the query's words", async () => {
+		const home = await bundledHome();
+		await invoke(["sync"], home);
+
+		const result = await invoke(["search", "canonical account record"], home);
+
+		expect(result.code).toBe(0);
+		expect(result.stderr).toBe("");
+		expect(result.stdout).toContain("concepts/users.md");
+		expect(result.stdout).toContain("The canonical account record.");
+	});
+	test("a natural-language question with punctuation and operator words still returns results", async () => {
+		const home = await bundledHome();
+		await invoke(["sync"], home);
+
+		const result = await invoke(
+			["search", 'What is the "canonical" account-record, and not the orders?'],
+			home,
+		);
+
+		expect(result.code).toBe(0);
+		expect(result.stderr).toBe("");
+		expect(result.stdout).toContain("concepts/users.md");
+	});
+
+	test("finds an exact identifier written with punctuation", async () => {
+		const home = await bundledHome();
+		await invoke(["sync"], home);
+
+		const result = await invoke(["search", "user_id"], home);
+
+		expect(result.code).toBe(0);
+		expect(result.stdout).toContain("concepts/users.md");
+		expect(result.stdout).toContain("`user_id` is the primary key.");
+	});
+
+	test("a query with no searchable words reports no results instead of failing", async () => {
+		const home = await bundledHome();
+		await invoke(["sync"], home);
+
+		const result = await invoke(["search", "?! -- ()"], home);
+
+		expect(result.code).toBe(0);
+		expect(result.stderr).toBe("");
+		expect(result.stdout).toContain("No results");
+	});
+
+	test("a title match outranks a heading match, which outranks a body match", async () => {
+		const home = freshHome();
+		await invoke(["init"], home);
+		// Each section is padded past the chunker's merge threshold, so the
+		// heading a match sits under is the heading it is indexed under.
+		const filler =
+			"Filler sentence that carries no query words at all. ".repeat(5);
+		writeDoc(
+			home,
+			"body.md",
+			"Something else",
+			`${filler}\n\n## Other\n\nThe widget is mentioned here. ${filler}`,
+		);
+		writeDoc(
+			home,
+			"heading.md",
+			"Something else again",
+			`${filler}\n\n## Widget\n\nNothing to say. ${filler}`,
+		);
+		writeDoc(
+			home,
+			"title.md",
+			"Widget",
+			`${filler}\n\n## Other\n\nNothing to say. ${filler}`,
+		);
+		await invoke(["sync"], home);
+
+		const result = await invoke(["search", "widget", "--json"], home);
+
+		expect(result.code).toBe(0);
+		expect(
+			JSON.parse(result.stdout).map((hit: { path: string }) => hit.path),
+		).toEqual(["title.md", "heading.md", "body.md"]);
+	});
+
+	test("groups hits by concept and caps the passages each one contributes", async () => {
+		const home = freshHome();
+		await invoke(["init"], home);
+		const filler =
+			"Filler sentence that carries no query words at all. ".repeat(5);
+		const sections = [1, 2, 3, 4]
+			.map((n) => `## Section ${n}\n\nThe widget appears here too. ${filler}`)
+			.join("\n\n");
+		writeDoc(home, "many.md", "A long document", `${filler}\n\n${sections}`);
+		writeDoc(
+			home,
+			"one.md",
+			"A short document",
+			`The widget appears once. ${filler}`,
+		);
+		await invoke(["sync"], home);
+
+		const result = await invoke(["search", "widget", "--json"], home);
+		const hits: Array<{ path: string; chunks: unknown[] }> = JSON.parse(
+			result.stdout,
+		);
+
+		// Four of the long document's sections match; it is still one result
+		// with two passages, so it cannot crowd the short document out.
+		expect(hits.map((hit) => hit.path).sort()).toEqual(["many.md", "one.md"]);
+		expect(hits.find((hit) => hit.path === "many.md")?.chunks).toHaveLength(2);
+
+		const wider = await invoke(
+			["search", "widget", "--json", "--chunks", "3"],
+			home,
+		);
+		const widened: Array<{ path: string; chunks: unknown[] }> = JSON.parse(
+			wider.stdout,
+		);
+		expect(widened.find((hit) => hit.path === "many.md")?.chunks).toHaveLength(
+			3,
+		);
+	});
+
+	test("filters by type, tag, directory, status and trust, and composes them", async () => {
+		const home = await bundledHome();
+		await invoke(["sync"], home);
+
+		const paths = async (argv: string[]) => {
+			const result = await invoke(["search", ...argv, "--json"], home);
+			expect(result.code).toBe(0);
+			return (JSON.parse(result.stdout) as Array<{ path: string }>)
+				.map((hit) => hit.path)
+				.sort();
+		};
+
+		// "table" is in the title of both concepts and in no other document.
+		expect(await paths(["table", "--include-deprecated"])).toEqual([
+			"concepts/orders.md",
+			"concepts/users.md",
+		]);
+		expect(await paths(["table", "--type", "BigQuery Table"])).toEqual([
+			"concepts/users.md",
+		]);
+		expect(await paths(["chunker", "--tag", "guide"])).toEqual([
+			"guides/chunking.md",
+		]);
+		expect(await paths(["table", "--dir", "concepts"])).toEqual([
+			"concepts/users.md",
+		]);
+		expect(await paths(["table", "--status", "stable"])).toEqual([
+			"concepts/users.md",
+		]);
+		expect(await paths(["table", "--trust", "human-reviewed"])).toEqual([
+			"concepts/users.md",
+		]);
+		expect(await paths(["table", "--trust", "unverified"])).toEqual([]);
+
+		// Composed: every filter must hold, so one that excludes wins.
+		expect(
+			await paths(["table", "--type", "BigQuery Table", "--tag", "core"]),
+		).toEqual(["concepts/users.md"]);
+		expect(
+			await paths(["table", "--type", "BigQuery Table", "--tag", "guide"]),
+		).toEqual([]);
+	});
+
+	test("leaves deprecated concepts out unless they are asked for", async () => {
+		const home = await bundledHome();
+		await invoke(["sync"], home);
+
+		const plain = await invoke(
+			["search", "superseded purchases", "--json"],
+			home,
+		);
+		expect(JSON.parse(plain.stdout)).toEqual([]);
+
+		const included = await invoke(
+			["search", "superseded purchases", "--json", "--include-deprecated"],
+			home,
+		);
+		expect(
+			(JSON.parse(included.stdout) as Array<{ path: string }>).map(
+				(hit) => hit.path,
+			),
+		).toEqual(["concepts/orders.md"]);
+
+		const byStatus = await invoke(
+			["search", "superseded purchases", "--json", "--status", "deprecated"],
+			home,
+		);
+		expect(
+			(JSON.parse(byStatus.stdout) as Array<{ path: string }>).map(
+				(hit) => hit.path,
+			),
+		).toEqual(["concepts/orders.md"]);
+	});
+
+	test("ranks a concept past its staleness date below an equivalent fresh one", async () => {
+		const home = freshHome();
+		await invoke(["init"], home);
+		const filler =
+			"Filler sentence that carries no query words at all. ".repeat(5);
+		const body = `The widget is described here. ${filler}`;
+		writeDoc(home, "a-stale.md", "Stale widget notes", body, {
+			stale_after: "2000-01-01T00:00:00Z",
+		});
+		writeDoc(home, "z-fresh.md", "Fresh widget notes", body, {
+			stale_after: "2999-01-01T00:00:00Z",
+		});
+		await invoke(["sync"], home);
+
+		const result = await invoke(["search", "widget", "--json"], home);
+		const hits: Array<{ path: string; stale: boolean }> = JSON.parse(
+			result.stdout,
+		);
+
+		expect(hits.map((hit) => hit.path)).toEqual(["z-fresh.md", "a-stale.md"]);
+		expect(hits.map((hit) => hit.stale)).toEqual([false, true]);
+	});
+
+	test("machine-readable output carries the concept facts and passage offsets", async () => {
+		const home = await bundledHome();
+		await invoke(["sync"], home);
+
+		const result = await invoke(["search", "primary key", "--json"], home);
+		const [hit] = JSON.parse(result.stdout) as Array<{
+			path: string;
+			title: string;
+			type: string;
+			status: string;
+			trust: string;
+			stale: boolean;
+			score: number;
+			chunks: Array<{
+				headingPath: string;
+				ordinal: number;
+				startLine: number;
+				endLine: number;
+				startChar: number;
+				endChar: number;
+				snippet: string;
+			}>;
+		}>;
+
+		expect(hit.path).toBe("concepts/users.md");
+		expect(hit.title).toBe("Users table");
+		expect(hit.type).toBe("BigQuery Table");
+		expect(hit.status).toBe("stable");
+		expect(hit.trust).toBe("human-reviewed");
+		expect(hit.stale).toBe(false);
+		expect(typeof hit.score).toBe("number");
+
+		const [chunk] = hit.chunks;
+		// users.md is short enough that the chunker merges its sections, so the
+		// passage is indexed under the document's own heading.
+		expect(chunk.headingPath).toBe("Users table");
+		expect(chunk.ordinal).toBeGreaterThanOrEqual(0);
+		expect(chunk.snippet).toContain("`user_id` is the primary key.");
+
+		// The offsets address the original file, frontmatter included, so an
+		// editor opening them lands on the passage that matched.
+		const file = readFileSync(join(home, "docs", hit.path), "utf8");
+		expect(file.slice(chunk.startChar, chunk.endChar)).toContain(
+			"`user_id` is the primary key.",
+		);
+		const lines = file.split("\n");
+		expect(
+			lines.slice(chunk.startLine - 1, chunk.endLine).join("\n"),
+		).toContain("`user_id` is the primary key.");
+	});
+
+	test("reports the nested heading path a passage sits under", async () => {
+		const home = await bundledHome();
+		await invoke(["sync"], home);
+
+		const result = await invoke(
+			["search", "fenced code block", "--json"],
+			home,
+		);
+		const hits = JSON.parse(result.stdout) as Array<{
+			path: string;
+			chunks: Array<{ headingPath: string }>;
+		}>;
+
+		const guide = hits.find((hit) => hit.path === "guides/chunking.md");
+		expect(guide?.chunks.map((chunk) => chunk.headingPath)).toContain(
+			"Chunking guide > Fenced code",
+		);
+	});
+
+	test("finds a concept whose title names the query even when its text never does", async () => {
+		const home = freshHome();
+		await invoke(["init"], home);
+		const filler =
+			"Filler sentence that carries no query words at all. ".repeat(5);
+		// The word "widget" appears only in the frontmatter title — the body and
+		// every heading avoid it — so the FTS index over headings and content
+		// cannot be the only place a title match is looked for.
+		writeFileSync(
+			join(home, "docs", "named.md"),
+			`---\ntype: Note\ntitle: Widget internals\n---\n\n# Internals\n\n${filler}\n`,
+		);
+		await invoke(["sync"], home);
+
+		const result = await invoke(["search", "widget", "--json"], home);
+		const hits = JSON.parse(result.stdout) as Array<{
+			path: string;
+			title: string;
+			chunks: Array<{ startChar: number; endChar: number }>;
+		}>;
+
+		expect(hits.map((hit) => hit.path)).toEqual(["named.md"]);
+		expect(hits[0].title).toBe("Widget internals");
+		expect(hits[0].chunks.length).toBeGreaterThan(0);
+	});
+});

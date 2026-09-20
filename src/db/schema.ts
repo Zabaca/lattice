@@ -9,7 +9,7 @@
  * tables later is fine, renaming them is not.
  */
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS meta (
@@ -116,6 +116,39 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 );
 
 CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_model ON chunk_embeddings(model);
+
+-- A short vector for the concept itself, built from its title, description
+-- and tags rather than its text, so a query can match a document as a whole.
+CREATE TABLE IF NOT EXISTS concept_embeddings (
+	concept_id INTEGER PRIMARY KEY REFERENCES concepts(id) ON DELETE CASCADE,
+	model      TEXT NOT NULL,
+	dim        INTEGER NOT NULL,
+	vector     BLOB NOT NULL,
+	created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_concept_embeddings_model ON concept_embeddings(model);
+
+-- Why a target has no vector. A row here is the only thing that keeps the
+-- embed phase from trying the same hopeless text on every run; it hangs off
+-- the target so re-chunking a document takes its stale failures with it.
+CREATE TABLE IF NOT EXISTS chunk_embed_failures (
+	chunk_id  INTEGER PRIMARY KEY REFERENCES chunks(id) ON DELETE CASCADE,
+	model     TEXT NOT NULL,
+	retryable INTEGER NOT NULL,
+	attempts  INTEGER NOT NULL DEFAULT 1,
+	message   TEXT NOT NULL,
+	failed_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS concept_embed_failures (
+	concept_id INTEGER PRIMARY KEY REFERENCES concepts(id) ON DELETE CASCADE,
+	model      TEXT NOT NULL,
+	retryable  INTEGER NOT NULL,
+	attempts   INTEGER NOT NULL DEFAULT 1,
+	message    TEXT NOT NULL,
+	failed_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
 
 -- Authored links: wikilinks and markdown links found in a document.
 CREATE TABLE IF NOT EXISTS links (

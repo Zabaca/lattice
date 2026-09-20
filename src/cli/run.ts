@@ -9,6 +9,7 @@
 
 import { parseArgs } from "./args.js";
 import { runInit } from "./commands/init.js";
+import { runRels } from "./commands/rels.js";
 import { runSearch } from "./commands/search.js";
 import { runSql } from "./commands/sql.js";
 import { runStatus } from "./commands/status.js";
@@ -66,6 +67,13 @@ const COMMANDS: Record<string, CommandSpec> = {
 		summary: "Index the OKF bundle",
 		requiredArgs: [],
 		run: runSync,
+	},
+	rels: {
+		usage: "lattice rels <concept> [--json]",
+		summary:
+			"Show what a concept links to, what links back, and what is missing",
+		requiredArgs: ["concept"],
+		run: runRels,
 	},
 	sql: {
 		usage: "lattice sql <query>",

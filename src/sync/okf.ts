@@ -33,6 +33,11 @@ export interface OkfConcept {
 	status?: string;
 	staleAfter?: string;
 	tags: string[];
+	/**
+	 * The citation entries, as written: a bare path or URL, or a record
+	 * carrying one. They stay in `rest` too — no column is promoted for them.
+	 */
+	sources: Array<string | Record<string, unknown>>;
 	trust: Trust;
 	/** The frontmatter fields no column was promoted for. */
 	rest: Record<string, unknown>;
@@ -60,6 +65,7 @@ export function parseConcept(raw: string): OkfConcept {
 		bodyOffset,
 		bodyLineOffset: countLines(raw.slice(0, bodyOffset)),
 		tags: [],
+		sources: [],
 		trust: "unverified" as const,
 		rest: {},
 	};
@@ -98,6 +104,7 @@ export function parseConcept(raw: string): OkfConcept {
 		status: asString(data.status),
 		staleAfter: asString(data.stale_after),
 		tags: asTags(data.tags),
+		sources: asSources(data.sources),
 		trust: deriveTrust(data.verified),
 		rest,
 		problem: type === undefined ? "frontmatter has no `type`" : undefined,
@@ -150,6 +157,28 @@ function asTags(value: unknown): string[] {
 		}
 	}
 	return [...tags];
+}
+
+/**
+ * Citations, kept in whichever of the two shapes the author used. A single
+ * entry written without a list is one citation, not a mistake.
+ */
+function asSources(value: unknown): Array<string | Record<string, unknown>> {
+	const entries = Array.isArray(value)
+		? value
+		: value === undefined || value === null
+			? []
+			: [value];
+
+	const sources: Array<string | Record<string, unknown>> = [];
+	for (const entry of entries) {
+		if (typeof entry === "string") {
+			sources.push(entry);
+		} else if (entry !== null && typeof entry === "object") {
+			sources.push(entry as Record<string, unknown>);
+		}
+	}
+	return sources;
 }
 
 /**

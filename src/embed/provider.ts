@@ -14,6 +14,7 @@
 import { resolvePaths } from "../utils/paths.js";
 import { createLocalProvider } from "./local.js";
 import { resolveModel } from "./models.js";
+import { STUB_PROVIDER, stubProviderFromEnv } from "./stub.js";
 
 /** Dimensions the hash provider emits unless `LATTICE_EMBED_DIM` says otherwise. */
 const DEFAULT_DIM = 512;
@@ -76,9 +77,13 @@ export function selectProvider(
 		});
 	}
 
+	if (name === STUB_PROVIDER) {
+		return stubProviderFromEnv(env);
+	}
+
 	if (name !== "hash") {
 		throw new Error(
-			`Unknown embedding provider: ${name}. Known providers: local, hash.`,
+			`Unknown embedding provider: ${name}. Known providers: local, hash, ${STUB_PROVIDER}.`,
 		);
 	}
 

@@ -1,17 +1,19 @@
 # Lattice - Knowledge Graph CLI
 
-A CLI tool for syncing markdown documents with an embedded DuckDB database, enabling entity extraction and semantic search.
+A CLI that indexes a bundle of OKF markdown documents into SQLite and searches it by keyword and by meaning at once.
 
 ## Architecture
 
-- **Backend**: DuckDB (embedded, zero external dependencies)
-- **Vector Search**: DuckDB VSS extension (HNSW index with cosine similarity)
-- **Embeddings**: in-process, behind the `EmbeddingProvider` seam in `src/embed/provider.ts`. The default `local` provider runs a real ONNX model through transformers.js on the user's own machine — downloaded once by `lattice init`, cached under `<LATTICE_HOME>/models`, offline thereafter. The `hash` provider stays selectable and is what the test suite drives.
-- **Runtime**: Bun + NestJS
+- **Backend**: SQLite via `bun:sqlite` (embedded, no external dependencies)
+- **Keyword search**: SQLite FTS5 over chunks (`chunks_fts`)
+- **Vector search**: a cosine scan over `chunk_embeddings` — no index extension
+- **Embeddings**: in-process, behind the `EmbeddingProvider` seam in `src/embed/provider.ts`. The default `local` provider runs a real ONNX model through transformers.js on the user's own machine — downloaded once by `lattice init`, cached under `<LATTICE_HOME>/models`, offline thereafter. The deterministic `hash` provider stays selectable and is what the test suite drives.
+- **Runtime**: Bun
 
 ## Key Commands
 
 ```bash
+lattice init     # Create the home directory, the docs bundle and the index
 lattice status   # Show documents needing sync
 lattice sync     # Index the bundle, then embed whatever has no vector
 lattice embed    # Embed the backlog alone (`--retry-failed` retries permanent failures, `--reembed` rebuilds under a changed model)
@@ -26,20 +28,25 @@ machine-readably.
 
 ## Storage
 
-All data is stored in `~/.lattice/`:
+All data is stored under one home directory, resolved by `resolvePaths` in
+`src/utils/paths.ts`: `LATTICE_HOME` when it is set, otherwise `~/.lattice`.
+
 ```
 ~/.lattice/
-├── docs/                  # Markdown documentation
-├── lattice.db             # Index (SQLite)
-├── .sync-manifest.json    # Sync state tracking
-└── models/                # Downloaded embedding models (offline after the first run)
+├── docs/          # The markdown bundle
+├── lattice.db     # The SQLite index
+├── models/        # Downloaded embedding models — offline after the first run
+├── .env           # Local configuration
+└── .sync.lock     # Held while a sync is running
 ```
 
-Run `lattice init` to setup the directory structure.
+`lattice init` creates the home directory, `docs/`, `models/` and `lattice.db`,
+and downloads the default embedding model; the lock file appears only while a
+sync holds it.
 
 ### Database
 
-The rewrite's index (`lattice.db`, SQLite — see `src/db/schema.ts`) holds
+The index (`lattice.db`, SQLite — see `src/db/schema.ts`) holds
 `concepts`, `tags`, `chunks`, `chunks_fts`, `chunk_embeddings`,
 `concept_embeddings`, the two embedding failure tables and `links`.
 
@@ -88,9 +95,9 @@ Environment:
 | `LATTICE_MODEL_DIR` | A directory holding pre-placed models (`<dir>/<org>/<repo>/…`). Used as-is, with downloads switched off. |
 | `HF_HUB_OFFLINE` | Refuse to download; the model must already be cached. |
 | `HF_ENDPOINT` | Download from a mirror instead of `huggingface.co`. |
+| `LATTICE_E2E_MODEL` | Set to `1` to run the one end-to-end test against a real downloaded model. |
 | `LATTICE_EMBED_DIM` | Dimensions for the hash provider (default 512). The model name carries it: `hash-512`. |
 | `LATTICE_EMBED_FAIL` | Fault injection for tests: `retryable:<substring>` or `permanent:<substring>` makes the provider fail on any text containing the substring. |
-| `LATTICE_E2E_MODEL` | Set to `1` to run the one end-to-end test against a real downloaded model. |
 
 ## Search
 
@@ -122,7 +129,7 @@ says so: `--json` carries `degraded` and `degradedReason`, and
 
 A search under a model the index was not built with is refused outright rather
 than degraded: its vectors answer a different question, so keyword-only would
-be a quietly worse answer to a question the user did not ask.
+be a quietly worse answer to a question nobody asked.
 
 ## Links
 
@@ -137,49 +144,57 @@ links to unresolved.
 
 ## Development Notes
 
-- No services to run: SQLite is embedded and embeddings are computed in-process
+- No external services: SQLite is embedded and embeddings are computed in-process
 - `@huggingface/transformers` (and its `onnxruntime-node` native runtime) is the
   one heavy dependency; it is imported lazily so commands that never embed do
   not pay for it
-- Path utilities in `src/utils/paths.ts` for centralized storage
+- `bun run check` is `tsc --noEmit && biome check .`; `bun test` is the whole suite
+- Path resolution lives in `src/utils/paths.ts` — never build a storage path by hand
 
 ## Testing Philosophy
 
-### Unit Tests (fast, pure functions)
-- Test pure functions in isolation (no DB, no API calls)
-- File pattern: `*.test.ts` next to the source file
-- Examples: frontmatter parsing, hash computation, entity detection
-- Should run in milliseconds
+### One seam
 
-### Integration Tests (slow, real dependencies)
-- Test actual DuckDB/API integration
-- **Connect ONCE in beforeAll**, truncate tables in beforeEach
-- Keep minimal - only test what unit tests can't
+The suite drives a single seam: `runCli` in `src/cli/run.ts`. It takes argv and
+an environment and returns `{ code, stdout, stderr }`. It never reads
+`process.argv`, `process.env` or the real home directory, and it never throws.
+Tests live in `src/cli/run.test.ts` and go through it — argv in, exit code and
+output out.
 
-### When Writing Tests
-1. **Prefer unit tests** - if logic can be extracted to a pure function, do it
-2. **One integration test per boundary** - DB connection, API call
-3. **Never beforeEach reconnect** - use beforeAll + truncate for DB tests
+A test gets an isolated home by passing `LATTICE_HOME` pointed at a fresh
+temporary directory, so there is no shared connection to manage, nothing to
+truncate between tests, and no order dependence.
 
-### Example: DuckDB Integration Test Pattern
+### Rules
+
+1. **Test through the CLI, not around it.** Assert on what a command prints and
+   the code it exits with. Prefer `--json` output to parsing a rendered table.
+   Never open the database directly from a test; `lattice sql` is a command, and
+   using it is driving the CLI.
+2. **Use the highest interface that can show the behavior.** If `lattice search
+   --json` can show it, do not reach for `lattice sql`.
+3. **Expected values come from an independent source of truth** — a known-good
+   literal, a worked example, the spec — never recomputed the way the code
+   computes them.
+4. **Pure functions may be tested directly** in a `*.test.ts` beside the source
+   when the logic genuinely has no CLI-visible behavior of its own. That is the
+   exception, not the default.
+
+### Example
+
 ```typescript
-describe("GraphService (DuckDB)", () => {
-  let graphService: GraphService;
+function invoke(argv: string[], home: string = freshHome()) {
+  return runCli({ argv, env: { LATTICE_HOME: home } });
+}
 
-  beforeAll(async () => {
-    // Connect ONCE - extension loading is slow
-    graphService = new GraphService(configService);
-    await graphService.connect();
-  });
+test("sync reports what it indexed", async () => {
+  const home = freshHome();
+  await invoke(["init"], home);
+  cpSync(FIXTURE_BUNDLE, join(home, "docs"), { recursive: true });
 
-  afterAll(async () => {
-    await graphService.disconnect();
-  });
+  const result = await invoke(["sync"], home);
 
-  beforeEach(async () => {
-    // Clear data, keep connection
-    await graphService.query("DELETE FROM relationships");
-    await graphService.query("DELETE FROM nodes");
-  });
+  expect(result.code).toBe(0);
+  expect(result.stdout).toContain("Indexed");
 });
 ```

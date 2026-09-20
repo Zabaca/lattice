@@ -1,26 +1,56 @@
 /**
- * Keyword search over chunks.
+ * Hybrid search over chunks.
  *
- * Two things find a passage: the full-text index over chunk headings and
- * bodies, and the concept titles, which are frontmatter and so are not in the
- * full-text index at all. Both feed one scorer, which is tiered on purpose —
- * a title hit beats a heading hit beats a body hit, whatever the corpus
- * statistics say — and the results are then grouped so no single long
- * document can fill the page.
+ * Two legs run over the same filtered candidate set. The keyword leg is the
+ * full-text index over chunk headings and bodies plus the concept titles,
+ * which are frontmatter and so are not in the full-text index at all; it is
+ * tiered on purpose — a title hit beats a heading hit beats a body hit,
+ * whatever the corpus statistics say. The semantic leg is a cosine scan over
+ * the stored chunk vectors. Neither leg's scores are comparable with the
+ * other's, so the two are fused by rank rather than by value, and a passage
+ * either leg ranked highly survives.
+ *
+ * The concept's own vector is then allowed to break ties between passages and
+ * nothing more — it says which document is about the question, which is a
+ * weaker claim than which passage answers it.
+ *
+ * Results are grouped so no single long document can fill the page.
  */
 
 import type { Database } from "bun:sqlite";
+import { expand } from "./expand.js";
+import { conceptFilters, type SearchFilters } from "./filters.js";
+import { reciprocalRankFusion, tiebreakEpsilon } from "./fuse.js";
 import {
 	buildMatchExpression,
 	extractTerms,
 	type MatchMode,
 	termCoverage,
 } from "./query.js";
+import {
+	type CandidateRow,
+	CHUNK_COLUMNS,
+	CONCEPT_COLUMNS,
+	chunkRows,
+	isStale,
+	type SearchChunk,
+	type SearchHit,
+	snippetOf,
+} from "./rows.js";
+import {
+	conceptSimilarities,
+	hasEmbeddings,
+	type SemanticInput,
+	vectorCandidates,
+} from "./vector.js";
+
+export type { SearchFilters } from "./filters.js";
+export type { SearchChunk, SearchHit } from "./rows.js";
 
 /**
- * Score tiers. The gaps are what make the ordering a property of the scorer:
- * a full body match plus the largest possible tiebreak still sits below one
- * heading match, and the same again below one title match.
+ * Score tiers for the keyword leg. The gaps are what make the ordering a
+ * property of the scorer: a full body match plus the largest possible tiebreak
+ * still sits below one heading match, and the same again below one title match.
  */
 const TITLE_WEIGHT = 100;
 const HEADING_WEIGHT = 10;
@@ -34,6 +64,8 @@ const BM25_HEADING = 5;
 const BM25_CONTENT = 1;
 /** Rows pulled from one full-text pass before grouping. */
 const CANDIDATE_LIMIT = 500;
+/** Passages the semantic leg contributes to the fusion. */
+const VECTOR_LIMIT = 200;
 /**
  * Passages one concept may contribute to that window, as a multiple of what
  * it can end up showing. Without this a single long document matching in
@@ -41,18 +73,6 @@ const CANDIDATE_LIMIT = 500;
  * before the grouping below ever ran.
  */
 const CANDIDATES_PER_CONCEPT = 4;
-/** Characters of chunk text shown around the first matching term. */
-const SNIPPET_CHARS = 180;
-
-export interface SearchFilters {
-	type?: string;
-	tag?: string;
-	dir?: string;
-	status?: string;
-	trust?: string;
-	/** Include concepts whose status is `deprecated`, which are otherwise left out. */
-	includeDeprecated?: boolean;
-}
 
 export interface SearchOptions extends SearchFilters {
 	query: string;
@@ -62,50 +82,162 @@ export interface SearchOptions extends SearchFilters {
 	chunksPerConcept: number;
 	/** The instant staleness is judged against, as epoch milliseconds. */
 	asOf: number;
-}
-
-export interface SearchChunk {
-	ordinal: number;
-	headingPath: string;
-	startLine: number;
-	endLine: number;
-	startChar: number;
-	endChar: number;
-	snippet: string;
-	score: number;
-}
-
-export interface SearchHit {
-	path: string;
-	identifier: string;
-	title: string | null;
-	type: string | null;
-	status: string | null;
-	trust: string;
-	staleAfter: string | null;
-	stale: boolean;
-	score: number;
-	chunks: SearchChunk[];
+	/** The embedded query, when there is one. */
+	semantic?: SemanticInput;
+	/** Why there is no embedded query, when there is not. */
+	semanticUnavailable?: string;
+	/** Neighbours of the top hits to add below them. Zero turns expansion off. */
+	expand: number;
 }
 
 export interface SearchResult {
 	/** The terms the query was reduced to; empty when it held no searchable text. */
 	terms: string[];
-	/** Which pass produced these hits, or undefined when nothing matched. */
+	/** Which keyword pass produced candidates, or undefined when none did. */
 	mode?: MatchMode;
+	/** True when the semantic leg could not run at all, so this is keyword-only. */
+	degraded: boolean;
+	/** Why, when it is degraded. */
+	degradedReason?: string;
+	/** Direct hits first, then whatever expansion reached from them. */
 	hits: SearchHit[];
 }
 
-interface CandidateRow {
-	chunk_id: number;
-	concept_id: number;
-	ordinal: number;
-	heading_path: string | null;
-	start_line: number;
-	end_line: number;
-	start_char: number;
-	end_char: number;
-	content: string;
+export function search(db: Database, options: SearchOptions): SearchResult {
+	const terms = extractTerms(options.query);
+	const semantic = usableSemantic(db, options);
+
+	const keyword = keywordLeg(db, terms, options);
+	const vector =
+		semantic.input === undefined
+			? []
+			: vectorCandidates(db, semantic.input, options, VECTOR_LIMIT);
+
+	const rows = collectRows(db, keyword.rows, vector);
+	if (rows.size === 0) {
+		return {
+			terms,
+			mode: keyword.mode,
+			degraded: semantic.degraded,
+			degradedReason: semantic.reason,
+			hits: [],
+		};
+	}
+
+	const scored = fuse(db, rows, keyword, vector, semantic.input, options);
+	const direct = group(rows, scored, options);
+
+	return {
+		terms,
+		mode: keyword.mode,
+		degraded: semantic.degraded,
+		degradedReason: semantic.reason,
+		hits: [
+			...direct.map((entry) => entry.hit),
+			...expand(
+				db,
+				direct.map((entry) => entry.hit),
+				direct.map((entry) => entry.conceptId),
+				{ ...options, semantic: semantic.input },
+			),
+		],
+	};
+}
+
+/**
+ * The same question asked of documents instead of passages.
+ *
+ * "Which document is about this" is a different question from "which passage
+ * answers this", and the index holds a different signal for it: the concept
+ * vector, built from what a document calls itself and says it is about. Here
+ * that vector is a ranked leg in its own right — which is exactly what it is
+ * never allowed to be in passage search, where it can only settle ties.
+ *
+ * The keyword leg is the same one, read at document level: a document's
+ * keyword standing is that of its best passage.
+ */
+export function searchConcepts(
+	db: Database,
+	options: SearchOptions,
+): SearchResult {
+	const terms = extractTerms(options.query);
+	const semantic = usableSemantic(db, options);
+	const keyword = keywordLeg(db, terms, options);
+
+	const bestPassage = new Map<number, number>();
+	for (const row of keyword.rows) {
+		const score = keyword.scores.get(row.chunk_id) ?? 0;
+		if (score > (bestPassage.get(row.concept_id) ?? Number.NEGATIVE_INFINITY)) {
+			bestPassage.set(row.concept_id, score);
+		}
+	}
+
+	const similarities =
+		semantic.input === undefined
+			? new Map<number, number>()
+			: conceptSimilarities(db, semantic.input, options);
+
+	const fused = reciprocalRankFusion([
+		byDescendingScore(bestPassage),
+		byDescendingScore(similarities),
+	]);
+
+	const rows = conceptRows(db, [...fused.keys()]);
+	const direct: { hit: SearchHit; conceptId: number }[] = [];
+	for (const [conceptId, fusedScore] of fused) {
+		const row = rows.get(conceptId);
+		if (row === undefined) {
+			continue;
+		}
+		const stale = isStale(row.stale_after, options.asOf);
+		direct.push({
+			conceptId,
+			hit: {
+				path: row.path,
+				identifier: row.identifier,
+				title: row.title,
+				type: row.type,
+				status: row.status,
+				trust: row.trust,
+				staleAfter: row.stale_after,
+				stale,
+				score: stale ? fusedScore * STALE_FACTOR : fusedScore,
+				chunks: [],
+			},
+		});
+	}
+
+	direct.sort(
+		(a, b) => b.hit.score - a.hit.score || (a.hit.path < b.hit.path ? -1 : 1),
+	);
+	const limited = direct.slice(0, options.limit);
+
+	// A neighbour is a document here too, so it arrives without its passage.
+	const expanded = expand(
+		db,
+		limited.map((entry) => entry.hit),
+		limited.map((entry) => entry.conceptId),
+		{ ...options, semantic: semantic.input },
+	).map((hit) => ({ ...hit, chunks: [] }));
+
+	return {
+		terms,
+		mode: keyword.mode,
+		degraded: semantic.degraded,
+		degradedReason: semantic.reason,
+		hits: [...limited.map((entry) => entry.hit), ...expanded],
+	};
+}
+
+/** Ids best first, by a score each of them has. */
+function byDescendingScore(scores: Map<number, number>): number[] {
+	return [...scores.entries()]
+		.sort((a, b) => b[1] - a[1] || a[0] - b[0])
+		.map(([id]) => id);
+}
+
+interface ConceptRow {
+	id: number;
 	path: string;
 	identifier: string;
 	title: string | null;
@@ -113,18 +245,74 @@ interface CandidateRow {
 	status: string | null;
 	trust: string;
 	stale_after: string | null;
-	bm: number | null;
 }
 
-/** The concept columns every candidate carries, so one row is a whole hit. */
-const CONCEPT_COLUMNS = `c.path, c.identifier, c.title, c.type, c.status, c.trust, c.stale_after`;
-const CHUNK_COLUMNS = `ch.id AS chunk_id, ch.concept_id, ch.ordinal, ch.heading_path,
-	ch.start_line, ch.end_line, ch.start_char, ch.end_char, ch.content`;
+function conceptRows(
+	db: Database,
+	conceptIds: number[],
+): Map<number, ConceptRow> {
+	if (conceptIds.length === 0) {
+		return new Map();
+	}
+	const placeholders = conceptIds.map(() => "?").join(", ");
+	const rows = db
+		.query<ConceptRow, number[]>(
+			`SELECT c.id, ${CONCEPT_COLUMNS} FROM concepts c WHERE c.id IN (${placeholders})`,
+		)
+		.all(...conceptIds);
+	return new Map(rows.map((row) => [row.id, row]));
+}
 
-export function search(db: Database, options: SearchOptions): SearchResult {
-	const terms = extractTerms(options.query);
+/**
+ * Whether the semantic leg can run, and what to tell the caller when it cannot.
+ *
+ * A model that embedded the query but never embedded the corpus is as useless
+ * as no model at all, and a corpus embedded by a DIFFERENT model is worse than
+ * useless — the numbers would be comparable only by accident. Both are
+ * degradation, and both are said out loud.
+ */
+function usableSemantic(
+	db: Database,
+	options: SearchOptions,
+): { input?: SemanticInput; degraded: boolean; reason?: string } {
+	if (options.semantic === undefined) {
+		return {
+			degraded: true,
+			reason:
+				options.semanticUnavailable ?? "no embedding provider is available",
+		};
+	}
+	if (!hasEmbeddings(db, options.semantic.model)) {
+		return {
+			degraded: true,
+			reason: `nothing in the index is embedded with ${options.semantic.model}; run \`lattice embed\``,
+		};
+	}
+	return { input: options.semantic, degraded: false };
+}
+
+interface KeywordLeg {
+	rows: CandidateRow[];
+	mode?: MatchMode;
+	/** Chunk ids best first, by the tiered keyword score. */
+	ranking: number[];
+	/** The tiered score of each chunk, so grouping can keep the stale penalty. */
+	scores: Map<number, number>;
+}
+
+/**
+ * The keyword leg: the precise pass, then the broad one.
+ *
+ * `all` is tried first because it is the precise answer; `any` is the retry
+ * that turns a question with no exact answer into candidates.
+ */
+function keywordLeg(
+	db: Database,
+	terms: string[],
+	options: SearchOptions,
+): KeywordLeg {
 	if (terms.length === 0) {
-		return { terms, hits: [] };
+		return { rows: [], ranking: [], scores: new Map() };
 	}
 
 	for (const mode of ["all", "any"] as const) {
@@ -135,50 +323,105 @@ export function search(db: Database, options: SearchOptions): SearchResult {
 		if (rows.length === 0) {
 			continue;
 		}
-		return { terms, mode, hits: group(rows, terms, options) };
+
+		const seen = new Set<number>();
+		const scores = new Map<number, number>();
+		const unique: CandidateRow[] = [];
+		for (const row of rows) {
+			if (seen.has(row.chunk_id)) {
+				continue;
+			}
+			seen.add(row.chunk_id);
+			const score = scoreChunk(
+				row,
+				terms,
+				isStale(row.stale_after, options.asOf),
+			);
+			if (score <= 0) {
+				continue;
+			}
+			scores.set(row.chunk_id, score);
+			unique.push(row);
+		}
+
+		const ranking = [...scores.entries()]
+			.sort((a, b) => b[1] - a[1] || a[0] - b[0])
+			.map(([chunkId]) => chunkId);
+
+		return { rows: unique, mode, ranking, scores };
 	}
 
-	return { terms, hits: [] };
+	return { rows: [], ranking: [], scores: new Map() };
 }
 
-/** The `WHERE` fragments and bound values every candidate query shares. */
-function conceptFilters(filters: SearchFilters): {
-	sql: string;
-	values: string[];
-} {
-	const clauses: string[] = [];
-	const values: string[] = [];
-
-	if (filters.type !== undefined) {
-		clauses.push("c.type = ?");
-		values.push(filters.type);
-	}
-	if (filters.status !== undefined) {
-		clauses.push("c.status = ?");
-		values.push(filters.status);
-	}
-	if (filters.trust !== undefined) {
-		clauses.push("c.trust = ?");
-		values.push(filters.trust);
-	}
-	if (filters.dir !== undefined) {
-		// A directory filter covers the directory itself and everything under it.
-		clauses.push("(c.dir = ? OR c.dir LIKE ? || '/%')");
-		values.push(filters.dir, filters.dir);
-	}
-	if (filters.tag !== undefined) {
-		clauses.push(
-			"EXISTS (SELECT 1 FROM tags t WHERE t.concept_id = c.id AND t.tag = ?)",
-		);
-		values.push(filters.tag);
-	}
-	// A deprecated concept is retired, not deleted: it stays out of the way
-	// unless it is the thing being asked for.
-	if (filters.includeDeprecated !== true && filters.status === undefined) {
-		clauses.push("(c.status IS NULL OR c.status <> 'deprecated')");
+/**
+ * Every candidate passage as a whole row.
+ *
+ * The keyword leg already carries its rows; the semantic leg carries only ids,
+ * because its scan reads vectors and must not drag the corpus text through
+ * memory. The handful of passages it chose are fetched here.
+ */
+function collectRows(
+	db: Database,
+	keywordRows: CandidateRow[],
+	vector: { chunkId: number }[],
+): Map<number, CandidateRow> {
+	const rows = new Map<number, CandidateRow>();
+	for (const row of keywordRows) {
+		rows.set(row.chunk_id, row);
 	}
 
-	return { sql: clauses.map((clause) => ` AND ${clause}`).join(""), values };
+	const missing = vector
+		.map((candidate) => candidate.chunkId)
+		.filter((chunkId) => !rows.has(chunkId));
+	for (const row of chunkRows(db, missing)) {
+		rows.set(row.chunk_id, row);
+	}
+
+	return rows;
+}
+
+/**
+ * One score per passage: the rank fusion of the two legs, demoted if the
+ * concept is stale, nudged by the concept's own vector to settle ties.
+ */
+function fuse(
+	db: Database,
+	rows: Map<number, CandidateRow>,
+	keyword: KeywordLeg,
+	vector: { chunkId: number }[],
+	semantic: SemanticInput | undefined,
+	options: SearchOptions,
+): Map<number, number> {
+	const fused = reciprocalRankFusion([
+		keyword.ranking,
+		vector.map((candidate) => candidate.chunkId),
+	]);
+
+	const stalePenalty = new Map<number, number>();
+	for (const [chunkId, score] of fused) {
+		const row = rows.get(chunkId);
+		const stale = row !== undefined && isStale(row.stale_after, options.asOf);
+		stalePenalty.set(chunkId, stale ? score * STALE_FACTOR : score);
+	}
+
+	if (semantic === undefined) {
+		return stalePenalty;
+	}
+
+	// The concept vector is a tiebreak and nothing else: the nudge is sized so
+	// it can close a gap of zero and never cross a gap that is not.
+	const epsilon = tiebreakEpsilon(stalePenalty.values());
+	const similarities = conceptSimilarities(db, semantic, options);
+
+	const settled = new Map<number, number>();
+	for (const [chunkId, score] of stalePenalty) {
+		const row = rows.get(chunkId);
+		const similarity =
+			row === undefined ? 0 : (similarities.get(row.concept_id) ?? 0);
+		settled.set(chunkId, score + epsilon * Math.max(similarity, 0));
+	}
+	return settled;
 }
 
 function fullTextCandidates(
@@ -251,31 +494,26 @@ function titleCandidates(
 }
 
 /**
- * Score every candidate passage, then fold them into one entry per concept.
+ * Fold the scored passages into one entry per concept.
  *
  * A concept's score is its best passage's, so a document is ranked by the
  * strongest answer it holds rather than by how many times it repeats itself.
  */
 function group(
-	rows: CandidateRow[],
-	terms: string[],
+	rows: Map<number, CandidateRow>,
+	scores: Map<number, number>,
 	options: SearchOptions,
-): SearchHit[] {
+): { hit: SearchHit; conceptId: number }[] {
+	const terms = extractTerms(options.query);
 	const hits = new Map<number, SearchHit>();
-	const seenChunks = new Set<number>();
 
-	for (const row of rows) {
-		if (seenChunks.has(row.chunk_id)) {
+	for (const [chunkId, score] of scores) {
+		const row = rows.get(chunkId);
+		if (row === undefined || score <= 0) {
 			continue;
 		}
-		seenChunks.add(row.chunk_id);
 
 		const stale = isStale(row.stale_after, options.asOf);
-		const score = scoreChunk(row, terms, stale);
-		if (score <= 0) {
-			continue;
-		}
-
 		const chunk: SearchChunk = {
 			ordinal: row.ordinal,
 			headingPath: row.heading_path ?? "",
@@ -312,9 +550,10 @@ function group(
 		hit.chunks = hit.chunks.slice(0, options.chunksPerConcept);
 	}
 
-	return [...hits.values()]
-		.sort((a, b) => b.score - a.score || (a.path < b.path ? -1 : 1))
-		.slice(0, options.limit);
+	return [...hits.entries()]
+		.sort(([, a], [, b]) => b.score - a.score || (a.path < b.path ? -1 : 1))
+		.slice(0, options.limit)
+		.map(([conceptId, hit]) => ({ hit, conceptId }));
 }
 
 function byScoreThenOrdinal(a: SearchChunk, b: SearchChunk): number {
@@ -340,38 +579,4 @@ function scoreChunk(
 		RELEVANCE_WEIGHT * (relevance / (1 + relevance));
 
 	return stale ? score * STALE_FACTOR : score;
-}
-
-/** A concept is stale once its `stale_after` is behind the instant asked about. */
-function isStale(staleAfter: string | null, asOf: number): boolean {
-	if (staleAfter === null) {
-		return false;
-	}
-	const at = Date.parse(staleAfter);
-	return Number.isNaN(at) ? false : at < asOf;
-}
-
-/**
- * A window of the passage around its first matching term, so the line shown
- * is the line that matched rather than the top of the section.
- */
-function snippetOf(content: string, terms: string[]): string {
-	const flat = content.replaceAll(/\s+/g, " ").trim();
-	const haystack = flat.toLowerCase();
-
-	let at = -1;
-	for (const term of terms) {
-		const found = haystack.indexOf(term);
-		if (found !== -1 && (at === -1 || found < at)) {
-			at = found;
-		}
-	}
-
-	if (flat.length <= SNIPPET_CHARS) {
-		return flat;
-	}
-
-	const start = Math.max(0, (at === -1 ? 0 : at) - SNIPPET_CHARS / 4);
-	const end = Math.min(flat.length, start + SNIPPET_CHARS);
-	return `${start > 0 ? "…" : ""}${flat.slice(start, end)}${end < flat.length ? "…" : ""}`;
 }

@@ -175,12 +175,26 @@ lattice status                  # Show new/changed documents
 
 ### `lattice search`
 
-Semantic search across the knowledge graph.
+Hybrid search: one query runs keyword matching and semantic matching over the
+same filtered candidate set, and the two rankings are fused, so an exact
+identifier and a paraphrase that shares no words with the document both find
+their answer without choosing a mode. The top hits are then expanded one hop
+over the links the author wrote — in both directions — plus directory
+siblings, and those neighbours are always ranked below the direct hits.
 
 ```bash
-lattice search "query"          # Search all entity types
-lattice search "query" -l Tool  # Filter by label
+lattice search "query"                   # Passages, with neighbours below them
+lattice search "query" --concepts        # Which document, rather than which passage
+lattice search "query" --expand 5        # More neighbours (default 3)
+lattice search "query" --no-expand       # Direct hits only
+lattice search "query" --require-embeddings  # Fail instead of degrading
+lattice search "query" --type Guide --dir concepts --tag core
 ```
+
+With no usable embedding — no provider, or an index embedded by another model
+— the search still answers from keywords alone. `--json` then reports
+`"degraded": true` with a reason, so a caller can say the answer is weaker than
+usual; `--require-embeddings` turns that into a non-zero exit instead.
 
 ### `lattice sql`
 

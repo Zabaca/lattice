@@ -10,6 +10,8 @@
  * and touches no network, which is what makes the whole pipeline testable.
  */
 
+import { STUB_PROVIDER, stubProviderFromEnv } from "./stub.js";
+
 /** Dimensions the hash provider emits unless `LATTICE_EMBED_DIM` says otherwise. */
 const DEFAULT_DIM = 512;
 
@@ -47,9 +49,12 @@ export function selectProvider(
 	env: Record<string, string | undefined>,
 ): EmbeddingProvider {
 	const name = env.LATTICE_EMBED_PROVIDER?.trim() || "hash";
+	if (name === STUB_PROVIDER) {
+		return stubProviderFromEnv(env);
+	}
 	if (name !== "hash") {
 		throw new Error(
-			`Unknown embedding provider: ${name}. Known providers: hash.`,
+			`Unknown embedding provider: ${name}. Known providers: hash, ${STUB_PROVIDER}.`,
 		);
 	}
 	return new HashProvider(resolveDim(env), env.LATTICE_EMBED_FAIL?.trim());

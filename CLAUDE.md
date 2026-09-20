@@ -15,7 +15,7 @@ A CLI tool for syncing markdown documents with an embedded DuckDB database, enab
 lattice status   # Show documents needing sync
 lattice sync     # Index the bundle, then embed whatever has no vector
 lattice embed    # Embed the backlog alone (`--retry-failed` retries permanent failures)
-lattice search   # Semantic search
+lattice search   # Hybrid search: keyword and meaning fused, then expanded one hop
 lattice sql      # Raw SQL queries
 lattice rels     # Show a concept's links, backlinks, siblings and unresolved links
 ```
@@ -63,6 +63,34 @@ Environment:
 | `LATTICE_EMBED_PROVIDER` | Provider name; `hash` (the default) is the only one so far. An unknown name is an error, never a silent fallback. |
 | `LATTICE_EMBED_DIM` | Dimensions for the hash provider (default 512). The model name carries it: `hash-512`. |
 | `LATTICE_EMBED_FAIL` | Fault injection for tests: `retryable:<substring>` or `permanent:<substring>` makes the provider fail on any text containing the substring. |
+
+## Search
+
+`lattice search` runs two legs over one filtered candidate set — the FTS5
+keyword index over chunks, and a cosine scan over `chunk_embeddings` — and
+fuses their rankings with reciprocal rank fusion, because a tier score and a
+cosine are not comparable quantities. A similarity below `SIMILARITY_FLOOR`
+(0.25) is noise and never enters the fusion, which is why the non-semantic
+`hash` provider leaves passage ranking exactly as keyword search left it.
+
+`concept_embeddings` is a tiebreak in passage search and nothing more: the
+nudge is sized against the smallest gap between two distinct fused scores, so
+it can close a tie and can never cross one. In `--concepts` mode it is a leg of
+its own, because there the question is which document rather than which passage.
+
+The top hits are then expanded one hop over `links` (outbound and inbound) and
+over directory siblings. Neighbours are deduplicated against the answers,
+capped by `--expand` (default 3, `--no-expand` disables), and always scored
+below the weakest direct hit.
+
+When no query vector is usable — unknown provider, a provider that threw, or
+nothing in the index embedded with that model — the result is keyword-only and
+says so: `--json` carries `degraded` and `degradedReason`, and
+`--require-embeddings` turns that into a non-zero exit.
+
+| Variable | Meaning |
+|---|---|
+| `LATTICE_EMBED_STUB` | With `LATTICE_EMBED_PROVIDER=stub`, a JSON array of phrase groups; a text's vector has one dimension per group it mentions. For tests and demonstrations — it is the only way to show a paraphrase matching without a real model. |
 
 ## Links
 

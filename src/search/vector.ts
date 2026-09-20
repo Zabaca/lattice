@@ -21,6 +21,8 @@ import { conceptFilters, type SearchFilters } from "./filters.js";
 export interface SemanticInput {
 	vector: Float32Array;
 	model: string;
+	/** Width of the space; a model can be stored at more than one. */
+	dim: number;
 }
 
 export interface VectorCandidate {
@@ -58,14 +60,14 @@ export function vectorCandidates(
 	const bounds = conceptFilters(filters);
 
 	const rows = db
-		.query<VectorRow, [string, ...string[]]>(
+		.query<VectorRow, [string, number, ...string[]]>(
 			`SELECT e.chunk_id, ch.concept_id, e.dim, e.vector
 			FROM chunk_embeddings e
 			JOIN chunks ch ON ch.id = e.chunk_id
 			JOIN concepts c ON c.id = ch.concept_id
-			WHERE e.model = ?${bounds.sql}`,
+			WHERE e.model = ? AND e.dim = ?${bounds.sql}`,
 		)
-		.all(semantic.model, ...bounds.values);
+		.all(semantic.model, semantic.dim, ...bounds.values);
 
 	const scored: VectorCandidate[] = [];
 	for (const row of rows) {
@@ -102,14 +104,14 @@ export function conceptSimilarities(
 	const rows = db
 		.query<
 			{ concept_id: number; dim: number; vector: Uint8Array },
-			[string, ...string[]]
+			[string, number, ...string[]]
 		>(
 			`SELECT e.concept_id, e.dim, e.vector
 			FROM concept_embeddings e
 			JOIN concepts c ON c.id = e.concept_id
-			WHERE e.model = ?${bounds.sql}`,
+			WHERE e.model = ? AND e.dim = ?${bounds.sql}`,
 		)
-		.all(semantic.model, ...bounds.values);
+		.all(semantic.model, semantic.dim, ...bounds.values);
 
 	const similarities = new Map<number, number>();
 	for (const row of rows) {

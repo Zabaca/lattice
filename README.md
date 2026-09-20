@@ -1,42 +1,36 @@
 # @zabaca/lattice
 
-**A local-first retrieval engine for your markdown knowledge base**
+**A local-first retrieval engine for a markdown knowledge base**
 
 [![npm version](https://img.shields.io/npm/v/@zabaca/lattice.svg)](https://www.npmjs.com/package/@zabaca/lattice)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Lattice indexes a directory of markdown — an [OKF](https://github.com/Zabaca/lattice)
-bundle — into a SQLite database, and answers questions against it by keyword and
-by meaning at once. Everything runs on your machine: no server, no container, no
-API key.
+Lattice indexes a bundle of [OKF](#the-documents)-shaped markdown documents into
+a SQLite file and answers questions against it: keyword and meaning at once,
+expanded one hop over the links you wrote. Nothing leaves your machine, and
+there is no API key to obtain.
 
 ## The Workflow
 
 ```bash
-/research "knowledge graphs"   # Find existing docs, write new research, sync
-lattice search "your query"    # Search your knowledge base
+/research "knowledge graphs"   # Search what you already have, then write what you don't
+lattice search "your query"    # Hybrid search over passages
 ```
 
 ---
 
-## Why Lattice?
+## What you need
 
-| | Lattice | Typical GraphRAG tools |
-|---|---|---|
-| **Database** | Embedded SQLite (one file) | Docker containers required |
-| **External services** | None | 2–3 (DB + vector + graph) |
-| **API keys needed** | None | 2–3 (LLM + embedding + rerank) |
-| **Embeddings** | In-process, behind a provider seam | A paid embedding API |
-| **Unit of retrieval** | The passage that answers you | The whole document |
-| **Graph** | The links you actually wrote | LLM-guessed entities |
+- **Bun** (the CLI runs on Bun).
+- Nothing else. The index is a SQLite file, and embeddings are produced
+  in-process — no database server, no container, no embedding API key.
 
 ---
 
 ## Quick Start
 
-### What You Need
-
-- **Bun** (or Node.js ≥ 18) — nothing else. No Docker, no API key.
+No API key. Embeddings are computed on your machine by a model `lattice init`
+downloads once (about 145 MB); after that, indexing and search work offline.
 
 ### 1. Install
 
@@ -45,66 +39,81 @@ bun add -g @zabaca/lattice
 lattice init
 ```
 
-`lattice init` creates `~/.lattice/` with a `docs/` directory for your markdown
-and `lattice.db` for the index. It is safe to run again.
+`lattice init` creates `~/.lattice/` with a `docs/` bundle directory and an
+empty `lattice.db`, and downloads the embedding model into `~/.lattice/models/`
+with progress as it goes. It is safe to run again: nothing already in place is
+fetched twice.
 
-### 2. Write and index
+To use the `/research` slash command in Claude Code, copy it from the package's
+`commands/` directory into `.claude/commands/` (this project, or `~/.claude/commands/`
+for every project).
 
-```bash
-# Put markdown in ~/.lattice/docs/, then:
-lattice sync                  # Index it, and embed whatever has no vector
-lattice search "your query"   # Search it
-```
-
-### 3. Research with Claude Code (optional)
-
-Copy `commands/research.md` from this package into `.claude/commands/` (or
-`~/.claude/commands/` for every project), then:
+### 2. Put markdown in the bundle and index it
 
 ```bash
-claude
-/research "your topic"        # Search what exists, then write what does not
+cp -r my-notes ~/.lattice/docs/
+lattice sync
 ```
 
-The `/research` command searches your bundle with `lattice search --json`,
-asks whether new research is wanted, writes a conforming OKF document with
-frontmatter and cited sources, and syncs it.
+### 3. Search
+
+```bash
+lattice search "how does chunking work"
+```
 
 ---
 
-## Documents
+## The documents
 
-A document is a markdown file under `~/.lattice/docs/`. Its frontmatter is what
-makes it filterable and citable:
+A Lattice document is an OKF concept: markdown with frontmatter.
 
 ```markdown
 ---
-type: Research Note
-title: Bun versus Node.js performance
-description: Where Bun's startup and HTTP throughput differ from Node.js, and why.
-tags: [bun, runtime, performance]
-generated: { by: claude-code/research, at: 2026-09-20T00:00:00Z }
+type: Research
+title: Value retention
+description: How well the Model S holds its resale value.
+status: draft
+tags: [tesla, resale]
+generated: { by: agent:claude-code/research, at: 2026-09-20T00:00:00Z }
 sources:
-  - path: runtime-overview.md
-    title: Bun and Node.js runtimes
-  - https://bun.sh/docs/benchmarks
+  - ../concepts/users.md
+  - https://example.com/depreciation
 ---
 
-# Bun versus Node.js performance
-...
+# Value retention
+
+Depreciation flattens after the fourth year.
 ```
 
-Frontmatter is read permissively: a file missing it is still indexed, just
-without a type to filter on. `index.md` and `log.md` are reserved names in every
-directory — they are navigation and a changelog, never concepts.
+`type` is what makes a file conforming. A file without it is still indexed —
+`lattice status` reports it as a frontmatter problem rather than dropping it.
+
+`index.md` and `log.md` are reserved in every directory: they are navigation and
+changelog, not knowledge, and are never indexed as concepts.
+
+A document is chunked at its headings, so search points at the passage that
+answers the question rather than at the file that contains it.
+
+---
+
+## Using /research
+
+`/research "your topic"` searches the index first with `lattice search --json`,
+shows you which documents and which passages already cover the topic, and asks
+before doing new research. What it writes is a conforming concept — type, title,
+description, tags, `generated` provenance and its `sources` — filed under a
+topic directory with an `index.md`, and synced.
 
 ---
 
 ## CLI Reference
 
+<details>
+<summary><b>Commands</b></summary>
+
 ### `lattice init`
 
-Create `~/.lattice/`, its `docs/` directory, and the SQLite index. Idempotent.
+Create `~/.lattice/`, its `docs/` bundle directory, and the SQLite index.
 
 ```bash
 lattice init
@@ -112,20 +121,18 @@ lattice init
 
 ### `lattice sync`
 
-Index the bundle, then embed whatever has no vector.
+Index the bundle — everything new, changed, renamed or deleted since the last
+run — then embed whatever still has no vector. Interrupting it leaves a backlog,
+not a half-written document.
 
 ```bash
 lattice sync
 ```
 
-Every file is hashed and compared with what the index holds, so a second sync
-with no change does no work. A chunk with no vector is simply a missing row, so
-an interrupted run leaves a backlog rather than a half-written document.
-
 ### `lattice status`
 
-Show what is indexed, the embedding model in use, and how much is still awaiting
-a vector.
+What is indexed, what is still awaiting a vector, and which files have
+frontmatter problems.
 
 ```bash
 lattice status
@@ -133,11 +140,11 @@ lattice status
 
 ### `lattice embed`
 
-Embed the backlog on its own — the same code path `sync` ends with.
+Embed the backlog on its own — the same code path `lattice sync` ends with.
 
 ```bash
-lattice embed                  # Everything with no vector, plus retryable failures
-lattice embed --retry-failed   # Also retry failures recorded as permanent
+lattice embed                   # Everything with no vector
+lattice embed --retry-failed    # Also retry the permanent failures
 ```
 
 ### `lattice search`
@@ -151,7 +158,7 @@ siblings, and those neighbours are always ranked below the direct hits.
 
 ```bash
 lattice search "query"                   # Passages, with neighbours below them
-lattice search "query" --json            # The same, machine-readable
+lattice search "query" --json            # The same result, machine-readable
 lattice search "query" --concepts        # Which document, rather than which passage
 lattice search "query" --expand 5        # More neighbours (default 3)
 lattice search "query" --no-expand       # Direct hits only
@@ -184,75 +191,89 @@ document, sync, and the edge resolves itself.
 
 ### `lattice sql`
 
-Run a read-only SQL query against the index.
+Run a read-only SQL query against the index and print the rows as JSON. SQLite's
+own `query_only` mode enforces the read-only part, so a statement that would
+write is refused rather than pattern-matched against.
 
 ```bash
-lattice sql "SELECT path, type, title FROM concepts ORDER BY path LIMIT 10"
-lattice sql "SELECT tag, count(*) FROM tags GROUP BY tag"
+lattice sql "SELECT path, type, title FROM concepts LIMIT 10"
+lattice sql "SELECT type, count(*) AS n FROM concepts GROUP BY type"
 ```
+
+</details>
 
 ---
 
 ## Configuration
 
-### Storage
-
-Everything lives under one directory, `~/.lattice/` by default:
-
-```
-~/.lattice/
-├── docs/          # Your markdown — the OKF bundle
-└── lattice.db     # SQLite index: concepts, chunks, links, embeddings
-```
-
-That is everything `lattice init` creates. Configuration is environment
-variables only — there is no config file.
-
-`lattice.db` is one file, beside SQLite's own `-wal` and `-shm` sidecars — copy
-all three, or none of them and re-sync. Deleting the lot and running
-`lattice sync` rebuilds the index from `docs/`, which is the source of truth.
-
-### Environment Variables
+### Environment variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `LATTICE_HOME` | The Lattice home directory | `~/.lattice` |
-| `LATTICE_EMBED_PROVIDER` | Embedding provider. An unknown name is an error, never a silent fallback | `hash` |
-| `LATTICE_EMBED_DIM` | Dimensions for the `hash` provider | `512` |
+| `LATTICE_EMBED_PROVIDER` | `local` (a real model, in-process) or `hash` (deterministic, for tests). An unknown name is an error, never a silent fallback. | `local` |
+| `LATTICE_EMBED_MODEL` | Which registered model to use | `nomic-embed-text-v1.5` |
+| `LATTICE_EMBED_DIM` | Stored vector width; only a model trained for truncation may go below its native width | `512` |
+| `LATTICE_MODEL_DIR` | Where model weights are cached | `$LATTICE_HOME/models` |
+| `LATTICE_OFFLINE` / `HF_HUB_OFFLINE` | Never download; use what is already cached | unset |
+| `LATTICE_HF_MIRROR` | Download the weights from somewhere other than the hub (`HF_ENDPOINT` also works) | unset |
 
-Embeddings run in-process behind a provider seam. The default `hash` provider is
-deterministic — a vector derived from a hash of the text — so the pipeline needs
-no model on disk and no network. It is not semantic: with it, passage ranking is
-exactly what keyword search produced.
+Changing the model is safe: vectors from two models are not comparable, so a
+`sync` under a changed model refuses, naming both models and the number of
+chunks affected, and `lattice embed --reembed` rebuilds the index — keeping the
+old vectors until the new ones are complete, so an interrupted rebuild still
+searches correctly and simply resumes.
+
+### Storage
+
+```
+~/.lattice/
+├── docs/            # The markdown bundle
+├── lattice.db       # The SQLite index
+├── .env             # Local configuration
+└── .sync.lock       # Held while a sync is running
+```
+
+`lattice.db` holds the concepts, their chunks, the FTS index over those chunks,
+the embeddings, and the links. Back it up or delete it freely: it is derived
+entirely from the markdown, and `lattice sync` rebuilds it.
 
 <details>
-<summary><b>How It Works (Technical Details)</b></summary>
+<summary><b>How it works</b></summary>
 
-### Chunking
+### Indexing
 
-A document is split at its headings, and each chunk keeps its heading path and
-its line range in the original file — so a result points at the passage that
-answers you, and at the lines to open.
+`lattice sync` walks the bundle, reads each file's OKF frontmatter, and chunks
+the body at its headings. The chunks go into an FTS5 index; the links and the
+in-bundle `sources:` citations go into a `links` table, which is re-resolved in
+full at the end of every sync — so writing a document that was only linked to
+repairs the edge, and deleting one returns its inbound links to unresolved.
 
-### Retrieval
+### Embeddings
 
-Two legs run over one filtered candidate set: the FTS5 keyword index over
-chunks, and a cosine scan over the chunk embeddings. Their rankings are fused
-with reciprocal rank fusion, because a tier score and a cosine are not
-comparable quantities. A similarity below the floor is treated as noise and
-never enters the fusion.
+Embeddings are produced in-process behind the `EmbeddingProvider` seam
+(`src/embed/provider.ts`). The default `local` provider runs a real ONNX model
+in the command's own process from weights cached under the Lattice home: no
+daemon, no API key, and no network once the model is there. `hash` is the
+deterministic alternative — no model on disk, no network — which makes the
+pipeline runnable anywhere; it is not a semantic model, so with it ranking is
+what keyword search alone would give.
 
-The top hits are then expanded one hop over the `links` table — outbound and
-inbound — and over directory siblings. Neighbours are deduplicated against the
-answers and always scored below the weakest direct hit.
+A chunk with no vector is a row missing from `chunk_embeddings` for the active
+vector space, so an interruption leaves a backlog rather than corruption. A
+provider failure is recorded per target as retryable or permanent; retryable
+failures are picked up by the next run, permanent ones only under
+`lattice embed --retry-failed`.
 
-### Links
+A vector space is a `(model, dim)` pair, and the one the index is in is
+recorded rather than inferred, so two models can never be mixed. See
+**Environment variables** above for what a model change does.
 
-`links` records the edges an author wrote: markdown links and wikilinks in a
-document's body, plus the frontmatter `sources:` citations that point inside the
-bundle. A link whose target is not indexed keeps its path with no target — an
-unresolved link, standing for knowledge not written yet. Every sync re-resolves
-the whole table, so writing the missing document repairs the edge.
+### Ranking
+
+The keyword leg and the semantic leg run over one filtered candidate set and
+are fused with reciprocal rank fusion, because a BM25 tier and a cosine are not
+comparable quantities. A similarity below the floor never enters the fusion.
 
 </details>
 
@@ -261,27 +282,17 @@ the whole table, so writing the missing document repairs the edge.
 ## Contributing
 
 <details>
-<summary><b>Development Setup</b></summary>
-
-### Prerequisites
-
-- Bun (Node.js ≥ 18 to run the built CLI)
-
-### Setup
+<summary><b>Development</b></summary>
 
 ```bash
 git clone https://github.com/Zabaca/lattice.git
 cd lattice
 bun install
-```
 
-### Running Locally
-
-```bash
-bun run lattice search "query"      # Run the CLI from source
-bun test                            # Run the test suite
-bun run check                       # Typecheck and lint
-bun run build                       # Build to dist/
+bun test              # The suite, driven through the CLI seam
+bun run check         # tsc --noEmit && biome check
+bun run lattice -- status   # Run the CLI from source
+bun run build
 ```
 
 </details>
@@ -293,7 +304,3 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.
-
----
-
-Built with [Bun](https://bun.sh/), SQLite, and [Claude Code](https://claude.ai/code)

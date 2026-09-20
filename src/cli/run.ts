@@ -21,18 +21,29 @@ export interface CliOptions {
 	argv: string[];
 	/** The environment the command should see. `LATTICE_HOME` overrides the default home. */
 	env: Record<string, string | undefined>;
+	/**
+	 * Where progress goes while a command is still running — a model download
+	 * is minutes long, and a result returned at the end is not progress.
+	 * Whatever is reported here is also collected into the result's `progress`,
+	 * so a test sees it without having to watch for it.
+	 */
+	onProgress?: (line: string) => void;
 }
 
 export interface CliResult {
 	code: number;
 	stdout: string;
 	stderr: string;
+	/** The progress lines the command reported, in order. */
+	progress: string[];
 }
 
 export interface CommandContext {
 	positionals: string[];
 	flags: Record<string, string | true>;
 	env: Record<string, string | undefined>;
+	/** Say what is happening, now, to whoever is waiting. */
+	report(line: string): void;
 }
 
 export interface CommandOutput {
@@ -70,7 +81,7 @@ const COMMANDS: Record<string, CommandSpec> = {
 		run: runSync,
 	},
 	embed: {
-		usage: "lattice embed [--retry-failed]",
+		usage: "lattice embed [--retry-failed] [--reembed]",
 		summary: "Embed whatever is still waiting for a vector",
 		requiredArgs: [],
 		run: runEmbed,
@@ -117,7 +128,7 @@ export async function runCli(options: CliOptions): Promise<CliResult> {
 	const { command, positionals, flags } = parseArgs(options.argv);
 
 	if (command === undefined) {
-		return { code: 1, stdout: "", stderr: usageText() };
+		return { code: 1, stdout: "", stderr: usageText(), progress: [] };
 	}
 
 	const spec = COMMANDS[command];
@@ -126,6 +137,7 @@ export async function runCli(options: CliOptions): Promise<CliResult> {
 			code: 1,
 			stdout: "",
 			stderr: `Unknown command: ${command}\n\n${usageText()}`,
+			progress: [],
 		};
 	}
 
@@ -135,18 +147,30 @@ export async function runCli(options: CliOptions): Promise<CliResult> {
 			code: 1,
 			stdout: "",
 			stderr: `Missing required argument: <${missing}>\n\n${commandUsageText(spec)}`,
+			progress: [],
 		};
 	}
 
+	const progress: string[] = [];
+	const report = (line: string): void => {
+		progress.push(line);
+		options.onProgress?.(line);
+	};
 	try {
-		const output = await spec.run({ positionals, flags, env: options.env });
+		const output = await spec.run({
+			positionals,
+			flags,
+			env: options.env,
+			report,
+		});
 		return {
 			code: output.code,
 			stdout: output.stdout ?? "",
 			stderr: output.stderr ?? "",
+			progress,
 		};
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		return { code: 1, stdout: "", stderr: message };
+		return { code: 1, stdout: "", stderr: message, progress };
 	}
 }

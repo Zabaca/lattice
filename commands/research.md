@@ -4,146 +4,147 @@ argument-hint: topic-query
 model: sonnet
 ---
 
-Research the topic "$ARGUMENTS": search what is already written first, and only
-then write something new.
+Research the topic "$ARGUMENTS": search what is already indexed, and only then
+write something new.
 
-## Configuration
+## Where documents live
 
-**All documentation lives in `~/.lattice/docs/` — the OKF bundle Lattice indexes.**
+All documents live in the Lattice bundle, `~/.lattice/docs/` (or `$LATTICE_HOME/docs`
+when that is set). Never write research into a project-local `docs/` directory.
 
 | Path | Purpose |
 |------|---------|
-| `~/.lattice/docs/` | The bundle root (ALWAYS use this) |
-| `~/.lattice/docs/{topic}/` | Topic directory |
-| `~/.lattice/docs/{topic}/index.md` | Topic index — a reserved name, never indexed as a concept |
-| `~/.lattice/docs/{topic}/*.md` | Research documents — one concept each |
-
-**NEVER use a project-local `docs/` directory. ALWAYS use the absolute path `~/.lattice/docs/`.**
+| `~/.lattice/docs/` | The bundle root |
+| `~/.lattice/docs/{topic}/` | A topic directory |
+| `~/.lattice/docs/{topic}/index.md` | The topic index — a reserved name, never indexed as a concept |
+| `~/.lattice/docs/{topic}/*.md` | The concepts: one document per piece of research |
 
 ## Process
 
-### Step 1: Search what already exists
+### Step 1: Search what is already indexed
 
-Start with the machine-readable search, so the result is read rather than
-eyeballed:
+Search first, machine-readably, so nothing is inferred from rendered text:
 
 ```bash
-lattice search "$ARGUMENTS" --json --limit 10
+lattice search "$ARGUMENTS" --json
 ```
 
 The JSON carries:
 
-| Field | Meaning |
-|-------|---------|
-| `hits[].path` | Bundle-relative path of the document — read this file |
-| `hits[].title` | Its frontmatter title, or `null` |
-| `hits[].score` | Fused rank; comparable within one result set only, never a percentage |
-| `hits[].via` | Present when the hit is a neighbour reached by expansion, not a direct match |
-| `hits[].chunks[]` | The matching passages: `headingPath`, `startLine`–`endLine`, `snippet` |
-| `degraded` / `degradedReason` | `true` when the semantic leg could not run — the answer is keyword-only |
+- `hits[]` — each with `path`, `identifier`, `title`, `type`, `status`, `trust`,
+  `stale`, `score`, and `chunks[]` (the matching passages, with `headingPath`,
+  `startLine`/`endLine` and a `snippet`). A hit carrying `expanded: true` and a
+  `via` was reached by a link or a directory sibling, not by matching — treat it
+  as a lead, not an answer.
+- `degraded` and `degradedReason` — `true` means the semantic leg could not run
+  and the answer came from keywords alone. Say so to the user; do not silently
+  treat a keyword-only result as exhaustive.
 
-`hits: []` means nothing in the bundle covers this yet. It is not an error.
-When `degraded` is `true`, say so: an exact term will still be found, a
-paraphrase may not be.
+Narrow when it helps: `--type Research`, `--tag <tag>`, `--dir <topic>`,
+`--limit n`. Use `--no-expand` when you want only documents that matched.
 
-Read the files behind the promising hits — the snippet is an excerpt, not the
-answer. Narrow with `--type`, `--tag` or `--dir` when the bundle is large.
+Do not read a score as a percentage of relevance. Scores are only comparable
+within one result set. Open the documents behind the top hits and judge from
+their text.
 
-### Step 2: Present what you found
+### Step 2: Present what exists
 
-Summarize:
+Summarise, with paths:
 
-- Which documents already cover the topic, quoting the passages that matter
-- What they do not cover — the actual gap
-- Whether the search was degraded
+- Which documents already cover the topic, and which passages (`headingPath`,
+  line range).
+- What they do not cover — the gap new research would fill.
+- Whether the search was degraded.
 
-### Step 3: Ask about new research
+If a hit is marked `stale`, say so: it is past its `stale_after` date.
+
+### Step 3: Ask before researching
 
 Use AskUserQuestion:
 
 - **"Should I perform new research on this topic?"**
-  - Yes, research and write a new document
-  - Yes, research and update an existing document
-  - No, what exists is enough
+  - Yes — research and write a new document
+  - Yes — research and extend an existing document
+  - No — the existing research is enough
 
-If **No** → done.
+If **No**, stop here.
 
-### Step 4: Perform the research
+### Step 4: Research
 
-1. Use WebSearch for current information
-2. Synthesize it, focusing on the gap identified in Step 2
-3. Keep every URL you used — they become the document's `sources`
+Use WebSearch and any other sources available. Focus on the gap identified in
+step 2 rather than restating what is already indexed. Keep every URL you use —
+they become the document's `sources`.
 
 ### Step 5: Choose the topic directory and filename
 
-**Topic directory:** reuse an existing `~/.lattice/docs/{topic}/` when one fits,
-otherwise derive a kebab-case name from the query.
+**Topic directory** — reuse an existing `~/.lattice/docs/{topic}/` when one fits
+(`lattice search "$ARGUMENTS" --json` already told you which directories hold
+related work); otherwise derive a new kebab-case name.
 
-**Filename:** derive from the specific focus of the query.
+**Filename** — kebab-case, 2–4 words, naming the specific focus. Never
+`notes.md` or `research.md`.
 
-| Query | Topic Dir | Research File |
-|-------|-----------|---------------|
+| Query | Topic dir | Document |
+|-------|-----------|----------|
 | "tesla model s value retention" | `tesla-model-s/` | `value-retention.md` |
 | "bun vs node performance" | `bun-nodejs/` | `performance-comparison.md` |
 | "graphql authentication patterns" | `graphql/` | `authentication-patterns.md` |
 
-Kebab-case, 2–4 words, descriptive of the focus. Never `notes.md` or
-`research.md`.
-
 ### Step 6: Write the document
 
-Every research document is an OKF concept, and **frontmatter is required** —
-there is no extraction pass that would infer it later. A file with no `type` is
-still indexed, but it is filed as a problem and cannot be filtered on.
+Every document is an OKF concept, and its frontmatter is not optional: `type` is
+what makes the file conforming, and a file without it is indexed but reported by
+`lattice status` as a frontmatter problem.
 
-**`~/.lattice/docs/{topic}/{filename}.md`:**
+`~/.lattice/docs/{topic}/{filename}.md`:
 
 ```markdown
 ---
-type: Research Note
-title: Bun versus Node.js performance
-description: Where Bun's startup and HTTP throughput differ from Node.js, and why.
-tags: [bun, runtime, performance]
-generated: { by: claude-code/research, at: 2026-09-20T00:00:00Z }
+type: Research
+title: Value retention
+description: How well the Model S holds its resale value.
+status: draft
+tags: [tesla, resale]
+generated: { by: agent:claude-code/research, at: 2026-09-20T00:00:00Z }
 sources:
-  - path: runtime-overview.md
-    title: Bun and Node.js runtimes
-  - https://bun.sh/docs/benchmarks
+  - ../concepts/users.md
+  - https://example.com/depreciation
 ---
 
-# Bun versus Node.js performance
+# Value retention
 
-## Startup
+## Key findings
 
-...
+Depreciation flattens after the fourth year.
 
-## Throughput
-
-...
+## [Content sections as needed]
 
 ## Sources
 
-1. [Bun benchmarks](https://bun.sh/docs/benchmarks)
+1. [Depreciation study](https://example.com/depreciation)
 ```
+
+Field by field:
 
 | Field | Rule |
 |-------|------|
-| `type` | Required. `Research Note` unless a more specific type already exists in the bundle |
-| `title` | Required. The document's own name, not the query |
-| `description` | Required. One sentence; it is what search shows beside the path |
-| `tags` | Required. Kebab-case, reusing tags the bundle already uses |
-| `generated` | Required. `{ by: claude-code/research, at: <UTC ISO 8601> }` — what wrote it and when |
-| `sources` | Every source drawn on. A bare URL for something outside the bundle; `{ path, title }` for a document inside it, path relative to this file's directory |
+| `type` | Required. `Research` for a research document; reuse whatever type a topic already uses. |
+| `title` | Required. Human-readable, the document's own name. |
+| `description` | Required. One sentence on what the document answers — it is indexed, so it is how the document is found. |
+| `status` | `draft`, `stable` or `deprecated`. New research is `draft`. |
+| `tags` | A list. Topic and facet, lowercase kebab-case. |
+| `generated` | Provenance: `by` (`agent:claude-code/research`) and `at` (the UTC instant, ISO 8601). |
+| `sources` | What the research drew on. A bundle-relative path becomes a `cited` edge in the graph; a URL is kept as a citation and is not an edge. |
 
-An in-bundle `sources:` entry becomes a `cited` edge in the graph; one pointing
-at a document that does not exist yet stays unresolved and repairs itself when
-that document is written. Headings matter: chunks are cut at them, so a section
-per question is what makes a passage findable.
+Cite the same URLs again as markdown links in a `## Sources` section, so a
+reader of the rendered document can follow them.
 
 ### Step 7: Write or update the topic index
 
-**`~/.lattice/docs/{topic}/index.md`** — `index.md` is reserved by the format,
-so it is navigation and never a concept. It needs no frontmatter.
+`index.md` is OKF's reserved index name. It is navigation, not knowledge, so it
+is never indexed as a concept — which is exactly why it may stay a plain list.
+
+For a **new** topic, create `~/.lattice/docs/{topic}/index.md`:
 
 ```markdown
 # {Topic Title}
@@ -154,14 +155,14 @@ Brief description of what this topic covers.
 
 | Document | Description |
 |----------|-------------|
-| [{Research Title}](./{filename}.md) | Brief description |
+| [{Title}](./{filename}.md) | Brief description |
 
-## Related Research
+## Related
 
-- [Related Topic](../related-topic/index.md)
+- [Related topic](../related-topic/index.md)
 ```
 
-For an existing topic, add a row rather than rewriting the file.
+For an **existing** topic, add a row to its `index.md` table.
 
 ### Step 8: Sync
 
@@ -169,50 +170,44 @@ For an existing topic, add a row rather than rewriting the file.
 lattice sync
 ```
 
-This indexes the changed files, chunks them at their headings, resolves the
-links and citations, and embeds whatever has no vector yet.
+This indexes the document, chunks it at its headings, extracts the links and
+`sources:` citations, and embeds whatever has no vector yet.
 
-Verify what landed:
+Then verify, through the CLI rather than by assumption:
 
 ```bash
-lattice rels {topic}/{filename} --json   # Citations resolved? Anything unresolved?
-lattice search "$ARGUMENTS" --json       # Does the new document answer the query?
+lattice status                                   # frontmatter problems, if any
+lattice rels {topic}/{filename}.md               # links, backlinks, siblings, unresolved
+lattice search "$ARGUMENTS" --json               # the new document should now be a hit
 ```
+
+If `lattice status` reports a frontmatter problem for the new file, fix the
+frontmatter and sync again.
 
 ### Step 9: Confirm
 
-Report to the user:
+Tell the user:
 
-- The document written, with its path
-- Its type, tags and cited sources
-- The topic index updated
-- That `lattice sync` indexed it, and anything it left unresolved
+- What the search found before the research, and whether it was degraded
+- The topic directory and the document path
+- That the index was updated
+- What `lattice rels` reports the document is connected to, including anything
+  still unresolved
 
-## Important Notes
+## Notes
 
-- **Frontmatter is required** — `type`, `title`, `description`, `tags`, `generated`, `sources`
-- **`index.md`, never `README.md`** — only `index.md` and `log.md` are reserved; a `README.md` would be indexed as a concept
-- **Never put research content in the index** — the index is navigation
-- Kebab-case for every directory and filename
-- Cite every source, and prefer `{ path, title }` for in-bundle citations so the edge resolves
-- Cross-link related documents in the body; those links are edges too
+- One document per piece of research; `index.md` stays a navigation index.
+- kebab-case for every directory and filename.
+- Every document has `type`, `title`, `description`, `tags`, `generated` and
+  `sources`.
+- An unresolved link is not a failure: it names a document that has not been
+  written yet, and writing it repairs the edge on the next sync.
 
-## File Structure Standard
+## File structure
 
 ```
-~/.lattice/docs/{topic-name}/
-├── index.md               # Reserved: navigation, not a concept
-├── {research-1}.md        # One concept
-├── {research-2}.md        # Another
-└── {research-n}.md        # Expandable as needed
+~/.lattice/docs/{topic}/
+├── index.md               # Reserved: the topic index, not a concept
+├── {research-1}.md        # A conforming OKF concept
+└── {research-2}.md
 ```
-
-## Command Reference
-
-| Command | Purpose |
-|---------|---------|
-| `lattice search "query" --json` | Search the bundle, machine-readably |
-| `lattice search "query" --concepts` | Which document, rather than which passage |
-| `lattice sync` | Index changed files and embed the backlog |
-| `lattice rels <concept> --json` | Links, backlinks, siblings and unresolved links |
-| `lattice status` | What is indexed, and what is still awaiting a vector |

@@ -24,12 +24,20 @@ function freshHome(): string {
 	return mkdtempSync(join(tmpdir(), "lattice-test-"));
 }
 
+/**
+ * The suite runs on the deterministic `hash` provider unless a test says
+ * otherwise: it needs no model on disk and no network, and two of its widths
+ * are two vector spaces, which is all the model-change tests need.
+ */
 function invoke(
 	argv: string[],
 	home: string = freshHome(),
-	env: Record<string, string> = {},
+	env: Record<string, string | undefined> = {},
 ) {
-	return runCli({ argv, env: { ...env, LATTICE_HOME: home } });
+	return runCli({
+		argv,
+		env: { LATTICE_EMBED_PROVIDER: "hash", ...env, LATTICE_HOME: home },
+	});
 }
 
 /** An initialised home whose docs directory holds the fixture OKF bundle. */
@@ -817,7 +825,11 @@ describe("interrupting a sync", () => {
 		}
 
 		const running = Bun.spawn(["bun", "run", "src/main.ts", "sync"], {
-			env: { ...process.env, LATTICE_HOME: home },
+			env: {
+				...process.env,
+				LATTICE_HOME: home,
+				LATTICE_EMBED_PROVIDER: "hash",
+			},
 			stdout: "ignore",
 			stderr: "ignore",
 		});
@@ -972,6 +984,27 @@ describe("hybrid search", () => {
 		expect(both.hits.map((hit) => hit.path)).toContain("thermal/cooling.md");
 	});
 
+	test("the concept vector decides between results the legs tied", async () => {
+		const home = await hybridHome();
+
+		// Each half of this query is answered by exactly one leg, and each leg
+		// puts its answer first, so the fusion hands both documents the same
+		// score. Left tied, they would come back in path order — `misc/` before
+		// `thermal/`. Only `thermal/cooling.md` names a vector group in its
+		// title and description, which is what a concept vector is built from.
+		const { code, hits } = await search(
+			home,
+			["XJ_4471 whisper mode", "--no-expand"],
+			HYBRID_ENV,
+		);
+
+		expect(code).toBe(0);
+		expect(hits.map((hit) => hit.path)).toEqual([
+			"thermal/cooling.md",
+			"misc/serial.md",
+		]);
+	});
+
 	test("the concept vector never introduces a result of its own", async () => {
 		const home = await hybridHome();
 
@@ -1011,16 +1044,19 @@ describe("hybrid search", () => {
 		expect(healthy.degradedReason).toBeNull();
 	});
 
-	test("reports a corpus embedded by a different model as degraded", async () => {
+	test("refuses a corpus embedded by a different model", async () => {
 		const home = await hybridHome();
 
 		// The bundle was embedded with the stub provider; the default hash
 		// provider can embed this query but has nothing to compare it against.
-		const result = await search(home, ["XJ_4471"]);
+		// Answering on the keyword leg alone would look like an ordinary
+		// result, so the mismatch is refused and named instead.
+		const result = await invoke(["search", "XJ_4471"], home);
 
-		expect(result.code).toBe(0);
-		expect(result.degraded).toBe(true);
-		expect(result.degradedReason).toContain("lattice embed");
+		expect(result.code).not.toBe(0);
+		expect(result.stderr).toContain("stub-");
+		expect(result.stderr).toContain("hash-512");
+		expect(result.stderr).toContain("lattice embed --reembed");
 	});
 
 	test("--require-embeddings turns degradation into a non-zero exit", async () => {
@@ -1487,7 +1523,11 @@ describe("provider failures", () => {
 	function withFault(argv: string[], home: string, fault: string) {
 		return runCli({
 			argv,
-			env: { LATTICE_HOME: home, LATTICE_EMBED_FAIL: fault },
+			env: {
+				LATTICE_HOME: home,
+				LATTICE_EMBED_PROVIDER: "hash",
+				LATTICE_EMBED_FAIL: fault,
+			},
 		});
 	}
 
@@ -1594,7 +1634,11 @@ describe("lattice status and the embedding backlog", () => {
 
 		await runCli({
 			argv: ["sync"],
-			env: { LATTICE_HOME: home, LATTICE_EMBED_FAIL: "retryable:Chunking" },
+			env: {
+				LATTICE_HOME: home,
+				LATTICE_EMBED_PROVIDER: "hash",
+				LATTICE_EMBED_FAIL: "retryable:Chunking",
+			},
 		});
 		const waiting = await invoke(["status"], home);
 
@@ -1613,99 +1657,371 @@ describe("lattice status and the embedding backlog", () => {
 	});
 });
 
-/**
- * `src/fixtures/research/` is the output of `commands/research.md`, verbatim:
- * a topic directory holding the reserved `index.md` and two research documents
- * written to the command's frontmatter template. It is a fixture so that the
- * template the command prescribes is checked against the indexer rather than
- * asserted about in prose.
- */
-const FIXTURE_RESEARCH = join(import.meta.dir, "..", "fixtures", "research");
-
-async function researchHome(): Promise<string> {
-	const home = freshHome();
-	await invoke(["init"], home);
-	cpSync(FIXTURE_RESEARCH, join(home, "docs"), { recursive: true });
-	return home;
-}
-
-describe("documents written by /research", () => {
-	test("the topic index is reserved, so only the research documents are concepts", async () => {
-		const home = await researchHome();
-
+describe("changing the embedding model", () => {
+	/** The same bundle, indexed and embedded in the default (512) space. */
+	async function embeddedHome(): Promise<string> {
+		const home = await bundledHome();
 		const result = await invoke(["sync"], home);
-
 		expect(result.code).toBe(0);
-		expect(result.stderr).toBe("");
-		expect(await sql(home, "SELECT path FROM concepts ORDER BY path")).toEqual([
-			{ path: "bun-nodejs/performance-comparison.md" },
-			{ path: "bun-nodejs/runtime-overview.md" },
-		]);
+		return home;
+	}
+
+	/** The same command, run in a narrower space — a different model. */
+	function inNewSpace(argv: string[], home: string) {
+		return invoke(argv, home, { LATTICE_EMBED_DIM: "256" });
+	}
+
+	test("sync under a changed model refuses and says what to do about it", async () => {
+		const home = await embeddedHome();
+		const [{ n: before }] = await sql<{ n: number }>(
+			home,
+			"SELECT count(*) AS n FROM chunk_embeddings",
+		);
+
+		const result = await inNewSpace(["sync"], home);
+
+		expect(result.code).not.toBe(0);
+		expect(result.stderr).toContain("hash-512");
+		expect(result.stderr).toContain("hash-256");
+		expect(result.stderr).toContain(String(before));
+		expect(result.stderr).toContain("LATTICE_EMBED_DIM");
+		expect(result.stderr).toContain("lattice embed --reembed");
+
+		// Nothing was written into the new space by the refused run.
+		const [{ n: after }] = await sql<{ n: number }>(
+			home,
+			"SELECT count(*) AS n FROM chunk_embeddings WHERE dim = 256",
+		);
+		expect(after).toBe(0);
 	});
 
-	test("carry a type, title, description, tags and provenance into the index", async () => {
-		const home = await researchHome();
-		await invoke(["sync"], home);
+	test("embed and search refuse the same change, rather than mixing spaces", async () => {
+		const home = await embeddedHome();
 
-		const [note] = await sql<{
-			type: string;
-			title: string;
-			description: string;
-			frontmatter: string;
-		}>(
-			home,
-			"SELECT type, title, description, frontmatter FROM concepts" +
-				" WHERE path = 'bun-nodejs/performance-comparison.md'",
-		);
+		for (const argv of [["embed"], ["search", "users"]]) {
+			const result = await inNewSpace(argv, home);
 
-		expect(note.type).toBe("Research Note");
-		expect(note.title).toBe("Bun versus Node.js performance");
-		expect(note.description).toBe(
-			"Where Bun's startup and HTTP throughput differ from Node.js, and why.",
-		);
+			expect(result.code).not.toBe(0);
+			expect(result.stderr).toContain("hash-512");
+			expect(result.stderr).toContain("hash-256");
+			expect(result.stderr).toContain("lattice embed --reembed");
+		}
+	});
+
+	test("--reembed rebuilds the index and drops the space it replaced", async () => {
+		const home = await embeddedHome();
+
+		const result = await inNewSpace(["embed", "--reembed"], home);
+
+		expect(result.code).toBe(0);
+		expect(result.stdout).toContain("hash-256");
 		expect(
 			await sql(
 				home,
-				"SELECT t.tag FROM tags t JOIN concepts c ON c.id = t.concept_id" +
-					" WHERE c.path = 'bun-nodejs/performance-comparison.md' ORDER BY t.tag",
+				"SELECT model, dim, count(*) AS n FROM chunk_embeddings GROUP BY model, dim",
 			),
-		).toEqual([{ tag: "bun" }, { tag: "performance" }, { tag: "runtime" }]);
+		).toEqual([{ model: "hash-256", dim: 256, n: expect.any(Number) }]);
+		expect(
+			await sql(home, "SELECT value FROM meta WHERE key = 'embedding_model'"),
+		).toEqual([{ value: "hash-256" }]);
 
-		const rest = JSON.parse(note.frontmatter);
-		expect(rest.generated.by).toBe("claude-code/research");
-		expect(rest.generated.at).toBe("2026-09-20T00:00:00Z");
+		// And the new space is now simply the index's own: nothing refuses.
+		expect((await inNewSpace(["sync"], home)).code).toBe(0);
 	});
 
-	test("cite their sources, and an in-bundle citation resolves to an edge", async () => {
-		const home = await researchHome();
+	test("a permanent failure in the new space blocks the swap rather than losing vectors", async () => {
+		const home = await embeddedHome();
+		const [{ n: original }] = await sql<{ n: number }>(
+			home,
+			"SELECT count(*) AS n FROM chunk_embeddings WHERE model = 'hash-512'",
+		);
+
+		// One chunk can never be embedded in the new space. Finishing anyway
+		// would delete a vector the index still has and cannot rebuild.
+		const result = await invoke(["embed", "--reembed"], home, {
+			LATTICE_EMBED_DIM: "256",
+			LATTICE_EMBED_FAIL: "permanent:Users table",
+		});
+
+		expect(result.code).toBe(0);
+		expect(
+			await sql(home, "SELECT value FROM meta WHERE key = 'embedding_model'"),
+		).toEqual([{ value: "hash-512" }]);
+		expect(
+			await sql<{ n: number }>(
+				home,
+				"SELECT count(*) AS n FROM chunk_embeddings WHERE model = 'hash-512'",
+			),
+		).toEqual([{ n: original }]);
+		expect(result.stdout).toContain("--retry-failed");
+	});
+
+	test("an interrupted re-embed keeps the old vectors and resumes", async () => {
+		const home = await embeddedHome();
+		const [{ n: original }] = await sql<{ n: number }>(
+			home,
+			"SELECT count(*) AS n FROM chunk_embeddings WHERE model = 'hash-512'",
+		);
+
+		// One chunk of the fixture bundle cannot be embedded this run.
+		const interrupted = await invoke(["embed", "--reembed"], home, {
+			LATTICE_EMBED_DIM: "256",
+			LATTICE_EMBED_FAIL: "retryable:Users table",
+		});
+
+		expect(interrupted.code).toBe(0);
+		// The pointer has not moved, so the old vectors are still the ones a
+		// search would read, and they are all still there.
+		expect(
+			await sql(home, "SELECT value FROM meta WHERE key = 'embedding_model'"),
+		).toEqual([{ value: "hash-512" }]);
+		expect(
+			await sql<{ n: number }>(
+				home,
+				"SELECT count(*) AS n FROM chunk_embeddings WHERE model = 'hash-512'",
+			),
+		).toEqual([{ n: original }]);
+
+		// Resuming completes it, and does not start over.
+		const resumed = await inNewSpace(["embed", "--reembed"], home);
+
+		expect(resumed.code).toBe(0);
+		expect(
+			await sql(home, "SELECT value FROM meta WHERE key = 'embedding_model'"),
+		).toEqual([{ value: "hash-256" }]);
+		expect(
+			await sql<{ n: number }>(
+				home,
+				"SELECT count(*) AS n FROM chunk_embeddings WHERE model = 'hash-512'",
+			),
+		).toEqual([{ n: 0 }]);
+	});
+});
+
+describe("the local model", () => {
+	/** The real provider, with downloading forbidden and nothing cached. */
+	function offline(argv: string[], home: string) {
+		return invoke(argv, home, {
+			LATTICE_EMBED_PROVIDER: undefined,
+			HF_HUB_OFFLINE: "1",
+		});
+	}
+
+	test("init still initialises when the model cannot be downloaded, and says what to place", async () => {
+		const home = freshHome();
+
+		const result = await offline(["init"], home);
+
+		expect(result.code).toBe(0);
+		expect(existsSync(join(home, "lattice.db"))).toBe(true);
+		expect(result.stdout).toContain("Embeddings are not ready yet");
+		expect(result.stdout).toContain(join(home, "models"));
+		expect(result.stdout).toContain("nomic-ai/nomic-embed-text-v1.5");
+	});
+
+	test("sync says what model is missing rather than failing obscurely", async () => {
+		const home = await bundledHome();
+
+		const result = await offline(["sync"], home);
+
+		expect(result.code).not.toBe(0);
+		expect(result.stderr).toContain(join(home, "models"));
+		expect(result.stderr).toContain("LATTICE_OFFLINE");
+	});
+
+	test("status still reports the index when the model is not there", async () => {
+		const home = await bundledHome();
 		await invoke(["sync"], home);
 
-		const result = await invoke(
-			["rels", "bun-nodejs/runtime-overview", "--json"],
+		const result = await offline(["status"], home);
+
+		const [{ n: chunks }] = await sql<{ n: number }>(
+			home,
+			"SELECT count(*) AS n FROM chunks",
+		);
+
+		expect(result.code).toBe(0);
+		expect(result.stdout).toContain(`Chunks:     ${chunks}`);
+		expect(result.stdout).toContain(`Embeddings: ${chunks}`);
+		expect(result.stdout).toContain("Embeddings are not ready yet");
+	});
+
+	test("init reports progress while it works", async () => {
+		const home = freshHome();
+		// A model directory that is present is not downloaded — the reported
+		// line is the one progress channel either way.
+		const models = join(home, "models", "nomic-ai", "nomic-embed-text-v1.5");
+		mkdirSync(join(models, "onnx"), { recursive: true });
+		for (const file of [
+			"config.json",
+			"tokenizer.json",
+			"tokenizer_config.json",
+		]) {
+			writeFileSync(join(models, file), "{}");
+		}
+		writeFileSync(join(models, "onnx", "model_quantized.onnx"), "");
+
+		const result = await invoke(["init"], home, {
+			LATTICE_EMBED_PROVIDER: undefined,
+			LATTICE_OFFLINE: "1",
+		});
+
+		expect(result.code).toBe(0);
+		expect(result.progress.join("\n")).toContain(
+			`Model nomic-embed-text-v1.5 is already in ${join(home, "models")}`,
+		);
+	});
+});
+
+describe("search at scale", () => {
+	/**
+	 * The scale a personal knowledge base actually reaches. Each document's
+	 * sections are short enough to merge back into one passage, so this is
+	 * 3,600 embedded passages — and the semantic leg has no index to lean on,
+	 * it decodes and scores every one of them on every query.
+	 */
+	const DOCUMENTS = 3600;
+	const BUDGET_MS = 1000;
+
+	test("answers within the budget on a corpus at that scale", async () => {
+		const home = freshHome();
+		await invoke(["init"], home);
+		mkdirSync(join(home, "docs", "corpus"), { recursive: true });
+		for (let i = 0; i < DOCUMENTS; i++) {
+			writeFileSync(
+				join(home, "docs", "corpus", `note-${i}.md`),
+				`---\ntype: Note\ntitle: Note ${i}\n---\n\n` +
+					`# Overview\n\nThis note concerns topic ${i % 37} and its neighbours.\n\n` +
+					`## Detail\n\nMeasurements for gauge ${i} were taken on the bench.\n`,
+			);
+		}
+		expect((await invoke(["sync"], home)).stderr).toBe("");
+
+		// A budget is only meaningful if the scan it is measuring is real: the
+		// semantic leg must have a vector for every passage to work through.
+		const [embedded] = await sql<{ n: number }>(
+			home,
+			"SELECT count(*) AS n FROM chunk_embeddings",
+		);
+		expect(embedded.n).toBeGreaterThanOrEqual(DOCUMENTS);
+
+		const started = performance.now();
+		const { code, hits, degraded } = await search(home, [
+			"measurements taken on the bench",
+		]);
+		const elapsed = performance.now() - started;
+
+		expect(code).toBe(0);
+		expect(degraded).toBe(false);
+		expect(hits.length).toBeGreaterThan(0);
+		expect(elapsed).toBeLessThan(BUDGET_MS);
+	}, 120_000);
+});
+
+/**
+ * The `/research` command tells its user exactly what a research document
+ * looks like. This is that document — the template from
+ * `commands/research.md`, minus its "content sections as needed" placeholder —
+ * proving the command teaches a shape the engine actually indexes.
+ */
+const RESEARCH_TEMPLATE = `---
+type: Research
+title: Value retention
+description: How well the Model S holds its resale value.
+status: draft
+tags: [tesla, resale]
+generated: { by: agent:claude-code/research, at: 2026-09-20T00:00:00Z }
+sources:
+  - ../concepts/users.md
+  - https://example.com/depreciation
+---
+
+# Value retention
+
+## Key findings
+
+Depreciation flattens after the fourth year.
+
+## Sources
+
+1. [Depreciation study](https://example.com/depreciation)
+`;
+
+describe("the /research document template", () => {
+	test("indexes with its type, title, description and tags, and cites its in-bundle source", async () => {
+		const home = await bundledHome();
+		mkdirSync(join(home, "docs", "tesla-model-s"), { recursive: true });
+		// The reserved index name: navigation, never a concept of its own.
+		writeFileSync(
+			join(home, "docs", "tesla-model-s", "index.md"),
+			"# Tesla Model S\n\n- [Value retention](value-retention.md)\n",
+		);
+		writeFileSync(
+			join(home, "docs", "tesla-model-s", "value-retention.md"),
+			RESEARCH_TEMPLATE,
+		);
+
+		const synced = await invoke(["sync"], home);
+		expect(synced.code).toBe(0);
+
+		// The fixture bundle has its own deliberately broken files; the point
+		// here is that the template is not among them.
+		const status = await invoke(["status"], home);
+		expect(status.stdout).not.toContain("tesla-model-s/value-retention.md:");
+
+		// The promoted columns, read back through search rather than the database.
+		const found = await invoke(
+			["search", "depreciation", "--json", "--no-expand"],
 			home,
 		);
-
-		expect(result.code).toBe(0);
-		const report = JSON.parse(result.stdout);
-		expect(
-			report.backlinks.map((link: { path: string; kind: string }) => [
-				link.path,
-				link.kind,
-			]),
-		).toEqual([["bun-nodejs/performance-comparison.md", "source"]]);
-		expect(report.unresolved).toEqual([]);
-	});
-
-	test("are findable by the search the command runs first", async () => {
-		const home = await researchHome();
-		await invoke(["sync"], home);
-
-		const result = await invoke(["search", "bun startup time", "--json"], home);
-
-		expect(result.code).toBe(0);
-		const found = JSON.parse(result.stdout);
-		expect(found.hits.map((hit: { path: string }) => hit.path)).toContain(
-			"bun-nodejs/performance-comparison.md",
+		const hit = JSON.parse(found.stdout).hits.find(
+			(candidate: { path: string }) =>
+				candidate.path === "tesla-model-s/value-retention.md",
 		);
+		expect(hit).toMatchObject({
+			type: "Research",
+			title: "Value retention",
+			status: "draft",
+		});
+
+		// The description is indexed too: it is findable by its own words.
+		const byDescription = await invoke(
+			["search", "resale value", "--json", "--no-expand"],
+			home,
+		);
+		expect(
+			JSON.parse(byDescription.stdout).hits.map(
+				(candidate: { path: string }) => candidate.path,
+			),
+		).toContain("tesla-model-s/value-retention.md");
+
+		// Both tags are on the concept, so either one filters to it.
+		for (const tag of ["tesla", "resale"]) {
+			const filtered = await invoke(
+				["search", "depreciation", "--json", "--no-expand", "--tag", tag],
+				home,
+			);
+			expect(
+				JSON.parse(filtered.stdout).hits.map(
+					(candidate: { path: string }) => candidate.path,
+				),
+			).toContain("tesla-model-s/value-retention.md");
+		}
+
+		// The in-bundle citation is an edge; the external URL is not.
+		const rels = await invoke(
+			["rels", "tesla-model-s/value-retention.md", "--json"],
+			home,
+		);
+		expect(JSON.parse(rels.stdout).outlinks).toContainEqual(
+			expect.objectContaining({ path: "concepts/users.md", kind: "source" }),
+		);
+
+		// The reserved index file is navigation, so it is not indexed as a concept.
+		const indexed = await invoke(
+			["rels", "tesla-model-s/index.md", "--json"],
+			home,
+		);
+		expect(indexed.code).not.toBe(0);
 	});
 });

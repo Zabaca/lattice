@@ -1,14 +1,24 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 
-import "reflect-metadata";
-import { CommandFactory } from "nest-commander";
-import { AppModule } from "./app.module.js";
+/**
+ * The process adapter over the CLI seam: argv and env in, streams and an exit
+ * code out. All behavior lives in `runCli`.
+ */
 
-async function bootstrap() {
-	await CommandFactory.run(AppModule, ["error"]);
+import { runCli } from "./cli/run.js";
+
+const result = await runCli({
+	argv: process.argv.slice(2),
+	env: process.env,
+});
+
+if (result.stdout) {
+	process.stdout.write(result.stdout);
+}
+if (result.stderr) {
+	process.stderr.write(
+		result.stderr.endsWith("\n") ? result.stderr : `${result.stderr}\n`,
+	);
 }
 
-bootstrap().catch((err) => {
-	console.error("❌ CLI failed:", err);
-	process.exit(1);
-});
+process.exit(result.code);

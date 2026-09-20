@@ -172,6 +172,11 @@ describe("lattice sync", () => {
 			"notes/broken.md",
 			"notes/plain.md",
 			"notes/unverified.md",
+			"search/body-match.md",
+			"search/fresh-widget.md",
+			"search/heading-match.md",
+			"search/stale-widget.md",
+			"search/title-match.md",
 		]);
 	});
 
@@ -226,6 +231,11 @@ describe("lattice sync", () => {
 			{ path: "concepts/users.md", tag: "core" },
 			{ path: "concepts/users.md", tag: "data" },
 			{ path: "guides/chunking.md", tag: "guide" },
+			{ path: "search/body-match.md", tag: "rank" },
+			{ path: "search/fresh-widget.md", tag: "rank" },
+			{ path: "search/heading-match.md", tag: "rank" },
+			{ path: "search/stale-widget.md", tag: "rank" },
+			{ path: "search/title-match.md", tag: "rank" },
 		]);
 
 		expect(
@@ -237,6 +247,11 @@ describe("lattice sync", () => {
 			{ path: "notes/broken.md", trust: "unverified" },
 			{ path: "notes/plain.md", trust: "unverified" },
 			{ path: "notes/unverified.md", trust: "unverified" },
+			{ path: "search/body-match.md", trust: "unverified" },
+			{ path: "search/fresh-widget.md", trust: "unverified" },
+			{ path: "search/heading-match.md", trust: "unverified" },
+			{ path: "search/stale-widget.md", trust: "unverified" },
+			{ path: "search/title-match.md", trust: "unverified" },
 		]);
 	});
 
@@ -747,7 +762,7 @@ describe("the sync lock", () => {
 		expect(result.code).toBe(0);
 		expect(existsSync(join(home, ".sync.lock"))).toBe(false);
 		expect(await sql(home, "SELECT count(*) AS n FROM concepts")).toEqual([
-			{ n: 6 },
+			{ n: 11 },
 		]);
 	});
 });
@@ -759,7 +774,7 @@ describe("lattice status against a bundle", () => {
 		const before = await invoke(["status"], home);
 
 		expect(before.code).toBe(0);
-		expect(before.stdout).toContain("New:     6");
+		expect(before.stdout).toContain("New:     11");
 		expect(before.stdout).toContain("Changed: 0");
 		expect(before.stdout).toContain("Deleted: 0");
 		expect(before.stdout).toContain("notes/broken.md");
@@ -772,7 +787,7 @@ describe("lattice status against a bundle", () => {
 		await invoke(["sync"], home);
 
 		const synced = await invoke(["status"], home);
-		expect(synced.stdout).toContain("Concepts:   6");
+		expect(synced.stdout).toContain("Concepts:   11");
 		expect(synced.stdout).toContain("Up to date");
 
 		writeFileSync(join(home, "docs", "notes", "added.md"), "# Added\n\nNew.\n");
@@ -810,7 +825,7 @@ describe("interrupting a sync", () => {
 		const result = await invoke(["sync"], home);
 		expect(result.code).toBe(0);
 		expect(await sql(home, "SELECT count(*) AS n FROM concepts")).toEqual([
-			{ n: 2006 },
+			{ n: 2011 },
 		]);
 		expect(
 			await sql(
@@ -818,6 +833,274 @@ describe("interrupting a sync", () => {
 				"SELECT count(*) AS n FROM concepts WHERE id NOT IN (SELECT concept_id FROM chunks)",
 			),
 		).toEqual([{ n: 0 }]);
+	});
+});
+
+/** A synced home holding the fixture bundle — the corpus every search test queries. */
+async function searchableHome(): Promise<string> {
+	const home = await bundledHome();
+	await invoke(["sync"], home);
+	return home;
+}
+
+interface SearchHit {
+	path: string;
+	title: string | null;
+	type: string | null;
+	status: string | null;
+	trust: string;
+	staleAfter: string | null;
+	stale: boolean;
+	score: number;
+	chunks: Array<{
+		ordinal: number;
+		headingPath: string;
+		startLine: number;
+		endLine: number;
+		startChar: number;
+		endChar: number;
+		snippet: string;
+	}>;
+}
+
+async function search(
+	home: string,
+	argv: string[],
+): Promise<{ code: number; stderr: string; hits: SearchHit[] }> {
+	const result = await invoke(["search", ...argv, "--json"], home);
+	return {
+		code: result.code,
+		stderr: result.stderr,
+		hits: result.stdout === "" ? [] : JSON.parse(result.stdout).hits,
+	};
+}
+
+describe("lattice search", () => {
+	test("returns the passages holding an exact identifier, grouped by concept", async () => {
+		const home = await searchableHome();
+
+		const { code, stderr, hits } = await search(home, ["user_id"]);
+
+		expect(stderr).toBe("");
+		expect(code).toBe(0);
+		expect(hits.map((hit) => hit.path)).toEqual(["concepts/users.md"]);
+
+		const [users] = hits;
+		expect(users.title).toBe("Users table");
+		expect(users.type).toBe("BigQuery Table");
+		expect(users.status).toBe("stable");
+		expect(users.trust).toBe("human-reviewed");
+		expect(users.staleAfter).toBe("2027-01-01T00:00:00Z");
+		expect(users.stale).toBe(false);
+		expect(users.score).toBeGreaterThan(0);
+
+		// `user_id` is written under the "Columns" heading of `concepts/users.md`.
+		expect(users.chunks).toHaveLength(1);
+		expect(users.chunks[0].headingPath).toBe("Users table > Columns");
+		expect(users.chunks[0].snippet).toContain("user_id");
+	});
+
+	test("a natural-language question with punctuation and operator words still returns candidates", async () => {
+		const home = await searchableHome();
+
+		const { code, stderr, hits } = await search(home, [
+			'What is the "user_id" column AND the primary-key, really?',
+		]);
+
+		expect(stderr).toBe("");
+		expect(code).toBe(0);
+		expect(hits.map((hit) => hit.path)).toContain("concepts/users.md");
+	});
+
+	test("a query holding no searchable text reports no matches rather than failing", async () => {
+		const home = await searchableHome();
+
+		const { code, stderr, hits } = await search(home, ['*?!( "" )-']);
+
+		expect(stderr).toBe("");
+		expect(code).toBe(0);
+		expect(hits).toEqual([]);
+	});
+
+	test("a title hit outranks a heading hit, which outranks a body hit", async () => {
+		const home = await searchableHome();
+
+		const { code, hits } = await search(home, ["sentinel"]);
+
+		expect(code).toBe(0);
+		// `search/title-match.md` writes "sentinel" only in its frontmatter title,
+		// `search/heading-match.md` only in its heading, `search/body-match.md`
+		// only in a paragraph.
+		expect(hits.map((hit) => hit.path)).toEqual([
+			"search/title-match.md",
+			"search/heading-match.md",
+			"search/body-match.md",
+		]);
+	});
+
+	test("caps the passages shown per concept and the concepts shown", async () => {
+		const home = await searchableHome();
+
+		// "Paragraph" is repeated across the split pieces of one long section in
+		// `guides/chunking.md`, so the concept holds more matching passages than
+		// it is allowed to show.
+		const everything = await search(home, ["paragraph"]);
+		const [guide] = everything.hits.filter(
+			(hit) => hit.path === "guides/chunking.md",
+		);
+		expect(guide.chunks.length).toBe(2);
+
+		const narrowed = await search(home, ["paragraph", "--chunks", "1"]);
+		expect(narrowed.hits[0].chunks).toHaveLength(1);
+
+		const limited = await search(home, ["gauge", "--limit", "2"]);
+		expect(limited.hits).toHaveLength(2);
+		expect((await search(home, ["gauge"])).hits.length).toBeGreaterThan(2);
+	});
+
+	test("refuses a cap that is not a positive whole number", async () => {
+		const home = await searchableHome();
+
+		const result = await invoke(["search", "gauge", "--limit", "0"], home);
+
+		expect(result.code).not.toBe(0);
+		expect(result.stderr).toContain("--limit expects a positive whole number");
+	});
+
+	test("each filter narrows the results, and filters compose", async () => {
+		const home = await searchableHome();
+
+		// No document holds both words, so this falls back to matching either and
+		// spans the `concepts/` and `search/` fixtures at once.
+		const broad = ["table", "gauge"];
+		const paths = async (extra: string[]) =>
+			(await search(home, [broad.join(" "), ...extra])).hits.map(
+				(hit) => hit.path,
+			);
+
+		expect(await paths([])).toContain("concepts/users.md");
+		expect(await paths([])).toContain("search/title-match.md");
+
+		expect(await paths(["--type", "BigQuery Table"])).toEqual([
+			"concepts/users.md",
+		]);
+		expect(await paths(["--tag", "core"])).toEqual(["concepts/users.md"]);
+		expect(await paths(["--dir", "concepts"])).toEqual(["concepts/users.md"]);
+		expect(await paths(["--status", "stable"])).toEqual(["concepts/users.md"]);
+		expect(await paths(["--trust", "human-reviewed"])).toEqual([
+			"concepts/users.md",
+		]);
+
+		expect(
+			(await paths(["--type", "Gauge"])).every((path) =>
+				path.startsWith("search/"),
+			),
+		).toBe(true);
+
+		// Composed filters are an AND: a Gauge is never in `concepts/`.
+		expect(await paths(["--type", "Gauge", "--dir", "concepts"])).toEqual([]);
+		expect(await paths(["--type", "Gauge", "--tag", "rank"])).toEqual(
+			await paths(["--type", "Gauge"]),
+		);
+	});
+
+	test("leaves a deprecated concept out until it is asked for", async () => {
+		const home = await searchableHome();
+
+		// `concepts/orders.md` is the only fixture with `status: deprecated`.
+		expect((await search(home, ["purchases"])).hits).toEqual([]);
+
+		expect(
+			(await search(home, ["purchases", "--include-deprecated"])).hits.map(
+				(hit) => hit.path,
+			),
+		).toEqual(["concepts/orders.md"]);
+
+		expect(
+			(await search(home, ["purchases", "--status", "deprecated"])).hits.map(
+				(hit) => hit.path,
+			),
+		).toEqual(["concepts/orders.md"]);
+	});
+
+	test("ranks a concept past its staleness date below an equal fresh one", async () => {
+		const home = await searchableHome();
+
+		// The two widget fixtures are identical but for their `stale_after`:
+		// 2030 and 2020. Judged from 2026, only the second is past it.
+		const { hits } = await search(home, [
+			"widget",
+			"--as-of",
+			"2026-01-01T00:00:00Z",
+		]);
+
+		expect(hits.map((hit) => hit.path)).toEqual([
+			"search/fresh-widget.md",
+			"search/stale-widget.md",
+		]);
+		expect(hits.map((hit) => hit.stale)).toEqual([false, true]);
+		expect(hits[0].score).toBeGreaterThan(hits[1].score);
+
+		// Judged from before both dates, neither is stale and the tie is broken
+		// by path rather than by a penalty.
+		const early = await search(home, [
+			"widget",
+			"--as-of",
+			"2019-01-01T00:00:00Z",
+		]);
+		expect(early.hits.map((hit) => hit.stale)).toEqual([false, false]);
+	});
+
+	test("refuses an --as-of that is not a date", async () => {
+		const home = await searchableHome();
+
+		const result = await invoke(["search", "widget", "--as-of", "soon"], home);
+
+		expect(result.code).not.toBe(0);
+		expect(result.stderr).toContain("--as-of expects a date");
+	});
+
+	test("reports offsets that slice the matching passage out of the source file", async () => {
+		const home = await searchableHome();
+
+		const { hits } = await search(home, ["fenced"]);
+		const [guide] = hits.filter((hit) => hit.path === "guides/chunking.md");
+		const chunk = guide.chunks[0];
+
+		const raw = readFileSync(
+			join(home, "docs", "guides", "chunking.md"),
+			"utf8",
+		);
+		expect(raw.slice(chunk.startChar, chunk.endChar)).toContain("Fenced code");
+		expect(raw.split("\n")[chunk.startLine - 1]).toBe("## Fenced code");
+		expect(chunk.endLine).toBeGreaterThanOrEqual(chunk.startLine);
+	});
+
+	test("prints a readable listing without --json, and says so when nothing matches", async () => {
+		const home = await searchableHome();
+
+		const found = await invoke(["search", "user_id"], home);
+
+		expect(found.code).toBe(0);
+		expect(found.stderr).toBe("");
+		expect(found.stdout).toContain("concepts/users.md — Users table");
+		expect(found.stdout).toContain(
+			"[BigQuery Table · stable · human-reviewed]",
+		);
+		expect(found.stdout).toContain("user_id");
+
+		const missing = await invoke(["search", "zzzznothinghere"], home);
+
+		expect(missing.code).toBe(0);
+		expect(missing.stdout).toBe("No matches.\n");
+	});
+
+	test("exits non-zero when there is no index to search", async () => {
+		const result = await invoke(["search", "anything"]);
+
+		expect(result.code).not.toBe(0);
+		expect(result.stderr).toContain("No Lattice index");
+		expect(result.stderr).toContain("lattice init");
 	});
 });
 
@@ -860,6 +1143,11 @@ describe("concept vectors", () => {
 			"concepts/users.md",
 			"guides/chunking.md",
 			"notes/unverified.md",
+			"search/body-match.md",
+			"search/fresh-widget.md",
+			"search/heading-match.md",
+			"search/stale-widget.md",
+			"search/title-match.md",
 		]);
 
 		// Two concepts differing only in body text would share a vector; these

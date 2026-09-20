@@ -193,11 +193,28 @@ lattice sql "SELECT label, COUNT(*) FROM nodes GROUP BY label"
 
 ### `lattice rels`
 
-Show relationships for a node.
+Show what a concept is connected to: the links it makes, the links made to it,
+the documents filed beside it, and the links it makes to documents nobody has
+written yet.
+
+A concept can be named by its path, by its OKF identifier, or by its title.
 
 ```bash
-lattice rels "TypeScript"       # Show all relationships for an entity
+lattice rels concepts/users.md   # by path
+lattice rels concepts/users      # by identifier
+lattice rels "Users table"       # by title
+lattice rels concepts/users --json
 ```
+
+Links come from `lattice sync`: markdown links and wikilinks in a document's
+body, plus the `sources:` entries in its frontmatter, which are recorded as a
+separate kind so provenance is navigable. Links inside fenced code blocks and
+code spans are samples, not edges, and external URLs are not stored.
+
+A link to a document that does not exist yet is kept as *unresolved* rather
+than dropped — in OKF that is knowledge not yet written. Every sync re-resolves
+them, so writing the missing document repairs the edge with no edit to the
+source.
 
 ### `lattice ontology`
 

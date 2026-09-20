@@ -7,6 +7,7 @@
  * code block torn in half.
  */
 
+import { type FencedLine, readFencedLines } from "./markdown.js";
 import { hashContent } from "./scan.js";
 
 /** Roughly four hundred estimated tokens per chunk. */
@@ -39,16 +40,11 @@ export function estimateTokens(text: string): number {
 	return Math.ceil(text.length / CHARS_PER_TOKEN);
 }
 
-interface Line {
-	text: string;
-	/** Offset of the line's first character within the body. */
-	start: number;
-	/** Offset just past the line's newline (or the end of the body). */
-	end: number;
-	/** 1-based line number within the body. */
-	number: number;
-	/** Inside a fenced code block, where a `#` is not a heading and a split is forbidden. */
-	fenced: boolean;
+/**
+ * A line of the body, with the heading it declares. Inside a fenced block a
+ * `#` is not a heading and a split is forbidden, so `fenced` decides both.
+ */
+interface Line extends FencedLine {
 	heading?: { text: string; depth: number };
 }
 
@@ -92,47 +88,10 @@ export function chunkDocument(
 }
 
 function readLines(body: string): Line[] {
-	const lines: Line[] = [];
-	let start = 0;
-	let number = 0;
-	let fence: string | undefined;
-
-	while (start <= body.length) {
-		const newline = body.indexOf("\n", start);
-		const hasNewline = newline !== -1;
-		const end = hasNewline ? newline + 1 : body.length;
-		const text = body.slice(start, hasNewline ? newline : body.length);
-		number++;
-
-		const opener = /^\s{0,3}(```+|~~~+)/.exec(text);
-		const open = fence;
-		const inFence = open !== undefined;
-		if (open !== undefined) {
-			const closes =
-				opener !== null &&
-				opener[1][0] === open[0] &&
-				opener[1].length >= open.length;
-			if (closes) {
-				fence = undefined;
-			}
-		} else if (opener !== null) {
-			fence = opener[1];
-		}
-
-		// A line closing a fence still belongs to the code block; a line opening
-		// one does too. `inFence || opener` covers both.
-		const fenced = inFence || opener !== null;
-		const heading = fenced ? undefined : readHeading(text);
-
-		lines.push({ text, start, end, number, fenced, heading });
-
-		if (!hasNewline) {
-			break;
-		}
-		start = end;
-	}
-
-	return lines;
+	return readFencedLines(body).map((line) => ({
+		...line,
+		heading: line.fenced ? undefined : readHeading(line.text),
+	}));
 }
 
 function readHeading(text: string): Line["heading"] {

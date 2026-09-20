@@ -9,7 +9,7 @@
  * tables later is fine, renaming them is not.
  */
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS meta (
@@ -117,7 +117,14 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 
 CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_model ON chunk_embeddings(model);
 
--- Authored links: wikilinks and markdown links found in a document.
+-- Authored links: wikilinks and markdown links found in a document's body,
+-- plus the cited sources in its frontmatter.
+--
+-- 'target_path' is where the link points, resolved against the bundle root;
+-- 'target_concept_id' is the concept now living there, and is NULL when the
+-- author linked to a document nobody has written yet. An unresolved link is
+-- kept rather than dropped: OKF treats it as knowledge not yet written, and
+-- every sync re-resolves it, so writing the missing file repairs the edge.
 CREATE TABLE IF NOT EXISTS links (
 	id                INTEGER PRIMARY KEY,
 	source_concept_id INTEGER NOT NULL REFERENCES concepts(id) ON DELETE CASCADE,
@@ -125,8 +132,14 @@ CREATE TABLE IF NOT EXISTS links (
 	target_concept_id INTEGER REFERENCES concepts(id) ON DELETE SET NULL,
 	target_path       TEXT,
 	raw_target        TEXT NOT NULL,
+	-- The '#fragment' the author wrote, without the '#'; the link still
+	-- resolves to the document, so an anchor never costs an edge.
+	target_anchor     TEXT,
 	link_text         TEXT,
-	kind              TEXT NOT NULL CHECK (kind IN ('wikilink', 'markdown'))
+	-- The sentence the link sits in, so a result can be read without opening
+	-- the source file.
+	context           TEXT,
+	kind              TEXT NOT NULL CHECK (kind IN ('wikilink', 'markdown', 'source'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_links_source_concept ON links(source_concept_id);

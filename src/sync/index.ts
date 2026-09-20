@@ -10,11 +10,12 @@
  * run simply picks up the rest.
  */
 
-import type { Database } from "bun:sqlite";
+import type { Database, SQLQueryBindings } from "bun:sqlite";
 import { readFileSync } from "node:fs";
 import { posix } from "node:path";
 import { chunkDocument } from "./chunk.js";
-import { parseConcept } from "./okf.js";
+import { extractBodyLinks, extractSourceLinks } from "./links.js";
+import { type OkfConcept, parseConcept } from "./okf.js";
 import { type BundleFile, scanBundle } from "./scan.js";
 
 interface IndexedConcept {
@@ -142,6 +143,10 @@ export function applySync(db: Database, plan: SyncPlan): SyncReport {
 		}
 	}
 
+	// A document written this run can be the missing target of a link made
+	// long before it, so resolution is a final pass over the whole index.
+	resolvePendingLinks(db);
+
 	// Problems belong to the whole bundle, not just to what this run touched.
 	for (const row of db
 		.query<{ path: string; frontmatter_error: string }, []>(
@@ -221,21 +226,27 @@ function indexFile(
 		// Everything derived from the old text goes; the new text replaces it.
 		db.query("DELETE FROM chunks WHERE concept_id = ?").run(row.id);
 		db.query("DELETE FROM tags WHERE concept_id = ?").run(row.id);
+		// Links the old text made go with it; links made TO this document are
+		// somebody else's rows and stay exactly where they are.
+		db.query("DELETE FROM links WHERE source_concept_id = ?").run(row.id);
 
 		const tag = db.query("INSERT INTO tags (concept_id, tag) VALUES (?, ?)");
 		for (const value of concept.tags) {
 			tag.run(row.id, value);
 		}
 
-		const chunk = db.query(
+		const chunk = db.query<{ id: number }, SQLQueryBindings[]>(
 			`INSERT INTO chunks (
 				concept_id, ordinal, heading, heading_path, depth,
 				start_line, end_line, start_char, end_char,
 				content, content_hash, token_estimate
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			RETURNING id`,
 		);
+		const written: Array<{ id: number; startChar: number; endChar: number }> =
+			[];
 		for (const piece of pieces) {
-			chunk.run(
+			const inserted = chunk.get(
 				row.id,
 				piece.ordinal,
 				piece.heading ?? null,
@@ -249,10 +260,94 @@ function indexFile(
 				piece.contentHash,
 				piece.tokenEstimate,
 			);
+			if (inserted !== null) {
+				written.push({
+					id: inserted.id,
+					startChar: piece.startChar,
+					endChar: piece.endChar,
+				});
+			}
 		}
+
+		writeLinks(db, row.id, file.path, concept, written);
 	})();
 
 	return { chunks: pieces.length, problem: concept.problem };
+}
+
+/**
+ * Record the links one document makes.
+ *
+ * A link is resolved against the concepts already indexed; one pointing at a
+ * document this run has not reached yet — or has never seen — is stored
+ * unresolved, and `resolvePendingLinks` picks it up once the sync is done.
+ */
+function writeLinks(
+	db: Database,
+	conceptId: number,
+	path: string,
+	concept: OkfConcept,
+	chunks: Array<{ id: number; startChar: number; endChar: number }>,
+): void {
+	const links = [
+		...extractSourceLinks(concept.rest),
+		...extractBodyLinks(concept.body, concept.bodyOffset, path),
+	];
+	if (links.length === 0) {
+		return;
+	}
+
+	const targetOf = db.query<{ id: number }, [string]>(
+		"SELECT id FROM concepts WHERE path = ?",
+	);
+	const insert = db.query(
+		`INSERT INTO links (
+			source_concept_id, source_chunk_id, target_concept_id, target_path,
+			raw_target, target_anchor, link_text, context, kind
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	);
+
+	for (const link of links) {
+		const chunk =
+			link.offset === undefined
+				? undefined
+				: chunks.find(
+						(candidate) =>
+							link.offset !== undefined &&
+							link.offset >= candidate.startChar &&
+							link.offset < candidate.endChar,
+					);
+
+		insert.run(
+			conceptId,
+			chunk?.id ?? null,
+			targetOf.get(link.targetPath)?.id ?? null,
+			link.targetPath,
+			link.rawTarget,
+			link.anchor ?? null,
+			link.text ?? null,
+			link.context ?? null,
+			link.kind,
+		);
+	}
+}
+
+/**
+ * Point every unresolved link at the document that now lives at its target.
+ *
+ * This runs once the whole bundle is indexed, so the order files were visited
+ * in cannot decide whether an edge resolves — and so writing a document that
+ * was only ever linked to repairs those links with no edit to their sources.
+ */
+function resolvePendingLinks(db: Database): void {
+	db.query(
+		`UPDATE links SET target_concept_id = (
+			SELECT c.id FROM concepts c WHERE c.path = links.target_path
+		)
+		WHERE target_concept_id IS NULL
+		  AND target_path IS NOT NULL
+		  AND EXISTS (SELECT 1 FROM concepts c WHERE c.path = links.target_path)`,
+	).run();
 }
 
 /** A concept's bundle-relative directory; the empty string at the bundle root. */

@@ -16,7 +16,7 @@ lattice status   # Show documents needing sync
 lattice sync     # Sync documents to DuckDB
 lattice search   # Semantic search
 lattice sql      # Raw SQL queries
-lattice rels     # Show relationships for a node
+lattice rels     # Show a concept's outlinks, backlinks, siblings and unresolved links
 ```
 
 ## Storage

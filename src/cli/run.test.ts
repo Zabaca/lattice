@@ -1103,3 +1103,193 @@ describe("lattice search", () => {
 		expect(result.stderr).toContain("lattice init");
 	});
 });
+
+describe("the embedding phase", () => {
+	test("sync gives every chunk a vector of the provider's dimension", async () => {
+		const home = await bundledHome();
+
+		const result = await invoke(["sync"], home);
+
+		expect(result.code).toBe(0);
+		expect(
+			await sql(
+				home,
+				"SELECT count(*) AS n FROM chunks WHERE id NOT IN (SELECT chunk_id FROM chunk_embeddings)",
+			),
+		).toEqual([{ n: 0 }]);
+		// 512 float32 values is 2048 bytes; the model rides with the vector.
+		expect(
+			await sql(
+				home,
+				"SELECT DISTINCT model, dim, length(vector) AS bytes FROM chunk_embeddings",
+			),
+		).toEqual([{ model: "hash-512", dim: 512, bytes: 2048 }]);
+	});
+});
+
+describe("concept vectors", () => {
+	test("are derived from the title, description and tags, not the body", async () => {
+		const home = await bundledHome();
+		await invoke(["sync"], home);
+
+		// The fixture's two notes without frontmatter have no title, no
+		// description and no tags, so there is nothing to embed for them.
+		const embedded = await sql<{ path: string }>(
+			home,
+			"SELECT c.path FROM concepts c JOIN concept_embeddings e ON e.concept_id = c.id ORDER BY c.path",
+		);
+		expect(embedded.map((row) => row.path)).toEqual([
+			"concepts/orders.md",
+			"concepts/users.md",
+			"guides/chunking.md",
+			"notes/unverified.md",
+			"search/body-match.md",
+			"search/fresh-widget.md",
+			"search/heading-match.md",
+			"search/stale-widget.md",
+			"search/title-match.md",
+		]);
+
+		// Two concepts differing only in body text would share a vector; these
+		// differ in title and tags, so they must not.
+		const [pair] = await sql<{ same: number }>(
+			home,
+			"SELECT (SELECT vector FROM concept_embeddings e JOIN concepts c ON c.id = e.concept_id" +
+				"   WHERE c.path = 'concepts/users.md')" +
+				" = (SELECT vector FROM concept_embeddings e JOIN concepts c ON c.id = e.concept_id" +
+				"   WHERE c.path = 'concepts/orders.md') AS same",
+		);
+		expect(pair.same).toBe(0);
+	});
+});
+
+describe("provider failures", () => {
+	/** The same home, with a fault injected into the deterministic provider. */
+	function withFault(argv: string[], home: string, fault: string) {
+		return runCli({
+			argv,
+			env: { LATTICE_HOME: home, LATTICE_EMBED_FAIL: fault },
+		});
+	}
+
+	test("a retryable failure leaves a backlog the next run clears", async () => {
+		const home = await bundledHome();
+
+		const synced = await withFault(["sync"], home, "retryable:Chunking");
+
+		expect(synced.code).toBe(0);
+		expect(synced.stdout).toContain("Failed:");
+		const [pending] = await sql<{ n: number }>(
+			home,
+			"SELECT count(*) AS n FROM chunks WHERE id NOT IN (SELECT chunk_id FROM chunk_embeddings)",
+		);
+		expect(pending.n).toBeGreaterThan(0);
+		expect(
+			await sql(
+				home,
+				"SELECT retryable, attempts FROM chunk_embed_failures ORDER BY chunk_id LIMIT 1",
+			),
+		).toEqual([{ retryable: 1, attempts: 1 }]);
+
+		// Nothing is re-read from disk; the backlog alone drives the work.
+		const embedded = await invoke(["embed"], home);
+
+		expect(embedded.code).toBe(0);
+		expect(
+			await sql(
+				home,
+				"SELECT count(*) AS n FROM chunks WHERE id NOT IN (SELECT chunk_id FROM chunk_embeddings)",
+			),
+		).toEqual([{ n: 0 }]);
+		expect(
+			await sql(home, "SELECT count(*) AS n FROM chunk_embed_failures"),
+		).toEqual([{ n: 0 }]);
+	});
+
+	test("a permanent failure is retried only when asked", async () => {
+		const home = await bundledHome();
+
+		await withFault(["sync"], home, "permanent:Chunking");
+
+		const [failed] = await sql<{ n: number }>(
+			home,
+			"SELECT count(*) AS n FROM chunk_embed_failures WHERE retryable = 0",
+		);
+		expect(failed.n).toBeGreaterThan(0);
+
+		// The concept named in the fault fails permanently too, and both kinds
+		// are reported together.
+		const [permanent] = await sql<{ n: number }>(
+			home,
+			"SELECT (SELECT count(*) FROM chunk_embed_failures WHERE retryable = 0)" +
+				" + (SELECT count(*) FROM concept_embed_failures WHERE retryable = 0) AS n",
+		);
+
+		// An ordinary run walks straight past them and says so.
+		const again = await invoke(["embed"], home);
+		expect(again.stdout).toContain("Embedded 0 chunks");
+		expect(again.stdout).toContain(`Permanently failed: ${permanent.n}`);
+		expect(
+			await sql(
+				home,
+				"SELECT count(*) AS n FROM chunk_embed_failures WHERE retryable = 0",
+			),
+		).toEqual([{ n: failed.n }]);
+
+		const retried = await invoke(["embed", "--retry-failed"], home);
+
+		expect(retried.code).toBe(0);
+		expect(retried.stdout).toContain(`Embedded ${failed.n} chunks`);
+		expect(
+			await sql(home, "SELECT count(*) AS n FROM chunk_embed_failures"),
+		).toEqual([{ n: 0 }]);
+	});
+
+	test("re-chunking a document clears its stale failure records", async () => {
+		const home = await bundledHome();
+		await withFault(["sync"], home, "permanent:Chunking");
+		expect(
+			(
+				await sql<{ n: number }>(
+					home,
+					"SELECT count(*) AS n FROM chunk_embed_failures",
+				)
+			)[0].n,
+		).toBeGreaterThan(0);
+
+		writeFileSync(
+			join(home, "docs", "guides", "chunking.md"),
+			"---\ntype: Guide\ntitle: Chunking\n---\n\n# Rewritten\n\nDifferent text entirely.\n",
+		);
+		await invoke(["sync"], home);
+
+		expect(
+			await sql(home, "SELECT count(*) AS n FROM chunk_embed_failures"),
+		).toEqual([{ n: 0 }]);
+	});
+});
+
+describe("lattice status and the embedding backlog", () => {
+	test("names the model and dimensions and counts chunks awaiting vectors", async () => {
+		const home = await bundledHome();
+
+		await runCli({
+			argv: ["sync"],
+			env: { LATTICE_HOME: home, LATTICE_EMBED_FAIL: "retryable:Chunking" },
+		});
+		const waiting = await invoke(["status"], home);
+
+		const [pending] = await sql<{ n: number }>(
+			home,
+			"SELECT count(*) AS n FROM chunks WHERE id NOT IN (SELECT chunk_id FROM chunk_embeddings)",
+		);
+		expect(waiting.code).toBe(0);
+		expect(waiting.stdout).toContain("Model:  hash-512 (512 dimensions)");
+		expect(waiting.stdout).toContain(`Awaiting vectors: ${pending.n}`);
+
+		await invoke(["embed"], home);
+		const done = await invoke(["status"], home);
+
+		expect(done.stdout).toContain("Awaiting vectors: 0");
+	});
+});

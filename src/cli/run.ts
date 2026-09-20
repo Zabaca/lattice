@@ -8,6 +8,7 @@
  */
 
 import { parseArgs } from "./args.js";
+import { runEmbed } from "./commands/embed.js";
 import { runInit } from "./commands/init.js";
 import { runRels } from "./commands/rels.js";
 import { runSearch } from "./commands/search.js";
@@ -67,6 +68,12 @@ const COMMANDS: Record<string, CommandSpec> = {
 		summary: "Index the OKF bundle",
 		requiredArgs: [],
 		run: runSync,
+	},
+	embed: {
+		usage: "lattice embed [--retry-failed]",
+		summary: "Embed whatever is still waiting for a vector",
+		requiredArgs: [],
+		run: runEmbed,
 	},
 	rels: {
 		usage: "lattice rels <concept> [--json]",

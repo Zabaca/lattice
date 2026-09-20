@@ -6,14 +6,15 @@ A CLI tool for syncing markdown documents with an embedded DuckDB database, enab
 
 - **Backend**: DuckDB (embedded, zero external dependencies)
 - **Vector Search**: DuckDB VSS extension (HNSW index with cosine similarity)
-- **Embeddings**: Voyage AI (voyage-3-lite, 512 dimensions)
+- **Embeddings**: in-process, behind the `EmbeddingProvider` seam in `src/embed/provider.ts`. The default `hash` provider is deterministic — 512 dimensions derived from a hash of the text — so the pipeline needs no model on disk and no network.
 - **Runtime**: Bun + NestJS
 
 ## Key Commands
 
 ```bash
 lattice status   # Show documents needing sync
-lattice sync     # Sync documents to DuckDB
+lattice sync     # Index the bundle, then embed whatever has no vector
+lattice embed    # Embed the backlog alone (`--retry-failed` retries permanent failures)
 lattice search   # Semantic search
 lattice sql      # Raw SQL queries
 lattice rels     # Show a concept's links, backlinks, siblings and unresolved links
@@ -38,12 +39,32 @@ Run `lattice init` to setup the directory structure.
 
 ### Database
 
-Contains:
-- `nodes` table - entities with embeddings
-- `relationships` table - connections between entities
+The rewrite's index (`lattice.db`, SQLite — see `src/db/schema.ts`) holds
+`concepts`, `tags`, `chunks`, `chunks_fts`, `chunk_embeddings`,
+`concept_embeddings`, the two embedding failure tables and `links`.
 
-The rewrite's index (`lattice.db`, SQLite — see `src/db/schema.ts`) instead holds
-`concepts`, `chunks`, `chunks_fts`, `chunk_embeddings` and `links`.
+## Embeddings
+
+The embed phase runs at the end of `lattice sync` and is the whole of
+`lattice embed`; there is one code path either way. A chunk or concept with no
+vector is simply a row missing from `chunk_embeddings` / `concept_embeddings`,
+so an interruption leaves a backlog rather than a half-written document.
+
+A provider failure is recorded per target in `chunk_embed_failures` /
+`concept_embed_failures` as retryable or permanent. Retryable failures are
+picked up by the next run; permanent ones only under
+`lattice embed --retry-failed`. Both tables hang off their target, so
+re-chunking a document takes its stale failure rows with it.
+
+Environment:
+
+| Variable | Meaning |
+|---|---|
+| `LATTICE_EMBED_PROVIDER` | Provider name; `hash` (the default) is the only one so far. An unknown name is an error, never a silent fallback. |
+| `LATTICE_EMBED_DIM` | Dimensions for the hash provider (default 512). The model name carries it: `hash-512`. |
+| `LATTICE_EMBED_FAIL` | Fault injection for tests: `retryable:<substring>` or `permanent:<substring>` makes the provider fail on any text containing the substring. |
+
+## Links
 
 `links` records the edges an author wrote: markdown links and wikilinks in a
 document's body, plus the frontmatter `sources:` citations that point inside the

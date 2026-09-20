@@ -1,15 +1,22 @@
 import { existsSync } from "node:fs";
 import { openDatabase } from "../../db/open.js";
+import { selectProvider } from "../../embed/provider.js";
+import { embedPending } from "../../embed/run.js";
 import { applySync, planSync, type SyncReport } from "../../sync/index.js";
 import { acquireLock, LockHeldError } from "../../sync/lock.js";
 import { resolvePaths } from "../../utils/paths.js";
 import type { CommandContext, CommandOutput } from "../run.js";
+import { embedReportText } from "./embed.js";
 
 /**
  * Index the bundle: everything new, changed, renamed or deleted since the
- * last run, and nothing else.
+ * last run, and nothing else — then embed whatever still has no vector.
+ *
+ * The second phase is the same code `lattice embed` runs, and it runs even
+ * when indexing found nothing to do, because a backlog can outlive the sync
+ * that created it.
  */
-export function runSync(context: CommandContext): CommandOutput {
+export async function runSync(context: CommandContext): Promise<CommandOutput> {
 	const paths = resolvePaths(context.env);
 
 	if (!existsSync(paths.database)) {
@@ -18,6 +25,10 @@ export function runSync(context: CommandContext): CommandOutput {
 			stderr: `No Lattice index at ${paths.database}. Run \`lattice init\` first.`,
 		};
 	}
+
+	// Resolved before the lock, so a mistyped provider fails without leaving a
+	// lock file behind.
+	const provider = selectProvider(context.env);
 
 	let lock: ReturnType<typeof acquireLock>;
 	try {
@@ -35,13 +46,11 @@ export function runSync(context: CommandContext): CommandOutput {
 		const db = openDatabase(paths.database);
 		try {
 			const plan = planSync(db, paths.docs);
-			if (isNoOp(plan)) {
-				return {
-					code: 0,
-					stdout: `Nothing to sync. ${plan.unchanged} concept${plan.unchanged === 1 ? "" : "s"} already indexed.\n`,
-				};
-			}
-			return { code: 0, stdout: reportText(applySync(db, plan)) };
+			const indexed = isNoOp(plan)
+				? `Nothing to sync. ${plan.unchanged} concept${plan.unchanged === 1 ? "" : "s"} already indexed.\n`
+				: reportText(applySync(db, plan));
+			const embedded = embedReportText(await embedPending(db, provider));
+			return { code: 0, stdout: `${indexed}${embedded}` };
 		} finally {
 			db.close();
 		}

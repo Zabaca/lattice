@@ -972,6 +972,27 @@ describe("hybrid search", () => {
 		expect(both.hits.map((hit) => hit.path)).toContain("thermal/cooling.md");
 	});
 
+	test("the concept vector decides between results the legs tied", async () => {
+		const home = await hybridHome();
+
+		// Each half of this query is answered by exactly one leg, and each leg
+		// puts its answer first, so the fusion hands both documents the same
+		// score. Left tied, they would come back in path order — `misc/` before
+		// `thermal/`. Only `thermal/cooling.md` names a vector group in its
+		// title and description, which is what a concept vector is built from.
+		const { code, hits } = await search(
+			home,
+			["XJ_4471 whisper mode", "--no-expand"],
+			HYBRID_ENV,
+		);
+
+		expect(code).toBe(0);
+		expect(hits.map((hit) => hit.path)).toEqual([
+			"thermal/cooling.md",
+			"misc/serial.md",
+		]);
+	});
+
 	test("the concept vector never introduces a result of its own", async () => {
 		const home = await hybridHome();
 
@@ -1611,4 +1632,49 @@ describe("lattice status and the embedding backlog", () => {
 
 		expect(done.stdout).toContain("Awaiting vectors: 0");
 	});
+});
+
+describe("search at scale", () => {
+	/**
+	 * The scale a personal knowledge base actually reaches. Each document's
+	 * sections are short enough to merge back into one passage, so this is
+	 * 3,600 embedded passages — and the semantic leg has no index to lean on,
+	 * it decodes and scores every one of them on every query.
+	 */
+	const DOCUMENTS = 3600;
+	const BUDGET_MS = 1000;
+
+	test("answers within the budget on a corpus at that scale", async () => {
+		const home = freshHome();
+		await invoke(["init"], home);
+		mkdirSync(join(home, "docs", "corpus"), { recursive: true });
+		for (let i = 0; i < DOCUMENTS; i++) {
+			writeFileSync(
+				join(home, "docs", "corpus", `note-${i}.md`),
+				`---\ntype: Note\ntitle: Note ${i}\n---\n\n` +
+					`# Overview\n\nThis note concerns topic ${i % 37} and its neighbours.\n\n` +
+					`## Detail\n\nMeasurements for gauge ${i} were taken on the bench.\n`,
+			);
+		}
+		expect((await invoke(["sync"], home)).stderr).toBe("");
+
+		// A budget is only meaningful if the scan it is measuring is real: the
+		// semantic leg must have a vector for every passage to work through.
+		const [embedded] = await sql<{ n: number }>(
+			home,
+			"SELECT count(*) AS n FROM chunk_embeddings",
+		);
+		expect(embedded.n).toBeGreaterThanOrEqual(DOCUMENTS);
+
+		const started = performance.now();
+		const { code, hits, degraded } = await search(home, [
+			"measurements taken on the bench",
+		]);
+		const elapsed = performance.now() - started;
+
+		expect(code).toBe(0);
+		expect(degraded).toBe(false);
+		expect(hits.length).toBeGreaterThan(0);
+		expect(elapsed).toBeLessThan(BUDGET_MS);
+	}, 120_000);
 });

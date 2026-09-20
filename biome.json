@@ -27,9 +27,6 @@
 		}
 	},
 	"javascript": {
-		"parser": {
-			"unsafeParameterDecoratorsEnabled": true
-		},
 		"formatter": {
 			"quoteStyle": "double"
 		}

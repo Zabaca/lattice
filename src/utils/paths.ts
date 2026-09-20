@@ -1,82 +1,60 @@
 /**
- * @fileoverview Centralized path utilities for Lattice
+ * @fileoverview Path resolution for Lattice.
  *
- * All Lattice data is stored in ~/.lattice/:
- * - docs/               Markdown documentation
- * - lattice.duckdb      Graph database
- * - .sync-manifest.json Sync state tracking
- * - .env                API keys (VOYAGE_API_KEY)
+ * All Lattice data lives under a single home directory:
+ * - docs/        Markdown documentation
+ * - lattice.db   SQLite index (concepts, chunks, links, embeddings)
+ * - .env         Local configuration
+ *
+ * The home directory is resolved from an explicit environment rather than a
+ * module-global, so the CLI seam can be driven against a temporary directory
+ * without leaking into the real `~/.lattice`.
  */
 
-import { existsSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 
-// Default home directory, can be overridden for testing
-let latticeHomeOverride: string | null = null;
-
-/**
- * Override the lattice home path (for testing only)
- */
-export function setLatticeHomeForTesting(path: string | null): void {
-	latticeHomeOverride = path;
+export interface LatticePaths {
+	/** The Lattice home directory. */
+	home: string;
+	/** The markdown documentation directory. */
+	docs: string;
+	/** The SQLite index. */
+	database: string;
+	/** The local configuration file. */
+	env: string;
 }
 
 /**
- * Get the current lattice home path
+ * Resolve Lattice's paths from an environment.
+ *
+ * `LATTICE_HOME` wins; otherwise the home directory is `.lattice` under the
+ * user's home. Throws when neither is available, rather than writing to a
+ * path built from `undefined`.
  */
-function getLatticeHomeInternal(): string {
-	if (latticeHomeOverride) {
-		return latticeHomeOverride;
+export function resolvePaths(
+	env: Record<string, string | undefined>,
+): LatticePaths {
+	const home = resolveHome(env);
+	return {
+		home,
+		docs: join(home, "docs"),
+		database: join(home, "lattice.db"),
+		env: join(home, ".env"),
+	};
+}
+
+function resolveHome(env: Record<string, string | undefined>): string {
+	const explicit = env.LATTICE_HOME?.trim();
+	if (explicit) {
+		return explicit;
 	}
-	return join(homedir(), ".lattice");
-}
 
-/**
- * Get the root Lattice directory path (~/.lattice)
- */
-export function getLatticeHome(): string {
-	return getLatticeHomeInternal();
-}
-
-/**
- * Get the docs directory path (~/.lattice/docs)
- */
-export function getDocsPath(): string {
-	return join(getLatticeHomeInternal(), "docs");
-}
-
-/**
- * Get the DuckDB database path (~/.lattice/lattice.duckdb)
- */
-export function getDatabasePath(): string {
-	return join(getLatticeHomeInternal(), "lattice.duckdb");
-}
-
-/**
- * Get the sync manifest path (~/.lattice/.sync-manifest.json)
- */
-export function getManifestPath(): string {
-	return join(getLatticeHomeInternal(), ".sync-manifest.json");
-}
-
-/**
- * Get the environment file path (~/.lattice/.env)
- */
-export function getEnvPath(): string {
-	return join(getLatticeHomeInternal(), ".env");
-}
-
-/**
- * Ensure the Lattice home directory and docs subdirectory exist
- */
-export function ensureLatticeHome(): void {
-	const home = getLatticeHomeInternal();
-	if (!existsSync(home)) {
-		mkdirSync(home, { recursive: true });
+	const userHome = env.HOME?.trim() || env.USERPROFILE?.trim();
+	if (userHome) {
+		return join(userHome, ".lattice");
 	}
-	const docsPath = getDocsPath();
-	if (!existsSync(docsPath)) {
-		mkdirSync(docsPath, { recursive: true });
-	}
+
+	throw new Error(
+		"Cannot determine the Lattice home directory: set LATTICE_HOME or HOME.",
+	);
 }

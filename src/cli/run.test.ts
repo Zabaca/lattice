@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
 	cpSync,
 	existsSync,
+	mkdirSync,
 	mkdtempSync,
 	readFileSync,
 	renameSync,
@@ -373,6 +374,244 @@ describe("chunking", () => {
 	});
 });
 
+interface LinkRow {
+	source: string;
+	target: string | null;
+	target_path: string;
+	link_text: string | null;
+	anchor: string | null;
+	kind: string;
+	context: string | null;
+}
+
+/** Every edge out of one document, read back through the CLI. */
+async function linksFrom(home: string, path: string): Promise<LinkRow[]> {
+	return sql<LinkRow>(
+		home,
+		"SELECT s.path AS source, t.path AS target, l.target_path, l.link_text," +
+			" l.anchor, l.kind, l.context FROM links l" +
+			" JOIN concepts s ON s.id = l.source_concept_id" +
+			" LEFT JOIN concepts t ON t.id = l.target_concept_id" +
+			` WHERE s.path = '${path}' ORDER BY l.id`,
+	);
+}
+
+describe("authored links", () => {
+	test("records body links inside the bundle, and nothing else", async () => {
+		const home = await bundledHome();
+
+		await invoke(["sync"], home);
+
+		const links = await linksFrom(home, "concepts/users.md");
+		// Three of the four links in the body point inside the bundle; the fourth
+		// is an external URL, and the one in the fenced block is a code sample.
+		expect(
+			links.map((link) => [link.kind, link.target_path, link.link_text]),
+		).toEqual([
+			["markdown", "concepts/orders.md", "Orders table"],
+			["markdown", "concepts/sessions.md", "Sessions table"],
+			["markdown", "concepts/orders.md", "order columns"],
+		]);
+	});
+
+	test("resolves a link that has a target and leaves the rest unresolved", async () => {
+		const home = await bundledHome();
+
+		await invoke(["sync"], home);
+
+		const links = await linksFrom(home, "concepts/users.md");
+		expect(links.map((link) => link.target)).toEqual([
+			"concepts/orders.md",
+			// `concepts/sessions.md` is not written yet, so the edge is kept and
+			// left unresolved rather than dropped.
+			null,
+			"concepts/orders.md",
+		]);
+	});
+
+	test("keeps the anchor and the sentence the link was written in", async () => {
+		const home = await bundledHome();
+
+		await invoke(["sync"], home);
+
+		const [, , anchored] = await linksFrom(home, "concepts/users.md");
+		expect(anchored.anchor).toBe("columns");
+		expect(anchored.target).toBe("concepts/orders.md");
+		expect(anchored.context).toBe(
+			"`user_id` is the primary key, and the [order columns](orders.md#columns) are keyed by it too.",
+		);
+	});
+
+	test("records a frontmatter citation as an edge of its own kind", async () => {
+		const home = await bundledHome();
+
+		await invoke(["sync"], home);
+
+		const links = await linksFrom(home, "concepts/orders.md");
+		// The citation of `users.md` and the body mention of it are both edges,
+		// told apart by their kind; the cited URL is outside the bundle.
+		expect(
+			links.map((link) => [link.kind, link.target, link.link_text]),
+		).toEqual([
+			["source", "concepts/users.md", "Users table"],
+			["markdown", "concepts/users.md", "Users table"],
+		]);
+	});
+
+	test("attributes a link to the chunk it was written in", async () => {
+		const home = await bundledHome();
+		await invoke(["sync"], home);
+
+		const [rows] = await sql<{ heading: string }>(
+			home,
+			"SELECT ch.heading FROM links l JOIN chunks ch ON ch.id = l.source_chunk_id" +
+				" JOIN concepts c ON c.id = l.source_concept_id" +
+				" WHERE c.path = 'concepts/users.md' AND l.anchor = 'columns'",
+		);
+
+		expect(rows.heading).toBe("Columns");
+	});
+
+	test("writing the missing document resolves the link with no edit to the source", async () => {
+		const home = await bundledHome();
+		await invoke(["sync"], home);
+		const sourceBefore = readFileSync(
+			join(home, "docs", "concepts", "users.md"),
+			"utf8",
+		);
+
+		writeFileSync(
+			join(home, "docs", "concepts", "sessions.md"),
+			"---\ntype: BigQuery Table\ntitle: Sessions table\n---\n\n# Sessions table\n\nOne row per session.\n",
+		);
+		await invoke(["sync"], home);
+
+		expect((await linksFrom(home, "concepts/users.md"))[1].target).toBe(
+			"concepts/sessions.md",
+		);
+		expect(
+			readFileSync(join(home, "docs", "concepts", "users.md"), "utf8"),
+		).toBe(sourceBefore);
+	});
+
+	test("moving a document re-aims the relative links it wrote", async () => {
+		const home = await bundledHome();
+		await invoke(["sync"], home);
+
+		mkdirSync(join(home, "docs", "moved"));
+		renameSync(
+			join(home, "docs", "concepts", "users.md"),
+			join(home, "docs", "moved", "users.md"),
+		);
+		await invoke(["sync"], home);
+
+		// `[Orders table](orders.md)` is relative to the file that wrote it, so
+		// from `moved/` it now names `moved/orders.md` — which nobody has
+		// written. The old target must not stay resolved.
+		expect(
+			(await linksFrom(home, "moved/users.md")).map((link) => [
+				link.target_path,
+				link.target,
+			]),
+		).toEqual([
+			["moved/orders.md", null],
+			["moved/sessions.md", null],
+			["moved/orders.md", null],
+		]);
+	});
+
+	test("deleting a target leaves inbound links in place but unresolved", async () => {
+		const home = await bundledHome();
+		await invoke(["sync"], home);
+
+		rmSync(join(home, "docs", "concepts", "orders.md"));
+		await invoke(["sync"], home);
+
+		const links = await linksFrom(home, "concepts/users.md");
+		expect(links).toHaveLength(3);
+		expect(links.map((link) => [link.target_path, link.target])).toEqual([
+			["concepts/orders.md", null],
+			["concepts/sessions.md", null],
+			["concepts/orders.md", null],
+		]);
+	});
+});
+
+describe("lattice rels", () => {
+	test("reports outlinks, backlinks, siblings and unresolved links", async () => {
+		const home = await bundledHome();
+		await invoke(["sync"], home);
+
+		const result = await invoke(["rels", "concepts/users"], home);
+
+		expect(result.code).toBe(0);
+		expect(result.stderr).toBe("");
+		// Two body links out to the orders table, one citation and one body link
+		// back from it, one sibling in `concepts/`, one link to a document that
+		// has not been written.
+		expect(result.stdout).toContain("Outgoing (2)");
+		expect(result.stdout).toContain("Incoming (2)");
+		expect(result.stdout).toContain("Siblings (1)");
+		expect(result.stdout).toContain("Unresolved (1)");
+		expect(result.stdout).toContain("concepts/orders.md");
+		expect(result.stdout).toContain("concepts/sessions.md");
+	});
+
+	test("takes a path as readily as an identifier", async () => {
+		const home = await bundledHome();
+		await invoke(["sync"], home);
+
+		const byPath = await invoke(["rels", "concepts/users.md"], home);
+		const byIdentifier = await invoke(["rels", "concepts/users"], home);
+
+		expect(byPath.code).toBe(0);
+		expect(byPath.stdout).toBe(byIdentifier.stdout);
+	});
+
+	test("--json emits the four relations machine-readably", async () => {
+		const home = await bundledHome();
+		await invoke(["sync"], home);
+
+		const result = await invoke(["rels", "concepts/users", "--json"], home);
+
+		expect(result.code).toBe(0);
+		const report = JSON.parse(result.stdout);
+		expect(report.concept.path).toBe("concepts/users.md");
+		expect(report.outlinks.map((link: { path: string }) => link.path)).toEqual([
+			"concepts/orders.md",
+			"concepts/orders.md",
+		]);
+		expect(
+			report.backlinks.map((link: { path: string; kind: string }) => [
+				link.path,
+				link.kind,
+			]),
+		).toEqual([
+			["concepts/orders.md", "source"],
+			["concepts/orders.md", "markdown"],
+		]);
+		expect(
+			report.siblings.map((sibling: { path: string }) => sibling.path),
+		).toEqual(["concepts/orders.md"]);
+		expect(
+			report.unresolved.map(
+				(link: { target_path: string }) => link.target_path,
+			),
+		).toEqual(["concepts/sessions.md"]);
+	});
+
+	test("exits non-zero for a concept that is not indexed", async () => {
+		const home = await bundledHome();
+		await invoke(["sync"], home);
+
+		const result = await invoke(["rels", "concepts/nowhere"], home);
+
+		expect(result.code).not.toBe(0);
+		expect(result.stderr).toContain("concepts/nowhere");
+		expect(result.stdout).toBe("");
+	});
+});
+
 describe("incremental sync", () => {
 	test("a second sync with no filesystem change does no work", async () => {
 		const home = await bundledHome();
@@ -581,4 +820,3 @@ describe("interrupting a sync", () => {
 		).toEqual([{ n: 0 }]);
 	});
 });
-

@@ -14,8 +14,18 @@ verified:
 
 # Users table
 
-The canonical account record.
+The canonical account record. Every row here has matching rows in the
+[Orders table](orders.md). The [Sessions table](sessions.md) has not been
+written yet. The published schema is at [the upstream docs](https://example.com/users).
 
 ## Columns
 
-`user_id` is the primary key.
+`user_id` is the primary key, and the [order columns](orders.md#columns) are
+keyed by it too.
+
+## Example
+
+```sql
+-- [Not a link](nowhere.md) — this is inside a fence.
+SELECT user_id FROM users;
+```

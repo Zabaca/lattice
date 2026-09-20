@@ -5,7 +5,7 @@
  * - docs/        Markdown documentation
  * - lattice.db   SQLite index (concepts, chunks, links, embeddings)
  * - models/      Cached embedding model weights (`LATTICE_MODEL_DIR` moves it)
- * - .env         Local configuration
+ * - .env         Reserved for local configuration; nothing reads it yet
  *
  * The home directory is resolved from an explicit environment rather than a
  * module-global, so the CLI seam can be driven against a temporary directory

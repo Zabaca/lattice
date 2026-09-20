@@ -1,18 +1,19 @@
 # Lattice - Knowledge Graph CLI
 
-A CLI tool for syncing markdown documents with an embedded DuckDB database, enabling entity extraction and semantic search.
+A CLI that indexes a bundle of OKF markdown documents into SQLite and searches it by keyword and by meaning at once.
 
 ## Architecture
 
-- **Backend**: DuckDB (embedded, zero external dependencies)
-- **Vector Search**: DuckDB VSS extension (HNSW index with cosine similarity)
+- **Backend**: SQLite via `bun:sqlite` (embedded, no external dependencies)
+- **Keyword search**: SQLite FTS5 over chunks (`chunks_fts`)
+- **Vector search**: a cosine scan over `chunk_embeddings` — no index extension
 - **Embeddings**: in-process, behind the `EmbeddingProvider` seam in `src/embed/provider.ts`. The default `local` provider runs a real ONNX model in the command's own process from weights cached under the Lattice home — no daemon, no API key, and no network after the first download. The `hash` provider is the deterministic alternative the test suite uses: 512 dimensions derived from a hash of the text, needing no model on disk.
-- **Runtime**: Bun + NestJS
+- **Runtime**: Bun
 
 ## Key Commands
 
 ```bash
-lattice init     # Create the home directory and download the embedding model
+lattice init     # Create the home directory and index, and download the embedding model
 lattice status   # Show documents needing sync
 lattice sync     # Index the bundle, then embed whatever has no vector
 lattice embed    # Embed the backlog alone (`--retry-failed` retries permanent failures,
@@ -28,20 +29,23 @@ machine-readably.
 
 ## Storage
 
-All data is stored in `~/.lattice/`:
+All data is stored under one home directory, resolved by `resolvePaths` in
+`src/utils/paths.ts`: `LATTICE_HOME` when it is set, otherwise `~/.lattice`.
+
 ```
 ~/.lattice/
-├── docs/                  # Markdown documentation
-├── lattice.duckdb         # Graph database
-├── .sync-manifest.json    # Sync state tracking
-└── .env                   # API keys (VOYAGE_API_KEY)
+├── docs/          # The markdown bundle
+├── lattice.db     # The SQLite index
+├── .env           # Local configuration
+└── .sync.lock     # Held while a sync is running
 ```
 
-Run `lattice init` to setup the directory structure.
+`lattice init` creates the home directory, `docs/` and `lattice.db`; the lock
+file appears only while a sync holds it.
 
 ### Database
 
-The rewrite's index (`lattice.db`, SQLite — see `src/db/schema.ts`) holds
+The index (`lattice.db`, SQLite — see `src/db/schema.ts`) holds
 `concepts`, `tags`, `chunks`, `chunks_fts`, `chunk_embeddings`,
 `concept_embeddings`, the two embedding failure tables and `links`. The four embedding tables are
 keyed by `(target, model, dim)`, which is what lets two vector spaces coexist
@@ -138,49 +142,54 @@ links to unresolved.
 
 ## Development Notes
 
-- No external dependencies required (DuckDB is embedded)
-- Uses SQL for queries (replaced Cypher)
-- VSS extension provides HNSW vector indexing
-- DuckPGQ extension available for property graph queries (optional)
-- Path utilities in `src/utils/paths.ts` for centralized storage
+- No external services: SQLite is embedded and the default embedding provider runs in-process
+- `bun run check` is `tsc --noEmit && biome check .`; `bun test` is the whole suite
+- Path resolution lives in `src/utils/paths.ts` — never build a storage path by hand
 
 ## Testing Philosophy
 
-### Unit Tests (fast, pure functions)
-- Test pure functions in isolation (no DB, no API calls)
-- File pattern: `*.test.ts` next to the source file
-- Examples: frontmatter parsing, hash computation, entity detection
-- Should run in milliseconds
+### One seam
 
-### Integration Tests (slow, real dependencies)
-- Test actual DuckDB/API integration
-- **Connect ONCE in beforeAll**, truncate tables in beforeEach
-- Keep minimal - only test what unit tests can't
+The suite drives a single seam: `runCli` in `src/cli/run.ts`. It takes argv and
+an environment and returns `{ code, stdout, stderr }`. It never reads
+`process.argv`, `process.env` or the real home directory, and it never throws.
+Tests live in `src/cli/run.test.ts` and go through it — argv in, exit code and
+output out.
 
-### When Writing Tests
-1. **Prefer unit tests** - if logic can be extracted to a pure function, do it
-2. **One integration test per boundary** - DB connection, API call
-3. **Never beforeEach reconnect** - use beforeAll + truncate for DB tests
+A test gets an isolated home by passing `LATTICE_HOME` pointed at a fresh
+temporary directory, so there is no shared connection to manage, nothing to
+truncate between tests, and no order dependence.
 
-### Example: DuckDB Integration Test Pattern
+### Rules
+
+1. **Test through the CLI, not around it.** Assert on what a command prints and
+   the code it exits with. Prefer `--json` output to parsing a rendered table.
+   Never open the database directly from a test; `lattice sql` is a command, and
+   using it is driving the CLI.
+2. **Use the highest interface that can show the behavior.** If `lattice search
+   --json` can show it, do not reach for `lattice sql`.
+3. **Expected values come from an independent source of truth** — a known-good
+   literal, a worked example, the spec — never recomputed the way the code
+   computes them.
+4. **Pure functions may be tested directly** in a `*.test.ts` beside the source
+   when the logic genuinely has no CLI-visible behavior of its own. That is the
+   exception, not the default.
+
+### Example
+
 ```typescript
-describe("GraphService (DuckDB)", () => {
-  let graphService: GraphService;
+function invoke(argv: string[], home: string = freshHome()) {
+  return runCli({ argv, env: { LATTICE_HOME: home } });
+}
 
-  beforeAll(async () => {
-    // Connect ONCE - extension loading is slow
-    graphService = new GraphService(configService);
-    await graphService.connect();
-  });
+test("sync reports what it indexed", async () => {
+  const home = freshHome();
+  await invoke(["init"], home);
+  cpSync(FIXTURE_BUNDLE, join(home, "docs"), { recursive: true });
 
-  afterAll(async () => {
-    await graphService.disconnect();
-  });
+  const result = await invoke(["sync"], home);
 
-  beforeEach(async () => {
-    // Clear data, keep connection
-    await graphService.query("DELETE FROM relationships");
-    await graphService.query("DELETE FROM nodes");
-  });
+  expect(result.code).toBe(0);
+  expect(result.stdout).toContain("Indexed");
 });
 ```

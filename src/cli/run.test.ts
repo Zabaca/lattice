@@ -984,6 +984,27 @@ describe("hybrid search", () => {
 		expect(both.hits.map((hit) => hit.path)).toContain("thermal/cooling.md");
 	});
 
+	test("the concept vector decides between results the legs tied", async () => {
+		const home = await hybridHome();
+
+		// Each half of this query is answered by exactly one leg, and each leg
+		// puts its answer first, so the fusion hands both documents the same
+		// score. Left tied, they would come back in path order — `misc/` before
+		// `thermal/`. Only `thermal/cooling.md` names a vector group in its
+		// title and description, which is what a concept vector is built from.
+		const { code, hits } = await search(
+			home,
+			["XJ_4471 whisper mode", "--no-expand"],
+			HYBRID_ENV,
+		);
+
+		expect(code).toBe(0);
+		expect(hits.map((hit) => hit.path)).toEqual([
+			"thermal/cooling.md",
+			"misc/serial.md",
+		]);
+	});
+
 	test("the concept vector never introduces a result of its own", async () => {
 		const home = await hybridHome();
 
@@ -1849,5 +1870,158 @@ describe("the local model", () => {
 		expect(result.progress.join("\n")).toContain(
 			`Model nomic-embed-text-v1.5 is already in ${join(home, "models")}`,
 		);
+	});
+});
+
+describe("search at scale", () => {
+	/**
+	 * The scale a personal knowledge base actually reaches. Each document's
+	 * sections are short enough to merge back into one passage, so this is
+	 * 3,600 embedded passages — and the semantic leg has no index to lean on,
+	 * it decodes and scores every one of them on every query.
+	 */
+	const DOCUMENTS = 3600;
+	const BUDGET_MS = 1000;
+
+	test("answers within the budget on a corpus at that scale", async () => {
+		const home = freshHome();
+		await invoke(["init"], home);
+		mkdirSync(join(home, "docs", "corpus"), { recursive: true });
+		for (let i = 0; i < DOCUMENTS; i++) {
+			writeFileSync(
+				join(home, "docs", "corpus", `note-${i}.md`),
+				`---\ntype: Note\ntitle: Note ${i}\n---\n\n` +
+					`# Overview\n\nThis note concerns topic ${i % 37} and its neighbours.\n\n` +
+					`## Detail\n\nMeasurements for gauge ${i} were taken on the bench.\n`,
+			);
+		}
+		expect((await invoke(["sync"], home)).stderr).toBe("");
+
+		// A budget is only meaningful if the scan it is measuring is real: the
+		// semantic leg must have a vector for every passage to work through.
+		const [embedded] = await sql<{ n: number }>(
+			home,
+			"SELECT count(*) AS n FROM chunk_embeddings",
+		);
+		expect(embedded.n).toBeGreaterThanOrEqual(DOCUMENTS);
+
+		const started = performance.now();
+		const { code, hits, degraded } = await search(home, [
+			"measurements taken on the bench",
+		]);
+		const elapsed = performance.now() - started;
+
+		expect(code).toBe(0);
+		expect(degraded).toBe(false);
+		expect(hits.length).toBeGreaterThan(0);
+		expect(elapsed).toBeLessThan(BUDGET_MS);
+	}, 120_000);
+});
+
+/**
+ * The `/research` command tells its user exactly what a research document
+ * looks like. This is that document — the template from
+ * `commands/research.md`, minus its "content sections as needed" placeholder —
+ * proving the command teaches a shape the engine actually indexes.
+ */
+const RESEARCH_TEMPLATE = `---
+type: Research
+title: Value retention
+description: How well the Model S holds its resale value.
+status: draft
+tags: [tesla, resale]
+generated: { by: agent:claude-code/research, at: 2026-09-20T00:00:00Z }
+sources:
+  - ../concepts/users.md
+  - https://example.com/depreciation
+---
+
+# Value retention
+
+## Key findings
+
+Depreciation flattens after the fourth year.
+
+## Sources
+
+1. [Depreciation study](https://example.com/depreciation)
+`;
+
+describe("the /research document template", () => {
+	test("indexes with its type, title, description and tags, and cites its in-bundle source", async () => {
+		const home = await bundledHome();
+		mkdirSync(join(home, "docs", "tesla-model-s"), { recursive: true });
+		// The reserved index name: navigation, never a concept of its own.
+		writeFileSync(
+			join(home, "docs", "tesla-model-s", "index.md"),
+			"# Tesla Model S\n\n- [Value retention](value-retention.md)\n",
+		);
+		writeFileSync(
+			join(home, "docs", "tesla-model-s", "value-retention.md"),
+			RESEARCH_TEMPLATE,
+		);
+
+		const synced = await invoke(["sync"], home);
+		expect(synced.code).toBe(0);
+
+		// The fixture bundle has its own deliberately broken files; the point
+		// here is that the template is not among them.
+		const status = await invoke(["status"], home);
+		expect(status.stdout).not.toContain("tesla-model-s/value-retention.md:");
+
+		// The promoted columns, read back through search rather than the database.
+		const found = await invoke(
+			["search", "depreciation", "--json", "--no-expand"],
+			home,
+		);
+		const hit = JSON.parse(found.stdout).hits.find(
+			(candidate: { path: string }) =>
+				candidate.path === "tesla-model-s/value-retention.md",
+		);
+		expect(hit).toMatchObject({
+			type: "Research",
+			title: "Value retention",
+			status: "draft",
+		});
+
+		// The description is indexed too: it is findable by its own words.
+		const byDescription = await invoke(
+			["search", "resale value", "--json", "--no-expand"],
+			home,
+		);
+		expect(
+			JSON.parse(byDescription.stdout).hits.map(
+				(candidate: { path: string }) => candidate.path,
+			),
+		).toContain("tesla-model-s/value-retention.md");
+
+		// Both tags are on the concept, so either one filters to it.
+		for (const tag of ["tesla", "resale"]) {
+			const filtered = await invoke(
+				["search", "depreciation", "--json", "--no-expand", "--tag", tag],
+				home,
+			);
+			expect(
+				JSON.parse(filtered.stdout).hits.map(
+					(candidate: { path: string }) => candidate.path,
+				),
+			).toContain("tesla-model-s/value-retention.md");
+		}
+
+		// The in-bundle citation is an edge; the external URL is not.
+		const rels = await invoke(
+			["rels", "tesla-model-s/value-retention.md", "--json"],
+			home,
+		);
+		expect(JSON.parse(rels.stdout).outlinks).toContainEqual(
+			expect.objectContaining({ path: "concepts/users.md", kind: "source" }),
+		);
+
+		// The reserved index file is navigation, so it is not indexed as a concept.
+		const indexed = await invoke(
+			["rels", "tesla-model-s/index.md", "--json"],
+			home,
+		);
+		expect(indexed.code).not.toBe(0);
 	});
 });

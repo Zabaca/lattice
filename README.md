@@ -1,176 +1,150 @@
 # @zabaca/lattice
 
-**Build a knowledge base with Claude Code — using your existing subscription**
+**A local-first retrieval engine for a markdown knowledge base**
 
 [![npm version](https://img.shields.io/npm/v/@zabaca/lattice.svg)](https://www.npmjs.com/package/@zabaca/lattice)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Lattice turns your markdown documentation into a searchable knowledge graph. Unlike other GraphRAG tools that require separate LLM APIs, **Lattice uses Claude Code for entity extraction** — so you're already paying for it.
+Lattice indexes a bundle of [OKF](#the-documents)-shaped markdown documents into
+a SQLite file and answers questions against it: keyword and meaning at once,
+expanded one hop over the links you wrote. Nothing leaves your machine, and
+there is no API key to obtain.
 
 ## The Workflow
 
 ```bash
-/research "knowledge graphs"   # Find existing docs, create new research, auto-sync
-lattice search "your query"    # Semantic search your knowledge base
+/research "knowledge graphs"   # Search what you already have, then write what you don't
+lattice search "your query"    # Hybrid search over passages
 ```
 
-That's it. One command to build a knowledge base.
+---
+
+## What you need
+
+- **Bun** (the CLI runs on Bun).
+- Nothing else. The index is a SQLite file, and embeddings are produced
+  in-process — no database server, no container, no embedding API key.
 
 ---
 
-## Why Lattice?
+## Quick Start
 
-| Feature | Lattice | Other GraphRAG Tools |
-|---------|---------|---------------------|
-| **LLM for extraction** | Your Claude Code subscription | Separate API key + costs |
-| **Setup time** | 2 minutes | 30+ minutes |
-| **Database** | Embedded DuckDB (zero config) | Docker containers required |
-| **External dependencies** | None | 2-3 (DB + vector + graph) |
-| **API keys needed** | 0 (embeddings run on your machine) | 2-3 (LLM + embedding + rerank) |
-| **Workflow** | `/research` (auto-syncs) | Custom scripts |
-
----
-
-## Quick Start (2 Minutes)
-
-### What You Need
-
-- **Claude Code** (you probably already have it)
-- No API key. Embeddings are computed on your machine by a model `lattice init`
-  downloads once (about 145 MB); after that, indexing and search work offline.
+No API key. Embeddings are computed on your machine by a model `lattice init`
+downloads once (about 145 MB); after that, indexing and search work offline.
 
 ### 1. Install
 
 ```bash
-bun add -g @zabaca/lattice   # Install CLI
-lattice init                 # Create ~/.lattice and download the embedding model
+bun add -g @zabaca/lattice
+lattice init
 ```
 
-That's it. No Docker. No containers. DuckDB is embedded.
+`lattice init` creates `~/.lattice/` with a `docs/` bundle directory and an
+empty `lattice.db`, and downloads the embedding model into `~/.lattice/models/`
+with progress as it goes. It is safe to run again: nothing already in place is
+fetched twice.
 
-### 2. Start Researching
+To use the `/research` slash command in Claude Code, copy it from the package's
+`commands/` directory into `.claude/commands/` (this project, or `~/.claude/commands/`
+for every project).
+
+### 2. Put markdown in the bundle and index it
 
 ```bash
-claude                        # Launch Claude Code
-/research "your topic"        # Find or create documentation (auto-syncs)
-lattice search "your query"   # Semantic search
+cp -r my-notes ~/.lattice/docs/
+lattice sync
 ```
 
-### That's It!
+### 3. Search
 
-The `/research` command will:
-- Search your existing docs for related content
-- Ask if you need new research
-- Create organized documentation with AI assistance
-- **Automatically sync** to the knowledge graph
+```bash
+lattice search "how does chunking work"
+```
+
+---
+
+## The documents
+
+A Lattice document is an OKF concept: markdown with frontmatter.
+
+```markdown
+---
+type: Research
+title: Value retention
+description: How well the Model S holds its resale value.
+status: draft
+tags: [tesla, resale]
+generated: { by: agent:claude-code/research, at: 2026-09-20T00:00:00Z }
+sources:
+  - ../concepts/users.md
+  - https://example.com/depreciation
+---
+
+# Value retention
+
+Depreciation flattens after the fourth year.
+```
+
+`type` is what makes a file conforming. A file without it is still indexed —
+`lattice status` reports it as a frontmatter problem rather than dropping it.
+
+`index.md` and `log.md` are reserved in every directory: they are navigation and
+changelog, not knowledge, and are never indexed as concepts.
+
+A document is chunked at its headings, so search points at the passage that
+answers the question rather than at the file that contains it.
 
 ---
 
 ## Using /research
 
-The `/research` command provides an AI-assisted research workflow.
-
-### Searching Existing Research
-
-```bash
-/research "semantic search"
-```
-
-Claude will:
-1. Search your docs using semantic similarity
-2. Read and summarize relevant findings
-3. Ask if existing research answers your question
-
-### Creating New Research
-
-```bash
-/research "new topic to explore"
-```
-
-If no existing docs match, Claude will:
-1. Perform web research
-2. Create a new topic directory (`~/.lattice/docs/new-topic/`)
-3. Generate README.md index and research document
-4. Automatically sync to the knowledge graph
-
----
-
-## Question Tracking
-
-Track research questions and link them to answers in your knowledge base.
-
-```bash
-lattice question:add "How does X work?"           # Track a question
-lattice question:link "How does X work?" --doc ~/.lattice/docs/topic/answer.md  # Link to answer
-lattice question:unanswered                       # Find unanswered questions
-```
-
-Questions become searchable entities with `ANSWERED_BY` relationships to documents.
-
----
-
-## P2P Knowledge Sharing
-
-Share your research with others via encrypted peer-to-peer transfer.
-
-```bash
-# Sender
-lattice share duckdb                    # Share the duckdb topic
-# Output: 5443-madam-bandit-river
-
-# Receiver
-lattice receive 5443-madam-bandit-river # Receive and auto-sync to graph
-```
-
-Uses [croc](https://github.com/schollz/croc) for secure transfers. The binary is auto-downloaded on first use.
-
----
-
-## Site Generation
-
-Generate a browsable documentation site from your knowledge base.
-
-```bash
-lattice site              # Build and serve at localhost:4321
-lattice site --build      # Build only (output to .lattice/site/)
-```
-
-Uses [Astro](https://astro.build/) with a clean documentation theme. Your entities and relationships become navigable pages.
+`/research "your topic"` searches the index first with `lattice search --json`,
+shows you which documents and which passages already cover the topic, and asks
+before doing new research. What it writes is a conforming concept — type, title,
+description, tags, `generated` provenance and its `sources` — filed under a
+topic directory with an `index.md`, and synced.
 
 ---
 
 ## CLI Reference
 
-The Lattice CLI runs behind the scenes. You typically won't use it directly — the Claude Code slash commands handle everything.
-
 <details>
-<summary><b>CLI Commands (Advanced)</b></summary>
+<summary><b>Commands</b></summary>
 
 ### `lattice init`
 
-Install Claude Code slash commands for Lattice.
+Create `~/.lattice/`, its `docs/` bundle directory, and the SQLite index.
 
 ```bash
-lattice init              # Install to .claude/commands/ (current project)
-lattice init --global     # Install to ~/.claude/commands/ (all projects)
+lattice init
 ```
 
 ### `lattice sync`
 
-Synchronize documents to the knowledge graph.
+Index the bundle — everything new, changed, renamed or deleted since the last
+run — then embed whatever still has no vector. Interrupting it leaves a backlog,
+not a half-written document.
 
 ```bash
-lattice sync [paths...]         # Sync specified paths or current directory
-lattice sync --force            # Force re-sync (rebuilds entire graph)
-lattice sync --dry-run          # Preview changes without applying
+lattice sync
 ```
 
 ### `lattice status`
 
-Show documents that need syncing.
+What is indexed, what is still awaiting a vector, and which files have
+frontmatter problems.
 
 ```bash
-lattice status                  # Show new/changed documents
+lattice status
+```
+
+### `lattice embed`
+
+Embed the backlog on its own — the same code path `lattice sync` ends with.
+
+```bash
+lattice embed                   # Everything with no vector
+lattice embed --retry-failed    # Also retry the permanent failures
 ```
 
 ### `lattice search`
@@ -184,6 +158,7 @@ siblings, and those neighbours are always ranked below the direct hits.
 
 ```bash
 lattice search "query"                   # Passages, with neighbours below them
+lattice search "query" --json            # The same result, machine-readable
 lattice search "query" --concepts        # Which document, rather than which passage
 lattice search "query" --expand 5        # More neighbours (default 3)
 lattice search "query" --no-expand       # Direct hits only
@@ -195,15 +170,6 @@ With no usable embedding — no provider, or an index embedded by another model
 — the search still answers from keywords alone. `--json` then reports
 `"degraded": true` with a reason, so a caller can say the answer is weaker than
 usual; `--require-embeddings` turns that into a non-zero exit instead.
-
-### `lattice sql`
-
-Execute raw SQL queries against DuckDB.
-
-```bash
-lattice sql "SELECT * FROM nodes LIMIT 10"
-lattice sql "SELECT label, COUNT(*) FROM nodes GROUP BY label"
-```
 
 ### `lattice rels`
 
@@ -223,63 +189,15 @@ points inside the bundle is one, reported as `cited`. A link to a document that
 has not been written is kept and listed under **Unresolved** — write that
 document, sync, and the edge resolves itself.
 
-### `lattice ontology`
+### `lattice sql`
 
-Display the derived ontology from your documents.
-
-```bash
-lattice ontology                # Show entity types and relationship types
-```
-
-### `lattice site`
-
-Build and serve a documentation site.
+Run a read-only SQL query against the index and print the rows as JSON. SQLite's
+own `query_only` mode enforces the read-only part, so a statement that would
+write is refused rather than pattern-matched against.
 
 ```bash
-lattice site                    # Build and serve at localhost:4321
-lattice site --build            # Build only (output to .lattice/site/)
-```
-
-### `lattice share`
-
-Share a topic directory via P2P transfer.
-
-```bash
-lattice share <path>            # Share docs, outputs a receive code
-```
-
-### `lattice receive`
-
-Receive shared documents.
-
-```bash
-lattice receive <code>          # Receive and auto-sync to graph
-lattice receive <code> --no-sync  # Receive without syncing
-```
-
-### `lattice question:add`
-
-Track a research question.
-
-```bash
-lattice question:add "question"                    # Create question entity
-lattice question:add "question" --answered-by path # Create and link
-```
-
-### `lattice question:link`
-
-Link a question to an answering document.
-
-```bash
-lattice question:link "question" --doc path
-```
-
-### `lattice question:unanswered`
-
-List questions without answers.
-
-```bash
-lattice question:unanswered
+lattice sql "SELECT path, type, title FROM concepts LIMIT 10"
+lattice sql "SELECT type, count(*) AS n FROM concepts GROUP BY type"
 ```
 
 </details>
@@ -288,12 +206,12 @@ lattice question:unanswered
 
 ## Configuration
 
-### Environment Variables
+### Environment variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `LATTICE_HOME` | Lattice's home directory | `~/.lattice` |
-| `LATTICE_EMBED_PROVIDER` | `local` (a real model, in-process) or `hash` (deterministic, for tests) | `local` |
+| `LATTICE_HOME` | The Lattice home directory | `~/.lattice` |
+| `LATTICE_EMBED_PROVIDER` | `local` (a real model, in-process) or `hash` (deterministic, for tests). An unknown name is an error, never a silent fallback. | `local` |
 | `LATTICE_EMBED_MODEL` | Which registered model to use | `nomic-embed-text-v1.5` |
 | `LATTICE_EMBED_DIM` | Stored vector width; only a model trained for truncation may go below its native width | `512` |
 | `LATTICE_MODEL_DIR` | Where model weights are cached | `$LATTICE_HOME/models` |
@@ -306,56 +224,56 @@ chunks affected, and `lattice embed --reembed` rebuilds the index — keeping th
 old vectors until the new ones are complete, so an interrupted rebuild still
 searches correctly and simply resumes.
 
-### Database Location
+### Storage
 
-Lattice stores its knowledge graph in `~/.lattice/lattice.duckdb`. This file contains:
-- All extracted entities (nodes)
-- Relationships between entities
-- Vector embeddings for semantic search
-
-You can back up, copy, or version control this file like any other.
-
-<details>
-<summary><b>How It Works (Technical Details)</b></summary>
-
-### Entity Extraction
-
-When you run `/research` or `lattice sync`, Claude Code extracts entities from your documents and writes them directly to the DuckDB database. No frontmatter required — your markdown files stay clean.
-
-The extraction identifies:
-- **Entities**: People, technologies, concepts, tools, etc.
-- **Relationships**: How entities connect to each other
-- **Document metadata**: Title, summary, topic classification
-
-### Database Schema
-
-Lattice uses two main tables:
-
-```sql
--- Nodes (entities)
-CREATE TABLE nodes (
-    label VARCHAR NOT NULL,      -- Entity type: Document, Technology, etc.
-    name VARCHAR NOT NULL,       -- Unique identifier
-    properties JSON,             -- Additional metadata
-    embedding FLOAT[512],        -- Vector for semantic search
-    PRIMARY KEY(label, name)
-);
-
--- Relationships
-CREATE TABLE relationships (
-    source_label VARCHAR NOT NULL,
-    source_name VARCHAR NOT NULL,
-    relation_type VARCHAR NOT NULL,
-    target_label VARCHAR NOT NULL,
-    target_name VARCHAR NOT NULL,
-    properties JSON,
-    PRIMARY KEY(source_label, source_name, relation_type, target_label, target_name)
-);
+```
+~/.lattice/
+├── docs/            # The markdown bundle
+├── lattice.db       # The SQLite index
+├── .env             # Local configuration
+└── .sync.lock       # Held while a sync is running
 ```
 
-### Vector Search
+`lattice.db` holds the concepts, their chunks, the FTS index over those chunks,
+the embeddings, and the links. Back it up or delete it freely: it is derived
+entirely from the markdown, and `lattice sync` rebuilds it.
 
-Lattice uses DuckDB's VSS extension for HNSW-based vector similarity search with cosine distance.
+<details>
+<summary><b>How it works</b></summary>
+
+### Indexing
+
+`lattice sync` walks the bundle, reads each file's OKF frontmatter, and chunks
+the body at its headings. The chunks go into an FTS5 index; the links and the
+in-bundle `sources:` citations go into a `links` table, which is re-resolved in
+full at the end of every sync — so writing a document that was only linked to
+repairs the edge, and deleting one returns its inbound links to unresolved.
+
+### Embeddings
+
+Embeddings are produced in-process behind the `EmbeddingProvider` seam
+(`src/embed/provider.ts`). The default `local` provider runs a real ONNX model
+in the command's own process from weights cached under the Lattice home: no
+daemon, no API key, and no network once the model is there. `hash` is the
+deterministic alternative — no model on disk, no network — which makes the
+pipeline runnable anywhere; it is not a semantic model, so with it ranking is
+what keyword search alone would give.
+
+A chunk with no vector is a row missing from `chunk_embeddings` for the active
+vector space, so an interruption leaves a backlog rather than corruption. A
+provider failure is recorded per target as retryable or permanent; retryable
+failures are picked up by the next run, permanent ones only under
+`lattice embed --retry-failed`.
+
+A vector space is a `(model, dim)` pair, and the one the index is in is
+recorded rather than inferred, so two models can never be mixed. See
+**Environment variables** above for what a model change does.
+
+### Ranking
+
+The keyword leg and the semantic leg run over one filtered candidate set and
+are fused with reciprocal rank fusion, because a BM25 tier and a cosine are not
+comparable quantities. A similarity below the floor never enters the fusion.
 
 </details>
 
@@ -364,52 +282,17 @@ Lattice uses DuckDB's VSS extension for HNSW-based vector similarity search with
 ## Contributing
 
 <details>
-<summary><b>Development Setup</b></summary>
-
-### Prerequisites
-
-- Node.js >= 18.0.0
-- Bun (recommended) or npm
-
-### Setup
+<summary><b>Development</b></summary>
 
 ```bash
 git clone https://github.com/Zabaca/lattice.git
 cd lattice
 bun install
-cp .env.example .env
-```
 
-### Running Locally
-
-```bash
-bun run dev              # Development mode
-bun test                 # Run tests
-bun run build            # Build for production
-```
-
-</details>
-
-<details>
-<summary><b>Programmatic API</b></summary>
-
-```typescript
-import { NestFactory } from '@nestjs/core';
-import { AppModule } from '@zabaca/lattice';
-
-async function main() {
-  const app = await NestFactory.createApplicationContext(AppModule);
-  const syncService = app.get(SyncService);
-
-  const result = await syncService.sync({
-    paths: ['./docs'],
-    force: false
-  });
-
-  console.log(`Synced ${result.added} new documents`);
-
-  await app.close();
-}
+bun test              # The suite, driven through the CLI seam
+bun run check         # tsc --noEmit && biome check
+bun run lattice -- status   # Run the CLI from source
+bun run build
 ```
 
 </details>
@@ -421,7 +304,3 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.
-
----
-
-Built with [DuckDB](https://duckdb.org/), [Voyage AI](https://www.voyageai.com/), and [Claude Code](https://claude.ai/code)

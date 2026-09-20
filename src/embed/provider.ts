@@ -5,10 +5,29 @@
  * interface, so swapping the deterministic hash provider for a real local
  * model later is one module, not a rewrite.
  *
- * The default provider derives its vector from a hash of the text. It is not
- * semantic and is not meant to be: it is reproducible, needs no model on disk
- * and touches no network, which is what makes the whole pipeline testable.
+ * The default provider is `local`: a real model, run in this process, from
+ * weights cached under the Lattice home. `hash` is the other one — a vector
+ * derived from a hash of the text, not semantic and not meant to be, but
+ * reproducible, model-free and network-free, which is what makes the whole
+ * pipeline testable.
  */
+
+import { EmbeddingError } from "./errors.js";
+import { createLocalProvider, type ProgressReporter } from "./local.js";
+
+export { EmbeddingError } from "./errors.js";
+export type { ModelSource, ProgressReporter } from "./local.js";
+export { resolveModelSource } from "./local.js";
+export type { ModelChoice, ModelSpec, Pooling } from "./models.js";
+export {
+	canonicalModelName,
+	DEFAULT_MODEL,
+	documentText,
+	modelNames,
+	queryText,
+	resolveModelChoice,
+	truncateAndRenormalize,
+} from "./models.js";
 
 /** Dimensions the hash provider emits unless `LATTICE_EMBED_DIM` says otherwise. */
 const DEFAULT_DIM = 512;
@@ -17,24 +36,28 @@ export interface EmbeddingProvider {
 	/** Recorded with every vector, so a model change can be spotted later. */
 	readonly model: string;
 	readonly dim: number;
-	/** One vector per input, in the same order. */
+	/**
+	 * Where this model name came from — an environment variable, or the
+	 * built-in default. It is only ever used in the message a user sees when
+	 * their index and their configuration disagree, which is unreadable
+	 * without it.
+	 */
+	readonly source: string;
+	/** One vector per input, in the same order. Inputs are passages to index. */
 	embed(texts: string[]): Promise<Float32Array[]>;
-}
-
-/**
- * A failure the provider chose to classify.
- *
- * `retryable` is the whole point: a timeout is worth another run, a text the
- * model will never accept is not, and the embed phase treats them differently.
- */
-export class EmbeddingError extends Error {
-	readonly retryable: boolean;
-
-	constructor(message: string, retryable: boolean) {
-		super(message);
-		this.name = "EmbeddingError";
-		this.retryable = retryable;
-	}
+	/**
+	 * The same, for text that is a question rather than a passage. An
+	 * asymmetric model is trained to be told which it is being given.
+	 */
+	embedQuery(texts: string[]): Promise<Float32Array[]>;
+	/**
+	 * Get whatever this provider needs onto the machine, reporting progress.
+	 *
+	 * `init` calls it so the one slow, network-shaped part of using Lattice
+	 * happens where the user asked for it. A provider that needs nothing does
+	 * not implement it.
+	 */
+	prepare?(report: ProgressReporter): Promise<void>;
 }
 
 /**
@@ -45,14 +68,24 @@ export class EmbeddingError extends Error {
  */
 export function selectProvider(
 	env: Record<string, string | undefined>,
+	report?: ProgressReporter,
 ): EmbeddingProvider {
-	const name = env.LATTICE_EMBED_PROVIDER?.trim() || "hash";
+	const name = env.LATTICE_EMBED_PROVIDER?.trim() || "local";
+	if (name === "local") {
+		return createLocalProvider(env, report);
+	}
 	if (name !== "hash") {
 		throw new Error(
-			`Unknown embedding provider: ${name}. Known providers: hash.`,
+			`Unknown embedding provider: ${name}. Known providers: local, hash.`,
 		);
 	}
-	return new HashProvider(resolveDim(env), env.LATTICE_EMBED_FAIL?.trim());
+	return new HashProvider(
+		resolveDim(env),
+		env.LATTICE_EMBED_DIM?.trim()
+			? "LATTICE_EMBED_DIM"
+			: "the built-in default",
+		env.LATTICE_EMBED_FAIL?.trim(),
+	);
 }
 
 function resolveDim(env: Record<string, string | undefined>): number {
@@ -74,13 +107,20 @@ function resolveDim(env: Record<string, string | undefined>): number {
 class HashProvider implements EmbeddingProvider {
 	readonly model: string;
 	readonly dim: number;
+	readonly source: string;
 	/** `retryable:<substring>` or `permanent:<substring>` — see `parseFault`. */
 	private readonly fault?: { retryable: boolean; match: string };
 
-	constructor(dim: number, fault?: string) {
+	constructor(dim: number, source: string, fault?: string) {
 		this.dim = dim;
 		this.model = `hash-${dim}`;
+		this.source = source;
 		this.fault = parseFault(fault);
+	}
+
+	/** A hash is symmetric: a question and a passage are hashed alike. */
+	embedQuery(texts: string[]): Promise<Float32Array[]> {
+		return this.embed(texts);
 	}
 
 	async embed(texts: string[]): Promise<Float32Array[]> {

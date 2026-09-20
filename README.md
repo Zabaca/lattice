@@ -26,7 +26,7 @@ That's it. One command to build a knowledge base.
 | **Setup time** | 2 minutes | 30+ minutes |
 | **Database** | Embedded DuckDB (zero config) | Docker containers required |
 | **External dependencies** | None | 2-3 (DB + vector + graph) |
-| **API keys needed** | 1 (Voyage AI for embeddings) | 2-3 (LLM + embedding + rerank) |
+| **API keys needed** | 0 (embeddings run on your machine) | 2-3 (LLM + embedding + rerank) |
 | **Workflow** | `/research` (auto-syncs) | Custom scripts |
 
 ---
@@ -36,14 +36,14 @@ That's it. One command to build a knowledge base.
 ### What You Need
 
 - **Claude Code** (you probably already have it)
-- **Voyage AI API key** ([get one here](https://www.voyageai.com/) - embeddings only, ~$0.01/1M tokens)
+- No API key. Embeddings are computed on your machine by a model `lattice init`
+  downloads once (about 145 MB); after that, indexing and search work offline.
 
 ### 1. Install
 
 ```bash
-bun add -g @zabaca/lattice          # Install CLI
-export VOYAGE_API_KEY=your-key-here  # Set API key
-lattice init --global                # Install Claude Code commands
+bun add -g @zabaca/lattice   # Install CLI
+lattice init                 # Create ~/.lattice and download the embedding model
 ```
 
 That's it. No Docker. No containers. DuckDB is embedded.
@@ -278,9 +278,19 @@ lattice question:unanswered
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `VOYAGE_API_KEY` | Voyage AI API key for embeddings | *required* |
-| `DUCKDB_PATH` | Path to DuckDB database file | `~/.lattice/lattice.duckdb` |
-| `EMBEDDING_DIMENSIONS` | Embedding vector dimensions | `512` |
+| `LATTICE_HOME` | Lattice's home directory | `~/.lattice` |
+| `LATTICE_EMBED_PROVIDER` | `local` (a real model, in-process) or `hash` (deterministic, for tests) | `local` |
+| `LATTICE_EMBED_MODEL` | Which registered model to use | `nomic-embed-text-v1.5` |
+| `LATTICE_EMBED_DIM` | Stored vector width; only a model trained for truncation may go below its native width | `512` |
+| `LATTICE_MODEL_DIR` | Where model weights are cached | `$LATTICE_HOME/models` |
+| `LATTICE_OFFLINE` / `HF_HUB_OFFLINE` | Never download; use what is already cached | unset |
+| `LATTICE_HF_MIRROR` | Download the weights from somewhere other than the hub (`HF_ENDPOINT` also works) | unset |
+
+Changing the model is safe: vectors from two models are not comparable, so a
+`sync` under a changed model refuses, naming both models and the number of
+chunks affected, and `lattice embed --reembed` rebuilds the index — keeping the
+old vectors until the new ones are complete, so an interrupted rebuild still
+searches correctly and simply resumes.
 
 ### Database Location
 

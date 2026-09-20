@@ -23,8 +23,20 @@ function freshHome(): string {
 	return mkdtempSync(join(tmpdir(), "lattice-test-"));
 }
 
-function invoke(argv: string[], home: string = freshHome()) {
-	return runCli({ argv, env: { LATTICE_HOME: home } });
+/**
+ * The suite runs on the deterministic `hash` provider throughout: it needs no
+ * model on disk and no network, and two of its widths are two vector spaces,
+ * which is all the model-change tests need.
+ */
+function invoke(
+	argv: string[],
+	home: string = freshHome(),
+	env: Record<string, string | undefined> = {},
+) {
+	return runCli({
+		argv,
+		env: { LATTICE_HOME: home, LATTICE_EMBED_PROVIDER: "hash", ...env },
+	});
 }
 
 /** An initialised home whose docs directory holds the fixture OKF bundle. */
@@ -797,7 +809,11 @@ describe("interrupting a sync", () => {
 		}
 
 		const running = Bun.spawn(["bun", "run", "src/main.ts", "sync"], {
-			env: { ...process.env, LATTICE_HOME: home },
+			env: {
+				...process.env,
+				LATTICE_HOME: home,
+				LATTICE_EMBED_PROVIDER: "hash",
+			},
 			stdout: "ignore",
 			stderr: "ignore",
 		});
@@ -880,7 +896,11 @@ describe("provider failures", () => {
 	function withFault(argv: string[], home: string, fault: string) {
 		return runCli({
 			argv,
-			env: { LATTICE_HOME: home, LATTICE_EMBED_FAIL: fault },
+			env: {
+				LATTICE_HOME: home,
+				LATTICE_EMBED_PROVIDER: "hash",
+				LATTICE_EMBED_FAIL: fault,
+			},
 		});
 	}
 
@@ -987,7 +1007,11 @@ describe("lattice status and the embedding backlog", () => {
 
 		await runCli({
 			argv: ["sync"],
-			env: { LATTICE_HOME: home, LATTICE_EMBED_FAIL: "retryable:Chunking" },
+			env: {
+				LATTICE_HOME: home,
+				LATTICE_EMBED_PROVIDER: "hash",
+				LATTICE_EMBED_FAIL: "retryable:Chunking",
+			},
 		});
 		const waiting = await invoke(["status"], home);
 
@@ -1003,5 +1027,216 @@ describe("lattice status and the embedding backlog", () => {
 		const done = await invoke(["status"], home);
 
 		expect(done.stdout).toContain("Awaiting vectors: 0");
+	});
+});
+
+describe("changing the embedding model", () => {
+	/** The same bundle, indexed and embedded in the default (512) space. */
+	async function embeddedHome(): Promise<string> {
+		const home = await bundledHome();
+		const result = await invoke(["sync"], home);
+		expect(result.code).toBe(0);
+		return home;
+	}
+
+	/** The same command, run in a narrower space — a different model. */
+	function inNewSpace(argv: string[], home: string) {
+		return invoke(argv, home, { LATTICE_EMBED_DIM: "256" });
+	}
+
+	test("sync under a changed model refuses and says what to do about it", async () => {
+		const home = await embeddedHome();
+		const [{ n: before }] = await sql<{ n: number }>(
+			home,
+			"SELECT count(*) AS n FROM chunk_embeddings",
+		);
+
+		const result = await inNewSpace(["sync"], home);
+
+		expect(result.code).not.toBe(0);
+		expect(result.stderr).toContain("hash-512");
+		expect(result.stderr).toContain("hash-256");
+		expect(result.stderr).toContain(String(before));
+		expect(result.stderr).toContain("LATTICE_EMBED_DIM");
+		expect(result.stderr).toContain("lattice embed --reembed");
+
+		// Nothing was written into the new space by the refused run.
+		const [{ n: after }] = await sql<{ n: number }>(
+			home,
+			"SELECT count(*) AS n FROM chunk_embeddings WHERE dim = 256",
+		);
+		expect(after).toBe(0);
+	});
+
+	test("embed and search refuse the same change, rather than mixing spaces", async () => {
+		const home = await embeddedHome();
+
+		for (const argv of [["embed"], ["search", "users"]]) {
+			const result = await inNewSpace(argv, home);
+
+			expect(result.code).not.toBe(0);
+			expect(result.stderr).toContain("hash-512");
+			expect(result.stderr).toContain("hash-256");
+			expect(result.stderr).toContain("lattice embed --reembed");
+		}
+	});
+
+	test("--reembed rebuilds the index and drops the space it replaced", async () => {
+		const home = await embeddedHome();
+
+		const result = await inNewSpace(["embed", "--reembed"], home);
+
+		expect(result.code).toBe(0);
+		expect(result.stdout).toContain("hash-256");
+		expect(
+			await sql(
+				home,
+				"SELECT model, dim, count(*) AS n FROM chunk_embeddings GROUP BY model, dim",
+			),
+		).toEqual([{ model: "hash-256", dim: 256, n: expect.any(Number) }]);
+		expect(
+			await sql(home, "SELECT value FROM meta WHERE key = 'embedding_model'"),
+		).toEqual([{ value: "hash-256" }]);
+
+		// And the new space is now simply the index's own: nothing refuses.
+		expect((await inNewSpace(["sync"], home)).code).toBe(0);
+	});
+
+	test("a permanent failure in the new space blocks the swap rather than losing vectors", async () => {
+		const home = await embeddedHome();
+		const [{ n: original }] = await sql<{ n: number }>(
+			home,
+			"SELECT count(*) AS n FROM chunk_embeddings WHERE model = 'hash-512'",
+		);
+
+		// One chunk can never be embedded in the new space. Finishing anyway
+		// would delete a vector the index still has and cannot rebuild.
+		const result = await invoke(["embed", "--reembed"], home, {
+			LATTICE_EMBED_DIM: "256",
+			LATTICE_EMBED_FAIL: "permanent:Users table",
+		});
+
+		expect(result.code).toBe(0);
+		expect(
+			await sql(home, "SELECT value FROM meta WHERE key = 'embedding_model'"),
+		).toEqual([{ value: "hash-512" }]);
+		expect(
+			await sql<{ n: number }>(
+				home,
+				"SELECT count(*) AS n FROM chunk_embeddings WHERE model = 'hash-512'",
+			),
+		).toEqual([{ n: original }]);
+		expect(result.stdout).toContain("--retry-failed");
+	});
+
+	test("an interrupted re-embed keeps the old vectors and resumes", async () => {
+		const home = await embeddedHome();
+		const [{ n: original }] = await sql<{ n: number }>(
+			home,
+			"SELECT count(*) AS n FROM chunk_embeddings WHERE model = 'hash-512'",
+		);
+
+		// One chunk of the fixture bundle cannot be embedded this run.
+		const interrupted = await invoke(["embed", "--reembed"], home, {
+			LATTICE_EMBED_DIM: "256",
+			LATTICE_EMBED_FAIL: "retryable:Users table",
+		});
+
+		expect(interrupted.code).toBe(0);
+		// The pointer has not moved, so the old vectors are still the ones a
+		// search would read, and they are all still there.
+		expect(
+			await sql(home, "SELECT value FROM meta WHERE key = 'embedding_model'"),
+		).toEqual([{ value: "hash-512" }]);
+		expect(
+			await sql<{ n: number }>(
+				home,
+				"SELECT count(*) AS n FROM chunk_embeddings WHERE model = 'hash-512'",
+			),
+		).toEqual([{ n: original }]);
+
+		// Resuming completes it, and does not start over.
+		const resumed = await inNewSpace(["embed", "--reembed"], home);
+
+		expect(resumed.code).toBe(0);
+		expect(
+			await sql(home, "SELECT value FROM meta WHERE key = 'embedding_model'"),
+		).toEqual([{ value: "hash-256" }]);
+		expect(
+			await sql<{ n: number }>(
+				home,
+				"SELECT count(*) AS n FROM chunk_embeddings WHERE model = 'hash-512'",
+			),
+		).toEqual([{ n: 0 }]);
+	});
+});
+
+describe("the local model", () => {
+	/** The real provider, with downloading forbidden and nothing cached. */
+	function offline(argv: string[], home: string) {
+		return invoke(argv, home, {
+			LATTICE_EMBED_PROVIDER: undefined,
+			HF_HUB_OFFLINE: "1",
+		});
+	}
+
+	test("init still initialises when the model cannot be downloaded, and says what to place", async () => {
+		const home = freshHome();
+
+		const result = await offline(["init"], home);
+
+		expect(result.code).toBe(0);
+		expect(existsSync(join(home, "lattice.db"))).toBe(true);
+		expect(result.stdout).toContain("Embeddings are not ready yet");
+		expect(result.stdout).toContain(join(home, "models"));
+		expect(result.stdout).toContain("nomic-ai/nomic-embed-text-v1.5");
+	});
+
+	test("sync says what model is missing rather than failing obscurely", async () => {
+		const home = await bundledHome();
+
+		const result = await offline(["sync"], home);
+
+		expect(result.code).not.toBe(0);
+		expect(result.stderr).toContain(join(home, "models"));
+		expect(result.stderr).toContain("LATTICE_OFFLINE");
+	});
+
+	test("status still reports the index when the model is not there", async () => {
+		const home = await bundledHome();
+		await invoke(["sync"], home);
+
+		const result = await offline(["status"], home);
+
+		expect(result.code).toBe(0);
+		expect(result.stdout).toContain("Chunks:     11");
+		expect(result.stdout).toContain("Embeddings: 11");
+		expect(result.stdout).toContain("Embeddings are not ready yet");
+	});
+
+	test("init reports progress while it works", async () => {
+		const home = freshHome();
+		// A model directory that is present is not downloaded — the reported
+		// line is the one progress channel either way.
+		const models = join(home, "models", "nomic-ai", "nomic-embed-text-v1.5");
+		mkdirSync(join(models, "onnx"), { recursive: true });
+		for (const file of [
+			"config.json",
+			"tokenizer.json",
+			"tokenizer_config.json",
+		]) {
+			writeFileSync(join(models, file), "{}");
+		}
+		writeFileSync(join(models, "onnx", "model_quantized.onnx"), "");
+
+		const result = await invoke(["init"], home, {
+			LATTICE_EMBED_PROVIDER: undefined,
+			LATTICE_OFFLINE: "1",
+		});
+
+		expect(result.code).toBe(0);
+		expect(result.progress.join("\n")).toContain(
+			`Model nomic-embed-text-v1.5 is already in ${join(home, "models")}`,
+		);
 	});
 });

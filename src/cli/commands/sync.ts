@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { openDatabase } from "../../db/open.js";
 import { selectProvider } from "../../embed/provider.js";
 import { embedPending } from "../../embed/run.js";
+import { checkActiveSpace } from "../../embed/state.js";
 import { applySync, planSync, type SyncReport } from "../../sync/index.js";
 import { acquireLock, LockHeldError } from "../../sync/lock.js";
 import { resolvePaths } from "../../utils/paths.js";
@@ -28,7 +29,7 @@ export async function runSync(context: CommandContext): Promise<CommandOutput> {
 
 	// Resolved before the lock, so a mistyped provider fails without leaving a
 	// lock file behind.
-	const provider = selectProvider(context.env);
+	const provider = selectProvider(context.env, context.report);
 
 	let lock: ReturnType<typeof acquireLock>;
 	try {
@@ -45,6 +46,17 @@ export async function runSync(context: CommandContext): Promise<CommandOutput> {
 	try {
 		const db = openDatabase(paths.database);
 		try {
+			// Before a single document is read: indexing a bundle only to refuse
+			// to embed it would leave the user with a half-done run to explain.
+			const mismatch = checkActiveSpace(
+				db,
+				{ model: provider.model, dim: provider.dim },
+				provider.source,
+			);
+			if (mismatch !== undefined) {
+				return { code: 1, stderr: mismatch };
+			}
+
 			const plan = planSync(db, paths.docs);
 			const indexed = isNoOp(plan)
 				? `Nothing to sync. ${plan.unchanged} concept${plan.unchanged === 1 ? "" : "s"} already indexed.\n`

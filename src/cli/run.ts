@@ -100,8 +100,12 @@ const COMMANDS: Record<string, CommandSpec> = {
 		run: runSql,
 	},
 	search: {
-		usage: "lattice search <query>",
-		summary: "Search the index",
+		usage:
+			"lattice search <query> [--json] [--limit n] [--chunks n]\n" +
+			"       [--concepts] [--expand n | --no-expand] [--require-embeddings]\n" +
+			"       [--type t] [--tag t] [--dir d] [--status s] [--trust t]\n" +
+			"       [--include-deprecated] [--as-of date]",
+		summary: "Search the index by keyword and by meaning at once",
 		requiredArgs: ["query"],
 		run: runSearch,
 	},

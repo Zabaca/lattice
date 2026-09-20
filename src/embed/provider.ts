@@ -14,6 +14,7 @@
 
 import { EmbeddingError } from "./errors.js";
 import { createLocalProvider, type ProgressReporter } from "./local.js";
+import { STUB_PROVIDER, stubProviderFromEnv } from "./stub.js";
 
 export { EmbeddingError } from "./errors.js";
 export type { ModelSource, ProgressReporter } from "./local.js";
@@ -74,9 +75,12 @@ export function selectProvider(
 	if (name === "local") {
 		return createLocalProvider(env, report);
 	}
+	if (name === STUB_PROVIDER) {
+		return stubProviderFromEnv(env);
+	}
 	if (name !== "hash") {
 		throw new Error(
-			`Unknown embedding provider: ${name}. Known providers: local, hash.`,
+			`Unknown embedding provider: ${name}. Known providers: local, hash, ${STUB_PROVIDER}.`,
 		);
 	}
 	return new HashProvider(

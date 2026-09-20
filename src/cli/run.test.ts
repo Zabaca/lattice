@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { runCli } from "./run.js";
 
 const FIXTURE_BUNDLE = join(import.meta.dir, "..", "fixtures", "bundle");
+const FIXTURE_HYBRID = join(import.meta.dir, "..", "fixtures", "hybrid");
 
 /**
  * Every test drives the CLI through its single seam, `runCli`, with an
@@ -24,9 +25,9 @@ function freshHome(): string {
 }
 
 /**
- * The suite runs on the deterministic `hash` provider throughout: it needs no
- * model on disk and no network, and two of its widths are two vector spaces,
- * which is all the model-change tests need.
+ * The suite runs on the deterministic `hash` provider unless a test says
+ * otherwise: it needs no model on disk and no network, and two of its widths
+ * are two vector spaces, which is all the model-change tests need.
  */
 function invoke(
 	argv: string[],
@@ -35,7 +36,7 @@ function invoke(
 ) {
 	return runCli({
 		argv,
-		env: { LATTICE_HOME: home, LATTICE_EMBED_PROVIDER: "hash", ...env },
+		env: { LATTICE_EMBED_PROVIDER: "hash", ...env, LATTICE_HOME: home },
 	});
 }
 
@@ -184,6 +185,11 @@ describe("lattice sync", () => {
 			"notes/broken.md",
 			"notes/plain.md",
 			"notes/unverified.md",
+			"search/body-match.md",
+			"search/fresh-widget.md",
+			"search/heading-match.md",
+			"search/stale-widget.md",
+			"search/title-match.md",
 		]);
 	});
 
@@ -238,6 +244,11 @@ describe("lattice sync", () => {
 			{ path: "concepts/users.md", tag: "core" },
 			{ path: "concepts/users.md", tag: "data" },
 			{ path: "guides/chunking.md", tag: "guide" },
+			{ path: "search/body-match.md", tag: "rank" },
+			{ path: "search/fresh-widget.md", tag: "rank" },
+			{ path: "search/heading-match.md", tag: "rank" },
+			{ path: "search/stale-widget.md", tag: "rank" },
+			{ path: "search/title-match.md", tag: "rank" },
 		]);
 
 		expect(
@@ -249,6 +260,11 @@ describe("lattice sync", () => {
 			{ path: "notes/broken.md", trust: "unverified" },
 			{ path: "notes/plain.md", trust: "unverified" },
 			{ path: "notes/unverified.md", trust: "unverified" },
+			{ path: "search/body-match.md", trust: "unverified" },
+			{ path: "search/fresh-widget.md", trust: "unverified" },
+			{ path: "search/heading-match.md", trust: "unverified" },
+			{ path: "search/stale-widget.md", trust: "unverified" },
+			{ path: "search/title-match.md", trust: "unverified" },
 		]);
 	});
 
@@ -759,7 +775,7 @@ describe("the sync lock", () => {
 		expect(result.code).toBe(0);
 		expect(existsSync(join(home, ".sync.lock"))).toBe(false);
 		expect(await sql(home, "SELECT count(*) AS n FROM concepts")).toEqual([
-			{ n: 6 },
+			{ n: 11 },
 		]);
 	});
 });
@@ -771,7 +787,7 @@ describe("lattice status against a bundle", () => {
 		const before = await invoke(["status"], home);
 
 		expect(before.code).toBe(0);
-		expect(before.stdout).toContain("New:     6");
+		expect(before.stdout).toContain("New:     11");
 		expect(before.stdout).toContain("Changed: 0");
 		expect(before.stdout).toContain("Deleted: 0");
 		expect(before.stdout).toContain("notes/broken.md");
@@ -784,7 +800,7 @@ describe("lattice status against a bundle", () => {
 		await invoke(["sync"], home);
 
 		const synced = await invoke(["status"], home);
-		expect(synced.stdout).toContain("Concepts:   6");
+		expect(synced.stdout).toContain("Concepts:   11");
 		expect(synced.stdout).toContain("Up to date");
 
 		writeFileSync(join(home, "docs", "notes", "added.md"), "# Added\n\nNew.\n");
@@ -826,7 +842,7 @@ describe("interrupting a sync", () => {
 		const result = await invoke(["sync"], home);
 		expect(result.code).toBe(0);
 		expect(await sql(home, "SELECT count(*) AS n FROM concepts")).toEqual([
-			{ n: 2006 },
+			{ n: 2011 },
 		]);
 		expect(
 			await sql(
@@ -834,6 +850,591 @@ describe("interrupting a sync", () => {
 				"SELECT count(*) AS n FROM concepts WHERE id NOT IN (SELECT concept_id FROM chunks)",
 			),
 		).toEqual([{ n: 0 }]);
+	});
+});
+
+/** A synced home holding the fixture bundle — the corpus every search test queries. */
+async function searchableHome(): Promise<string> {
+	const home = await bundledHome();
+	await invoke(["sync"], home);
+	return home;
+}
+
+interface SearchHit {
+	path: string;
+	title: string | null;
+	type: string | null;
+	status: string | null;
+	trust: string;
+	staleAfter: string | null;
+	stale: boolean;
+	score: number;
+	expanded?: true;
+	via?: { relation: string; from: string };
+	chunks: Array<{
+		ordinal: number;
+		headingPath: string;
+		startLine: number;
+		endLine: number;
+		startChar: number;
+		endChar: number;
+		snippet: string;
+	}>;
+}
+
+async function search(
+	home: string,
+	argv: string[],
+	env: Record<string, string> = {},
+): Promise<{
+	code: number;
+	stderr: string;
+	hits: SearchHit[];
+	degraded?: boolean;
+	degradedReason?: string | null;
+}> {
+	const result = await invoke(["search", ...argv, "--json"], home, env);
+	const parsed = result.stdout === "" ? undefined : JSON.parse(result.stdout);
+	return {
+		code: result.code,
+		stderr: result.stderr,
+		hits: parsed?.hits ?? [],
+		degraded: parsed?.degraded,
+		degradedReason: parsed?.degradedReason,
+	};
+}
+
+/**
+ * The stub provider's synonym groups. Each group is a set of phrases that are
+ * declared to mean the same thing; a text's vector has one dimension per group
+ * it mentions. That is what lets a query and a document be semantically near
+ * while sharing no words at all, which no deterministic hash could ever do.
+ */
+const HYBRID_GROUPS = [
+	["Thermal throttle", "whisper mode"],
+	["Airflow curve", "blower ramps"],
+];
+
+const HYBRID_ENV = {
+	LATTICE_EMBED_PROVIDER: "stub",
+	LATTICE_EMBED_STUB: JSON.stringify(HYBRID_GROUPS),
+};
+
+/** A synced home over the hybrid fixture bundle, embedded with the stub provider. */
+async function hybridHome(): Promise<string> {
+	const home = freshHome();
+	await invoke(["init"], home);
+	cpSync(FIXTURE_HYBRID, join(home, "docs"), { recursive: true });
+	const synced = await invoke(["sync"], home, HYBRID_ENV);
+	expect(synced.stderr).toBe("");
+	return home;
+}
+
+describe("hybrid search", () => {
+	test("a paraphrase sharing no words with the document still finds it", async () => {
+		const home = await hybridHome();
+
+		// Neither word appears anywhere in the bundle, so the keyword leg has
+		// nothing to return at all: only the semantic leg can answer this.
+		// `whisper mode` and the document's `Thermal throttle` share a group.
+		for (const name of ["thermal/cooling.md", "refs/airflow-curve.md"]) {
+			const source = readFileSync(join(home, "docs", name), "utf8");
+			expect(source.toLowerCase()).not.toContain("whisper");
+			expect(source.toLowerCase()).not.toContain("mode");
+		}
+
+		const { code, stderr, hits } = await search(
+			home,
+			["whisper mode"],
+			HYBRID_ENV,
+		);
+
+		expect(stderr).toBe("");
+		expect(code).toBe(0);
+		expect(hits[0].path).toBe("thermal/cooling.md");
+	});
+
+	test("a passage only one leg ranks highly still appears in the fused results", async () => {
+		const home = await hybridHome();
+
+		// Each half of this query is answered by one leg and neither by both:
+		// `XJ_4471` is written in `misc/serial.md` and is in no vector group,
+		// and `whisper mode` is in no document and is a group with
+		// `thermal/cooling.md`'s title.
+		const semanticOnly = await search(
+			home,
+			["whisper mode", "--no-expand"],
+			HYBRID_ENV,
+		);
+		expect(semanticOnly.hits.map((hit) => hit.path)).toEqual([
+			"thermal/cooling.md",
+		]);
+
+		const keywordOnly = await search(
+			home,
+			["XJ_4471", "--no-expand"],
+			HYBRID_ENV,
+		);
+		expect(keywordOnly.hits.map((hit) => hit.path)).toEqual(["misc/serial.md"]);
+
+		const both = await search(home, ["XJ_4471 whisper mode"], HYBRID_ENV);
+
+		expect(both.code).toBe(0);
+		expect(both.hits.map((hit) => hit.path)).toContain("misc/serial.md");
+		expect(both.hits.map((hit) => hit.path)).toContain("thermal/cooling.md");
+	});
+
+	test("the concept vector never introduces a result of its own", async () => {
+		const home = await hybridHome();
+
+		// `misc/acoustics.md` says "whisper mode" only in its frontmatter
+		// description, which is what a concept vector is built from — so its
+		// CONCEPT vector is as near the query as it can be, while neither of
+		// its passages matches either leg. A third ranked list would surface
+		// it; a tiebreak cannot.
+		const source = readFileSync(
+			join(home, "docs", "misc", "acoustics.md"),
+			"utf8",
+		);
+		const [, frontmatter, body] = source.split("---\n");
+		expect(frontmatter.toLowerCase()).toContain("whisper mode");
+		expect(body.toLowerCase()).not.toContain("whisper");
+
+		const { hits } = await search(home, ["whisper mode"], HYBRID_ENV);
+
+		expect(hits.map((hit) => hit.path)).not.toContain("misc/acoustics.md");
+	});
+
+	test("says so when the semantic leg cannot run, and still answers", async () => {
+		const home = await hybridHome();
+
+		const broken = await search(home, ["XJ_4471", "--no-expand"], {
+			LATTICE_EMBED_PROVIDER: "no-such-model",
+		});
+
+		expect(broken.code).toBe(0);
+		expect(broken.degraded).toBe(true);
+		expect(broken.degradedReason).toContain("no-such-model");
+		// Keyword-only, but still an answer.
+		expect(broken.hits.map((hit) => hit.path)).toEqual(["misc/serial.md"]);
+
+		const healthy = await search(home, ["XJ_4471"], HYBRID_ENV);
+		expect(healthy.degraded).toBe(false);
+		expect(healthy.degradedReason).toBeNull();
+	});
+
+	test("refuses a corpus embedded by a different model", async () => {
+		const home = await hybridHome();
+
+		// The bundle was embedded with the stub provider; the default hash
+		// provider can embed this query but has nothing to compare it against.
+		// Answering on the keyword leg alone would look like an ordinary
+		// result, so the mismatch is refused and named instead.
+		const result = await invoke(["search", "XJ_4471"], home);
+
+		expect(result.code).not.toBe(0);
+		expect(result.stderr).toContain("stub-");
+		expect(result.stderr).toContain("hash-512");
+		expect(result.stderr).toContain("lattice embed --reembed");
+	});
+
+	test("--require-embeddings turns degradation into a non-zero exit", async () => {
+		const home = await hybridHome();
+
+		const refused = await invoke(
+			["search", "XJ_4471", "--require-embeddings", "--json"],
+			home,
+			{ LATTICE_EMBED_PROVIDER: "no-such-model" },
+		);
+
+		expect(refused.code).not.toBe(0);
+		expect(refused.stderr).toContain("--require-embeddings");
+		expect(refused.stderr).toContain("no-such-model");
+
+		const allowed = await invoke(
+			["search", "XJ_4471", "--require-embeddings", "--json"],
+			home,
+			HYBRID_ENV,
+		);
+
+		expect(allowed.code).toBe(0);
+		expect(allowed.stderr).toBe("");
+	});
+});
+
+describe("concept-level search", () => {
+	test("answers with documents rather than passages", async () => {
+		const home = await hybridHome();
+
+		const { code, hits } = await search(
+			home,
+			["whisper mode", "--concepts"],
+			HYBRID_ENV,
+		);
+
+		expect(code).toBe(0);
+		expect(hits.every((hit) => hit.chunks.length === 0)).toBe(true);
+		expect(hits.map((hit) => hit.path)).toContain("thermal/cooling.md");
+
+		// At concept level the concept vector IS a ranked list, so the document
+		// that says "whisper mode" only in its frontmatter — which no passage
+		// search returns — is a legitimate answer here.
+		expect(hits.map((hit) => hit.path)).toContain("misc/acoustics.md");
+		expect(
+			(await search(home, ["whisper mode"], HYBRID_ENV)).hits.map(
+				(hit) => hit.path,
+			),
+		).not.toContain("misc/acoustics.md");
+	});
+
+	test("applies the same filters as passage search", async () => {
+		const home = await hybridHome();
+
+		const { hits } = await search(
+			home,
+			["whisper mode", "--concepts", "--dir", "thermal"],
+			HYBRID_ENV,
+		);
+
+		expect(hits.length).toBeGreaterThan(0);
+		expect(hits.every((hit) => hit.path.startsWith("thermal/"))).toBe(true);
+	});
+});
+
+describe("graph expansion", () => {
+	test("reaches a link target, a backlink source and a directory sibling", async () => {
+		const home = await hybridHome();
+
+		// `thermal/cooling.md` links to `refs/airflow-curve.md`,
+		// `refs/dust.md` links back to it, and `thermal/chassis.md` sits beside
+		// it in `thermal/` with no link either way.
+		const { code, hits } = await search(home, ["Thermal throttle"], HYBRID_ENV);
+
+		expect(code).toBe(0);
+
+		const direct = hits.filter((hit) => hit.expanded !== true);
+		const expanded = hits.filter((hit) => hit.expanded === true);
+		expect(direct.map((hit) => hit.path)).toEqual(["thermal/cooling.md"]);
+
+		const byPath = new Map(expanded.map((hit) => [hit.path, hit]));
+		expect(byPath.get("refs/airflow-curve.md")?.via).toEqual({
+			relation: "link",
+			from: "thermal/cooling.md",
+		});
+		expect(byPath.get("refs/dust.md")?.via).toEqual({
+			relation: "backlink",
+			from: "thermal/cooling.md",
+		});
+		expect(byPath.get("thermal/chassis.md")?.via).toEqual({
+			relation: "sibling",
+			from: "thermal/cooling.md",
+		});
+
+		// Never above an actual answer.
+		const lowestDirect = Math.min(...direct.map((hit) => hit.score));
+		for (const hit of expanded) {
+			expect(hit.score).toBeLessThan(lowestDirect);
+		}
+		expect(hits.indexOf(direct[0])).toBeLessThan(hits.indexOf(expanded[0]));
+	});
+
+	test("expansion is capped, deduplicated and can be turned off", async () => {
+		const home = await hybridHome();
+
+		const capped = await search(
+			home,
+			["Thermal throttle", "--expand", "1"],
+			HYBRID_ENV,
+		);
+		expect(capped.hits.filter((hit) => hit.expanded === true)).toHaveLength(1);
+
+		const off = await search(
+			home,
+			["Thermal throttle", "--no-expand"],
+			HYBRID_ENV,
+		);
+		expect(off.hits.every((hit) => hit.expanded !== true)).toBe(true);
+
+		// A neighbour that is already an answer is not repeated as a neighbour:
+		// this query matches both ends of the `cooling` → `airflow-curve` edge.
+		const overlapping = await search(
+			home,
+			["Thermal throttle blower ramps"],
+			HYBRID_ENV,
+		);
+		const paths = overlapping.hits.map((hit) => hit.path);
+		expect(new Set(paths).size).toBe(paths.length);
+		expect(
+			overlapping.hits.find((hit) => hit.path === "refs/airflow-curve.md")
+				?.expanded,
+		).toBeUndefined();
+	});
+
+	test("expansion honours the filters the direct hits were found under", async () => {
+		const home = await hybridHome();
+
+		const { hits } = await search(
+			home,
+			["Thermal throttle", "--dir", "thermal"],
+			HYBRID_ENV,
+		);
+
+		// `refs/` is outside the filter, so the link and the backlink are not
+		// pulled back in through the graph; the sibling inside it still is.
+		expect(hits.every((hit) => hit.path.startsWith("thermal/"))).toBe(true);
+		expect(
+			hits.some(
+				(hit) => hit.expanded === true && hit.path === "thermal/chassis.md",
+			),
+		).toBe(true);
+	});
+});
+
+describe("lattice search", () => {
+	test("returns the passages holding an exact identifier, grouped by concept", async () => {
+		const home = await searchableHome();
+
+		const { code, stderr, hits } = await search(home, ["user_id"]);
+
+		expect(stderr).toBe("");
+		expect(code).toBe(0);
+		expect(hits.map((hit) => hit.path)).toEqual(["concepts/users.md"]);
+
+		const [users] = hits;
+		expect(users.title).toBe("Users table");
+		expect(users.type).toBe("BigQuery Table");
+		expect(users.status).toBe("stable");
+		expect(users.trust).toBe("human-reviewed");
+		expect(users.staleAfter).toBe("2027-01-01T00:00:00Z");
+		expect(users.stale).toBe(false);
+		expect(users.score).toBeGreaterThan(0);
+
+		// `user_id` is written under the "Columns" heading of `concepts/users.md`.
+		expect(users.chunks).toHaveLength(1);
+		expect(users.chunks[0].headingPath).toBe("Users table > Columns");
+		expect(users.chunks[0].snippet).toContain("user_id");
+	});
+
+	test("a natural-language question with punctuation and operator words still returns candidates", async () => {
+		const home = await searchableHome();
+
+		const { code, stderr, hits } = await search(home, [
+			'What is the "user_id" column AND the primary-key, really?',
+		]);
+
+		expect(stderr).toBe("");
+		expect(code).toBe(0);
+		expect(hits.map((hit) => hit.path)).toContain("concepts/users.md");
+	});
+
+	test("a query holding no searchable text reports no matches rather than failing", async () => {
+		const home = await searchableHome();
+
+		const { code, stderr, hits } = await search(home, ['*?!( "" )-']);
+
+		expect(stderr).toBe("");
+		expect(code).toBe(0);
+		expect(hits).toEqual([]);
+	});
+
+	test("a title hit outranks a heading hit, which outranks a body hit", async () => {
+		const home = await searchableHome();
+
+		const { code, hits } = await search(home, ["sentinel", "--no-expand"]);
+
+		expect(code).toBe(0);
+		// `search/title-match.md` writes "sentinel" only in its frontmatter title,
+		// `search/heading-match.md` only in its heading, `search/body-match.md`
+		// only in a paragraph.
+		expect(hits.map((hit) => hit.path)).toEqual([
+			"search/title-match.md",
+			"search/heading-match.md",
+			"search/body-match.md",
+		]);
+	});
+
+	test("caps the passages shown per concept and the concepts shown", async () => {
+		const home = await searchableHome();
+
+		// "Paragraph" is repeated across the split pieces of one long section in
+		// `guides/chunking.md`, so the concept holds more matching passages than
+		// it is allowed to show.
+		const everything = await search(home, ["paragraph", "--no-expand"]);
+		const [guide] = everything.hits.filter(
+			(hit) => hit.path === "guides/chunking.md",
+		);
+		expect(guide.chunks.length).toBe(2);
+
+		const narrowed = await search(home, [
+			"paragraph",
+			"--chunks",
+			"1",
+			"--no-expand",
+		]);
+		expect(narrowed.hits[0].chunks).toHaveLength(1);
+
+		const limited = await search(home, [
+			"gauge",
+			"--limit",
+			"2",
+			"--no-expand",
+		]);
+		expect(limited.hits).toHaveLength(2);
+		expect(
+			(await search(home, ["gauge", "--no-expand"])).hits.length,
+		).toBeGreaterThan(2);
+	});
+
+	test("refuses a cap that is not a positive whole number", async () => {
+		const home = await searchableHome();
+
+		const result = await invoke(["search", "gauge", "--limit", "0"], home);
+
+		expect(result.code).not.toBe(0);
+		expect(result.stderr).toContain("--limit expects a positive whole number");
+	});
+
+	test("each filter narrows the results, and filters compose", async () => {
+		const home = await searchableHome();
+
+		// No document holds both words, so this falls back to matching either and
+		// spans the `concepts/` and `search/` fixtures at once.
+		const broad = ["table", "gauge"];
+		const paths = async (extra: string[]) =>
+			(await search(home, [broad.join(" "), ...extra])).hits.map(
+				(hit) => hit.path,
+			);
+
+		expect(await paths([])).toContain("concepts/users.md");
+		expect(await paths([])).toContain("search/title-match.md");
+
+		expect(await paths(["--type", "BigQuery Table"])).toEqual([
+			"concepts/users.md",
+		]);
+		expect(await paths(["--tag", "core"])).toEqual(["concepts/users.md"]);
+		expect(await paths(["--dir", "concepts"])).toEqual(["concepts/users.md"]);
+		expect(await paths(["--status", "stable"])).toEqual(["concepts/users.md"]);
+		expect(await paths(["--trust", "human-reviewed"])).toEqual([
+			"concepts/users.md",
+		]);
+
+		expect(
+			(await paths(["--type", "Gauge"])).every((path) =>
+				path.startsWith("search/"),
+			),
+		).toBe(true);
+
+		// Composed filters are an AND: a Gauge is never in `concepts/`.
+		expect(await paths(["--type", "Gauge", "--dir", "concepts"])).toEqual([]);
+		expect(await paths(["--type", "Gauge", "--tag", "rank"])).toEqual(
+			await paths(["--type", "Gauge"]),
+		);
+	});
+
+	test("leaves a deprecated concept out until it is asked for", async () => {
+		const home = await searchableHome();
+
+		// `concepts/orders.md` is the only fixture with `status: deprecated`.
+		expect((await search(home, ["purchases", "--no-expand"])).hits).toEqual([]);
+
+		expect(
+			(
+				await search(home, ["purchases", "--include-deprecated", "--no-expand"])
+			).hits.map((hit) => hit.path),
+		).toEqual(["concepts/orders.md"]);
+
+		expect(
+			(
+				await search(home, [
+					"purchases",
+					"--status",
+					"deprecated",
+					"--no-expand",
+				])
+			).hits.map((hit) => hit.path),
+		).toEqual(["concepts/orders.md"]);
+	});
+
+	test("ranks a concept past its staleness date below an equal fresh one", async () => {
+		const home = await searchableHome();
+
+		// The two widget fixtures are identical but for their `stale_after`:
+		// 2030 and 2020. Judged from 2026, only the second is past it.
+		const { hits } = await search(home, [
+			"widget",
+			"--as-of",
+			"2026-01-01T00:00:00Z",
+			"--no-expand",
+		]);
+
+		expect(hits.map((hit) => hit.path)).toEqual([
+			"search/fresh-widget.md",
+			"search/stale-widget.md",
+		]);
+		expect(hits.map((hit) => hit.stale)).toEqual([false, true]);
+		expect(hits[0].score).toBeGreaterThan(hits[1].score);
+
+		// Judged from before both dates, neither is stale and the tie is broken
+		// by path rather than by a penalty.
+		const early = await search(home, [
+			"widget",
+			"--as-of",
+			"2019-01-01T00:00:00Z",
+			"--no-expand",
+		]);
+		expect(early.hits.map((hit) => hit.stale)).toEqual([false, false]);
+	});
+
+	test("refuses an --as-of that is not a date", async () => {
+		const home = await searchableHome();
+
+		const result = await invoke(["search", "widget", "--as-of", "soon"], home);
+
+		expect(result.code).not.toBe(0);
+		expect(result.stderr).toContain("--as-of expects a date");
+	});
+
+	test("reports offsets that slice the matching passage out of the source file", async () => {
+		const home = await searchableHome();
+
+		const { hits } = await search(home, ["fenced"]);
+		const [guide] = hits.filter((hit) => hit.path === "guides/chunking.md");
+		const chunk = guide.chunks[0];
+
+		const raw = readFileSync(
+			join(home, "docs", "guides", "chunking.md"),
+			"utf8",
+		);
+		expect(raw.slice(chunk.startChar, chunk.endChar)).toContain("Fenced code");
+		expect(raw.split("\n")[chunk.startLine - 1]).toBe("## Fenced code");
+		expect(chunk.endLine).toBeGreaterThanOrEqual(chunk.startLine);
+	});
+
+	test("prints a readable listing without --json, and says so when nothing matches", async () => {
+		const home = await searchableHome();
+
+		const found = await invoke(["search", "user_id"], home);
+
+		expect(found.code).toBe(0);
+		expect(found.stderr).toBe("");
+		expect(found.stdout).toContain("concepts/users.md — Users table");
+		expect(found.stdout).toContain(
+			"[BigQuery Table · stable · human-reviewed]",
+		);
+		expect(found.stdout).toContain("user_id");
+
+		const missing = await invoke(["search", "zzzznothinghere"], home);
+
+		expect(missing.code).toBe(0);
+		expect(missing.stdout).toBe("No matches.\n");
+	});
+
+	test("exits non-zero when there is no index to search", async () => {
+		const result = await invoke(["search", "anything"]);
+
+		expect(result.code).not.toBe(0);
+		expect(result.stderr).toContain("No Lattice index");
+		expect(result.stderr).toContain("lattice init");
 	});
 });
 
@@ -876,6 +1477,11 @@ describe("concept vectors", () => {
 			"concepts/users.md",
 			"guides/chunking.md",
 			"notes/unverified.md",
+			"search/body-match.md",
+			"search/fresh-widget.md",
+			"search/heading-match.md",
+			"search/stale-widget.md",
+			"search/title-match.md",
 		]);
 
 		// Two concepts differing only in body text would share a vector; these
@@ -1208,9 +1814,14 @@ describe("the local model", () => {
 
 		const result = await offline(["status"], home);
 
+		const [{ n: chunks }] = await sql<{ n: number }>(
+			home,
+			"SELECT count(*) AS n FROM chunks",
+		);
+
 		expect(result.code).toBe(0);
-		expect(result.stdout).toContain("Chunks:     11");
-		expect(result.stdout).toContain("Embeddings: 11");
+		expect(result.stdout).toContain(`Chunks:     ${chunks}`);
+		expect(result.stdout).toContain(`Embeddings: ${chunks}`);
 		expect(result.stdout).toContain("Embeddings are not ready yet");
 	});
 

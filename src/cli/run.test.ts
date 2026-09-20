@@ -1642,6 +1642,13 @@ describe("search at scale", () => {
 	 * it decodes and scores every one of them on every query.
 	 */
 	const DOCUMENTS = 3600;
+	/**
+	 * Deliberately loose. The scan measures about 36ms on a developer machine,
+	 * so this is not a benchmark of how fast the hardware is — nothing short of
+	 * a 27x slowdown trips it. What it catches is an algorithmic regression: a
+	 * per-row query reintroduced into the scan, or a leg that stops filtering
+	 * before it decodes.
+	 */
 	const BUDGET_MS = 1000;
 
 	test("answers within the budget on a corpus at that scale", async () => {

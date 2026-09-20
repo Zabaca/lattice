@@ -1,13 +1,14 @@
 # Lattice - Knowledge Graph CLI
 
-A CLI tool for syncing markdown documents with an embedded DuckDB database, enabling entity extraction and semantic search.
+A CLI tool that indexes a markdown bundle into an embedded SQLite database and retrieves passages from it by keyword and by meaning at once.
 
 ## Architecture
 
-- **Backend**: DuckDB (embedded, zero external dependencies)
-- **Vector Search**: DuckDB VSS extension (HNSW index with cosine similarity)
+- **Backend**: SQLite via `bun:sqlite` (embedded, zero external dependencies)
+- **Keyword search**: SQLite FTS5 over chunks (`chunks_fts`)
+- **Vector search**: a cosine scan over `chunk_embeddings`, fused with the keyword leg
 - **Embeddings**: in-process, behind the `EmbeddingProvider` seam in `src/embed/provider.ts`. The default `hash` provider is deterministic — 512 dimensions derived from a hash of the text — so the pipeline needs no model on disk and no network.
-- **Runtime**: Bun + NestJS
+- **Runtime**: Bun. No framework, no DI container — the CLI is plain functions behind one seam (`src/cli/run.ts`).
 
 ## Key Commands
 
@@ -26,20 +27,25 @@ machine-readably.
 
 ## Storage
 
-All data is stored in `~/.lattice/`:
+All data is stored in `~/.lattice/` — exactly what `lattice init` creates
+(`src/cli/commands/init.ts`, paths from `src/utils/paths.ts`):
+
 ```
 ~/.lattice/
-├── docs/                  # Markdown documentation
-├── lattice.duckdb         # Graph database
-├── .sync-manifest.json    # Sync state tracking
-└── .env                   # API keys (VOYAGE_API_KEY)
+├── docs/          # Markdown documentation — the OKF bundle
+└── lattice.db     # SQLite index (plus SQLite's own -wal/-shm sidecars)
 ```
+
+`LATTICE_HOME` moves the whole directory, which is what lets tests drive the
+CLI against a temporary home. There is no config file and no sync manifest:
+sync state is the content hash stored per concept in the index, and
+configuration is environment variables only.
 
 Run `lattice init` to setup the directory structure.
 
 ### Database
 
-The rewrite's index (`lattice.db`, SQLite — see `src/db/schema.ts`) holds
+The index (`lattice.db`, SQLite — see `src/db/schema.ts`) holds
 `concepts`, `tags`, `chunks`, `chunks_fts`, `chunk_embeddings`,
 `concept_embeddings`, the two embedding failure tables and `links`.
 
@@ -105,49 +111,49 @@ links to unresolved.
 
 ## Development Notes
 
-- No external dependencies required (DuckDB is embedded)
-- Uses SQL for queries (replaced Cypher)
-- VSS extension provides HNSW vector indexing
-- DuckPGQ extension available for property graph queries (optional)
-- Path utilities in `src/utils/paths.ts` for centralized storage
+- No external services and no API keys: SQLite is embedded and embeddings run in-process
+- SQL for every query; `lattice sql` is read-only and refuses to write
+- Path utilities in `src/utils/paths.ts` — nothing resolves `~/.lattice` for itself
+- `bun run check` is `tsc --noEmit && biome check .`; `bun test` runs the suite
 
 ## Testing Philosophy
 
-### Unit Tests (fast, pure functions)
-- Test pure functions in isolation (no DB, no API calls)
-- File pattern: `*.test.ts` next to the source file
-- Examples: frontmatter parsing, hash computation, entity detection
-- Should run in milliseconds
+### One seam
 
-### Integration Tests (slow, real dependencies)
-- Test actual DuckDB/API integration
-- **Connect ONCE in beforeAll**, truncate tables in beforeEach
-- Keep minimal - only test what unit tests can't
+Lattice is tested at a single seam: `runCli` in `src/cli/run.ts`. It takes an
+argv tail and an environment and returns an exit code with the text that would
+have gone to stdout and stderr. It never reads `process.argv`, `process.env` or
+the real home directory, and it never throws. Tests live in
+`src/cli/run.test.ts` and drive that function with an isolated `LATTICE_HOME`.
 
-### When Writing Tests
-1. **Prefer unit tests** - if logic can be extracted to a pure function, do it
-2. **One integration test per boundary** - DB connection, API call
-3. **Never beforeEach reconnect** - use beforeAll + truncate for DB tests
+Everything is asserted through that public surface — including the database,
+which is read with `lattice sql` rather than by opening the file. Querying the
+index directly is a side channel: it lets a test pass while the command that is
+supposed to expose the behavior is broken.
 
-### Example: DuckDB Integration Test Pattern
+### When writing tests
+
+1. **Drive `runCli`** — a new command or flag is tested through the CLI, not through the module beneath it
+2. **A fresh `LATTICE_HOME` per test** — `mkdtempSync` per test; each one runs `lattice init` itself, so tests never share state and never need truncation
+3. **Fixtures are bundles** — `src/fixtures/*` are real OKF bundles copied into the temporary home, so the shape a document must have is checked rather than described
+4. **Expected values come from the fixture**, never recomputed the way the code computes them
+5. **Pure functions may have their own `*.test.ts`** beside them (`src/utils/frontmatter.test.ts`) when the logic is genuinely standalone — but reach for the seam first
+
+### Example: the seam
+
 ```typescript
-describe("GraphService (DuckDB)", () => {
-  let graphService: GraphService;
+function invoke(argv: string[], home: string = freshHome()) {
+  return runCli({ argv, env: { LATTICE_HOME: home } });
+}
 
-  beforeAll(async () => {
-    // Connect ONCE - extension loading is slow
-    graphService = new GraphService(configService);
-    await graphService.connect();
-  });
+test("indexes the bundle", async () => {
+  const home = await bundledHome();       // init + copy a fixture bundle
 
-  afterAll(async () => {
-    await graphService.disconnect();
-  });
+  const result = await invoke(["sync"], home);
 
-  beforeEach(async () => {
-    // Clear data, keep connection
-    await graphService.query("DELETE FROM relationships");
-    await graphService.query("DELETE FROM nodes");
-  });
+  expect(result.code).toBe(0);
+  expect(await sql(home, "SELECT path FROM concepts ORDER BY path")).toEqual([
+    { path: "concepts/users.md" },
+  ]);
 });
 ```

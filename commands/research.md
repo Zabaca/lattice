@@ -4,108 +4,82 @@ argument-hint: topic-query
 model: sonnet
 ---
 
-Research the topic "$ARGUMENTS" by first checking existing documentation, then performing new research if needed.
+Research the topic "$ARGUMENTS": search what is already written first, and only
+then write something new.
 
 ## Configuration
 
-**CRITICAL: All documentation lives in `~/.lattice/docs/`**
+**All documentation lives in `~/.lattice/docs/` — the OKF bundle Lattice indexes.**
 
 | Path | Purpose |
 |------|---------|
-| `~/.lattice/docs/` | Root documentation directory (ALWAYS use this) |
-| `~/.lattice/docs/{topic}/` | Topic directories |
-| `~/.lattice/docs/{topic}/README.md` | Topic index |
-| `~/.lattice/docs/{topic}/*.md` | Research documents |
+| `~/.lattice/docs/` | The bundle root (ALWAYS use this) |
+| `~/.lattice/docs/{topic}/` | Topic directory |
+| `~/.lattice/docs/{topic}/index.md` | Topic index — a reserved name, never indexed as a concept |
+| `~/.lattice/docs/{topic}/*.md` | Research documents — one concept each |
 
-**NEVER use project-local `docs/` directories. ALWAYS use absolute path `~/.lattice/docs/`.**
+**NEVER use a project-local `docs/` directory. ALWAYS use the absolute path `~/.lattice/docs/`.**
 
 ## Process
 
-### Step 1: Create or Find Question
+### Step 1: Search what already exists
 
-First, search to see if this question (or similar) already exists:
-
-```bash
-lattice search "$ARGUMENTS" --limit 5
-```
-
-Look for results with `[Question]` label and high similarity (>70%).
-
-**If similar question exists:** Use that existing question (don't duplicate).
-
-**If no similar question:** Create the question entity:
+Start with the machine-readable search, so the result is read rather than
+eyeballed:
 
 ```bash
-lattice question:add "$ARGUMENTS"
+lattice search "$ARGUMENTS" --json --limit 10
 ```
 
-This ensures the question is tracked regardless of whether we find an answer.
+The JSON carries:
 
-### Step 2: Search for Answers
+| Field | Meaning |
+|-------|---------|
+| `hits[].path` | Bundle-relative path of the document — read this file |
+| `hits[].title` | Its frontmatter title, or `null` |
+| `hits[].score` | Fused rank; comparable within one result set only, never a percentage |
+| `hits[].via` | Present when the hit is a neighbour reached by expansion, not a direct match |
+| `hits[].chunks[]` | The matching passages: `headingPath`, `startLine`–`endLine`, `snippet` |
+| `degraded` / `degradedReason` | `true` when the semantic leg could not run — the answer is keyword-only |
 
-Search for documents that might answer this question:
+`hits: []` means nothing in the bundle covers this yet. It is not an error.
+When `degraded` is `true`, say so: an exact term will still be found, a
+paraphrase may not be.
 
-```bash
-lattice search "$ARGUMENTS" --limit 10
-```
+Read the files behind the promising hits — the snippet is an excerpt, not the
+answer. Narrow with `--type`, `--tag` or `--dir` when the bundle is large.
 
-Review results focusing on:
-- Documents (`[Document]` label) with relevant content
-- High similarity scores (>40% often indicates relevance)
+### Step 2: Present what you found
 
-**Calibration notes:**
-- Exact topic matches often show 30-40% similarity
-- Unrelated docs can sometimes show 60%+ similarity
-- Read the actual content to determine true relevance
+Summarize:
 
-For each promising result:
-- Read the document
-- Check if it answers the user's question
-- Note relevant sections
+- Which documents already cover the topic, quoting the passages that matter
+- What they do not cover — the actual gap
+- Whether the search was degraded
 
-### Step 3: Present Findings and Link Answer
+### Step 3: Ask about new research
 
-Summarize what you found in existing docs:
-- What topics are covered
-- Quote relevant sections if helpful
-- Identify gaps in existing research
+Use AskUserQuestion:
 
-**If existing documentation answers the question:**
-
-Link the question to the answering document:
-
-```bash
-lattice question:link "$ARGUMENTS" --doc {path-to-doc}
-```
-
-Ask the user: **"Does this existing research cover your question?"**
-
-### Step 4: Ask About New Research
-
-Use AskUserQuestion to ask:
 - **"Should I perform new research on this topic?"**
-- Options:
-  - Yes, research and create new docs
-  - Yes, research and update existing docs
-  - No, existing research is sufficient
+  - Yes, research and write a new document
+  - Yes, research and update an existing document
+  - No, what exists is enough
 
-If user says **No** → Done, conversation complete.
+If **No** → done.
 
-### Step 5: Perform Research (if requested)
+### Step 4: Perform the research
 
-If user wants new research:
-1. Use WebSearch to find current information
-2. Gather and synthesize findings
-3. Focus on what's missing from existing docs
+1. Use WebSearch for current information
+2. Synthesize it, focusing on the gap identified in Step 2
+3. Keep every URL you used — they become the document's `sources`
 
-### Step 6: Determine Topic and Filename
+### Step 5: Choose the topic directory and filename
 
-**Identify the topic directory:**
-- Check if a relevant `~/.lattice/docs/{topic-name}/` directory already exists
-- If not, derive a new topic name from the query (kebab-case)
+**Topic directory:** reuse an existing `~/.lattice/docs/{topic}/` when one fits,
+otherwise derive a kebab-case name from the query.
 
-**Derive the research filename:**
-Auto-derive from the specific focus of the query:
+**Filename:** derive from the specific focus of the query.
 
 | Query | Topic Dir | Research File |
 |-------|-----------|---------------|
@@ -113,19 +87,64 @@ Auto-derive from the specific focus of the query:
 | "bun vs node performance" | `bun-nodejs/` | `performance-comparison.md` |
 | "graphql authentication patterns" | `graphql/` | `authentication-patterns.md` |
 
-**Filename guidelines:**
-- Use kebab-case
-- Be descriptive of the specific research focus
-- Avoid generic names like `notes.md` or `research.md`
-- Keep it concise (2-4 words)
+Kebab-case, 2–4 words, descriptive of the focus. Never `notes.md` or
+`research.md`.
 
-### Step 7: Create/Update Files
+### Step 6: Write the document
 
-#### For NEW Topics (directory doesn't exist)
+Every research document is an OKF concept, and **frontmatter is required** —
+there is no extraction pass that would infer it later. A file with no `type` is
+still indexed, but it is filed as a problem and cannot be filtered on.
 
-Create TWO files:
+**`~/.lattice/docs/{topic}/{filename}.md`:**
 
-**1. `~/.lattice/docs/{topic-name}/README.md`** (index):
+```markdown
+---
+type: Research Note
+title: Bun versus Node.js performance
+description: Where Bun's startup and HTTP throughput differ from Node.js, and why.
+tags: [bun, runtime, performance]
+generated: { by: claude-code/research, at: 2026-09-20T00:00:00Z }
+sources:
+  - path: runtime-overview.md
+    title: Bun and Node.js runtimes
+  - https://bun.sh/docs/benchmarks
+---
+
+# Bun versus Node.js performance
+
+## Startup
+
+...
+
+## Throughput
+
+...
+
+## Sources
+
+1. [Bun benchmarks](https://bun.sh/docs/benchmarks)
+```
+
+| Field | Rule |
+|-------|------|
+| `type` | Required. `Research Note` unless a more specific type already exists in the bundle |
+| `title` | Required. The document's own name, not the query |
+| `description` | Required. One sentence; it is what search shows beside the path |
+| `tags` | Required. Kebab-case, reusing tags the bundle already uses |
+| `generated` | Required. `{ by: claude-code/research, at: <UTC ISO 8601> }` — what wrote it and when |
+| `sources` | Every source drawn on. A bare URL for something outside the bundle; `{ path, title }` for a document inside it, path relative to this file's directory |
+
+An in-bundle `sources:` entry becomes a `cited` edge in the graph; one pointing
+at a document that does not exist yet stays unresolved and repairs itself when
+that document is written. Headings matter: chunks are cut at them, so a section
+per question is what makes a passage findable.
+
+### Step 7: Write or update the topic index
+
+**`~/.lattice/docs/{topic}/index.md`** — `index.md` is reserved by the format,
+so it is navigation and never a concept. It needs no frontmatter.
+
 ```markdown
 # {Topic Title}
 
@@ -135,97 +154,65 @@ Brief description of what this topic covers.
 
 | Document | Description |
 |----------|-------------|
-| [{Research Title}](./{research-filename}.md) | Brief description |
+| [{Research Title}](./{filename}.md) | Brief description |
 
 ## Related Research
 
-- [Related Topic](../related-topic/)
+- [Related Topic](../related-topic/index.md)
 ```
 
-**2. `~/.lattice/docs/{topic-name}/{research-filename}.md`** (content):
-```markdown
-# {Research Title}
+For an existing topic, add a row rather than rewriting the file.
 
-## Purpose
-
-What this research addresses.
-
-## Key Findings
-
-- Finding 1
-- Finding 2
-
-## [Content sections as needed...]
-
-## Sources
-
-1. [Source](URL)
-```
-
-**Note:** No frontmatter required - entities, relationships, and summaries are automatically extracted by AI during `lattice sync`.
-
-#### For EXISTING Topics (directory exists)
-
-**1. Create** `~/.lattice/docs/{topic-name}/{research-filename}.md` with content template above
-
-**2. Update** `~/.lattice/docs/{topic-name}/README.md`:
-- Add new row to the Documents table
-
-### Step 8: Sync and Link Question
-
-After creating files, sync to the knowledge graph:
+### Step 8: Sync
 
 ```bash
 lattice sync
 ```
 
-This will:
-- Add documents to the graph
-- Extract entities automatically via AI
-- Generate embeddings for semantic search
+This indexes the changed files, chunks them at their headings, resolves the
+links and citations, and embeds whatever has no vector yet.
 
-Then link the question to the new document:
+Verify what landed:
 
 ```bash
-lattice question:link "$ARGUMENTS" --doc ~/.lattice/docs/{topic-name}/{research-filename}.md
+lattice rels {topic}/{filename} --json   # Citations resolved? Anything unresolved?
+lattice search "$ARGUMENTS" --json       # Does the new document answer the query?
 ```
 
-### Step 9: Confirmation
+### Step 9: Confirm
 
-Confirm to the user:
-- Question entity created/found
-- Topic directory path
-- Research file created
-- Question linked to document via ANSWERED_BY
-- Sync completed
+Report to the user:
+
+- The document written, with its path
+- Its type, tags and cited sources
+- The topic index updated
+- That `lattice sync` indexed it, and anything it left unresolved
 
 ## Important Notes
 
-- **Always create README.md** for new topics (lightweight index)
-- **Always create separate research file** (never put research content in README)
-- Use kebab-case for all directory and file names
-- Always cite sources with URLs
-- Cross-link to related research topics when relevant
-- **No frontmatter needed** - AI extracts entities automatically during sync
-- **Questions track user intent** - even if a doc exists, the question helps future discovery
+- **Frontmatter is required** — `type`, `title`, `description`, `tags`, `generated`, `sources`
+- **`index.md`, never `README.md`** — only `index.md` and `log.md` are reserved; a `README.md` would be indexed as a concept
+- **Never put research content in the index** — the index is navigation
+- Kebab-case for every directory and filename
+- Cite every source, and prefer `{ path, title }` for in-bundle citations so the edge resolves
+- Cross-link related documents in the body; those links are edges too
 
 ## File Structure Standard
 
 ```
 ~/.lattice/docs/{topic-name}/
-├── README.md              # Index: links to docs, brief overview
-├── {research-1}.md        # Specific research
-├── {research-2}.md        # Additional research
+├── index.md               # Reserved: navigation, not a concept
+├── {research-1}.md        # One concept
+├── {research-2}.md        # Another
 └── {research-n}.md        # Expandable as needed
 ```
 
-This structure allows topics to grow organically while keeping README as a clean navigation index.
-
-## Question Commands Reference
+## Command Reference
 
 | Command | Purpose |
 |---------|---------|
-| `lattice question:add "question"` | Create a question entity |
-| `lattice question:add "question" --answered-by path` | Create and link in one step |
-| `lattice question:link "question" --doc path` | Link question to answering doc |
-| `lattice question:unanswered` | List questions without answers |
+| `lattice search "query" --json` | Search the bundle, machine-readably |
+| `lattice search "query" --concepts` | Which document, rather than which passage |
+| `lattice sync` | Index changed files and embed the backlog |
+| `lattice rels <concept> --json` | Links, backlinks, siblings and unresolved links |
+| `lattice status` | What is indexed, and what is still awaiting a vector |

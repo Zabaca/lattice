@@ -1612,3 +1612,100 @@ describe("lattice status and the embedding backlog", () => {
 		expect(done.stdout).toContain("Awaiting vectors: 0");
 	});
 });
+
+/**
+ * `src/fixtures/research/` is the output of `commands/research.md`, verbatim:
+ * a topic directory holding the reserved `index.md` and two research documents
+ * written to the command's frontmatter template. It is a fixture so that the
+ * template the command prescribes is checked against the indexer rather than
+ * asserted about in prose.
+ */
+const FIXTURE_RESEARCH = join(import.meta.dir, "..", "fixtures", "research");
+
+async function researchHome(): Promise<string> {
+	const home = freshHome();
+	await invoke(["init"], home);
+	cpSync(FIXTURE_RESEARCH, join(home, "docs"), { recursive: true });
+	return home;
+}
+
+describe("documents written by /research", () => {
+	test("the topic index is reserved, so only the research documents are concepts", async () => {
+		const home = await researchHome();
+
+		const result = await invoke(["sync"], home);
+
+		expect(result.code).toBe(0);
+		expect(result.stderr).toBe("");
+		expect(await sql(home, "SELECT path FROM concepts ORDER BY path")).toEqual([
+			{ path: "bun-nodejs/performance-comparison.md" },
+			{ path: "bun-nodejs/runtime-overview.md" },
+		]);
+	});
+
+	test("carry a type, title, description, tags and provenance into the index", async () => {
+		const home = await researchHome();
+		await invoke(["sync"], home);
+
+		const [note] = await sql<{
+			type: string;
+			title: string;
+			description: string;
+			frontmatter: string;
+		}>(
+			home,
+			"SELECT type, title, description, frontmatter FROM concepts" +
+				" WHERE path = 'bun-nodejs/performance-comparison.md'",
+		);
+
+		expect(note.type).toBe("Research Note");
+		expect(note.title).toBe("Bun versus Node.js performance");
+		expect(note.description).toBe(
+			"Where Bun's startup and HTTP throughput differ from Node.js, and why.",
+		);
+		expect(
+			await sql(
+				home,
+				"SELECT t.tag FROM tags t JOIN concepts c ON c.id = t.concept_id" +
+					" WHERE c.path = 'bun-nodejs/performance-comparison.md' ORDER BY t.tag",
+			),
+		).toEqual([{ tag: "bun" }, { tag: "performance" }, { tag: "runtime" }]);
+
+		const rest = JSON.parse(note.frontmatter);
+		expect(rest.generated.by).toBe("claude-code/research");
+		expect(rest.generated.at).toBe("2026-09-20T00:00:00Z");
+	});
+
+	test("cite their sources, and an in-bundle citation resolves to an edge", async () => {
+		const home = await researchHome();
+		await invoke(["sync"], home);
+
+		const result = await invoke(
+			["rels", "bun-nodejs/runtime-overview", "--json"],
+			home,
+		);
+
+		expect(result.code).toBe(0);
+		const report = JSON.parse(result.stdout);
+		expect(
+			report.backlinks.map((link: { path: string; kind: string }) => [
+				link.path,
+				link.kind,
+			]),
+		).toEqual([["bun-nodejs/performance-comparison.md", "source"]]);
+		expect(report.unresolved).toEqual([]);
+	});
+
+	test("are findable by the search the command runs first", async () => {
+		const home = await researchHome();
+		await invoke(["sync"], home);
+
+		const result = await invoke(["search", "bun startup time", "--json"], home);
+
+		expect(result.code).toBe(0);
+		const found = JSON.parse(result.stdout);
+		expect(found.hits.map((hit: { path: string }) => hit.path)).toContain(
+			"bun-nodejs/performance-comparison.md",
+		);
+	});
+});

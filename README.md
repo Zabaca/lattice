@@ -193,11 +193,21 @@ lattice sql "SELECT label, COUNT(*) FROM nodes GROUP BY label"
 
 ### `lattice rels`
 
-Show relationships for a node.
+Show what a document is connected to: the documents it links to, the documents
+linking back at it, the documents filed beside it, and the links it makes that
+nothing answers yet.
 
 ```bash
-lattice rels "TypeScript"       # Show all relationships for an entity
+lattice rels concepts/users        # By OKF identifier
+lattice rels concepts/users.md     # Or by bundle path
+lattice rels concepts/users --json # The same four relations, machine-readable
 ```
+
+The edges come from the links the author wrote. Links inside fenced code blocks
+and links to external URLs are not edges; a frontmatter `sources:` citation that
+points inside the bundle is one, reported as `cited`. A link to a document that
+has not been written is kept and listed under **Unresolved** — write that
+document, sync, and the edge resolves itself.
 
 ### `lattice ontology`
 

@@ -16,8 +16,12 @@ lattice status   # Show documents needing sync
 lattice sync     # Sync documents to DuckDB
 lattice search   # Semantic search
 lattice sql      # Raw SQL queries
-lattice rels     # Show relationships for a node
+lattice rels     # Show a concept's links, backlinks, siblings and unresolved links
 ```
+
+`lattice rels <concept>` takes either an OKF identifier (`concepts/users`) or a
+bundle path (`concepts/users.md`), and `--json` prints the same four relations
+machine-readably.
 
 ## Storage
 
@@ -37,6 +41,18 @@ Run `lattice init` to setup the directory structure.
 Contains:
 - `nodes` table - entities with embeddings
 - `relationships` table - connections between entities
+
+The rewrite's index (`lattice.db`, SQLite — see `src/db/schema.ts`) instead holds
+`concepts`, `chunks`, `chunks_fts`, `chunk_embeddings` and `links`.
+
+`links` records the edges an author wrote: markdown links and wikilinks in a
+document's body, plus the frontmatter `sources:` citations that point inside the
+bundle (`kind = 'source'`). Links in fenced code blocks and links to external
+URLs are not edges. A link whose target is not indexed keeps its `target_path`
+with a NULL `target_concept_id` — an OKF unresolved link, standing for knowledge
+not written yet. Every sync re-resolves the whole table at the end, so writing
+the missing document repairs the edge and deleting a target returns its inbound
+links to unresolved.
 
 ## Development Notes
 

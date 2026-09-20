@@ -13,7 +13,8 @@
 import type { Database } from "bun:sqlite";
 import { readFileSync } from "node:fs";
 import { posix } from "node:path";
-import { chunkDocument } from "./chunk.js";
+import { type Chunk, chunkDocument } from "./chunk.js";
+import { extractBodyLinks, extractSourceLinks } from "./links.js";
 import { parseConcept } from "./okf.js";
 import { type BundleFile, scanBundle } from "./scan.js";
 
@@ -37,6 +38,22 @@ export interface SyncPlan {
 	deleted: string[];
 	unchanged: number;
 }
+
+/** The 12 bound parameters of the chunk insert, in order. */
+type ChunkParams = [
+	number,
+	number,
+	string | null,
+	string,
+	number,
+	number,
+	number,
+	number,
+	number,
+	string,
+	string,
+	number,
+];
 
 export interface SyncReport extends SyncPlan {
 	chunks: number;
@@ -132,6 +149,13 @@ export function applySync(db: Database, plan: SyncPlan): SyncReport {
 				"UPDATE concepts SET path = ?, identifier = ?, dir = ? WHERE path = ?",
 			).run(to.path, identifierOf(to.path), directoryOf(to.path), from);
 		})();
+
+		// A relative link is relative to the document that wrote it, so a move to
+		// another directory changes what this document's own links point at, even
+		// though not one character of it changed. Chunks and tags still hold.
+		if (directoryOf(from) !== directoryOf(to.path)) {
+			chunks += indexFile(db, to).chunks;
+		}
 	}
 
 	for (const file of [...plan.added, ...plan.changed]) {
@@ -153,6 +177,8 @@ export function applySync(db: Database, plan: SyncPlan): SyncReport {
 		}
 	}
 	problems.sort((a, b) => (a.path < b.path ? -1 : 1));
+
+	resolveLinks(db);
 
 	return { ...plan, chunks, problems };
 }
@@ -221,21 +247,26 @@ function indexFile(
 		// Everything derived from the old text goes; the new text replaces it.
 		db.query("DELETE FROM chunks WHERE concept_id = ?").run(row.id);
 		db.query("DELETE FROM tags WHERE concept_id = ?").run(row.id);
+		// Only this document's own edges. Links that point AT it belong to their
+		// own authors and must survive an edit here.
+		db.query("DELETE FROM links WHERE source_concept_id = ?").run(row.id);
 
 		const tag = db.query("INSERT INTO tags (concept_id, tag) VALUES (?, ?)");
 		for (const value of concept.tags) {
 			tag.run(row.id, value);
 		}
 
-		const chunk = db.query(
+		const chunk = db.query<{ id: number }, ChunkParams>(
 			`INSERT INTO chunks (
 				concept_id, ordinal, heading, heading_path, depth,
 				start_line, end_line, start_char, end_char,
 				content, content_hash, token_estimate
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				RETURNING id`,
 		);
+		const chunkIds: Array<number | null> = [];
 		for (const piece of pieces) {
-			chunk.run(
+			const inserted = chunk.get(
 				row.id,
 				piece.ordinal,
 				piece.heading ?? null,
@@ -249,10 +280,80 @@ function indexFile(
 				piece.contentHash,
 				piece.tokenEstimate,
 			);
+			chunkIds.push(inserted?.id ?? null);
+		}
+
+		const link = db.query(
+			`INSERT INTO links (
+				source_concept_id, source_chunk_id, target_path, raw_target,
+				link_text, anchor, context, kind
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		);
+		// Citations first: a document's provenance precedes what it mentions.
+		for (const authored of [
+			...extractSourceLinks(concept.sources, dir),
+			...extractBodyLinks(concept.body, dir),
+		]) {
+			// Link offsets address the body; chunk offsets address the whole file.
+			const fileOffset =
+				authored.charOffset === undefined
+					? undefined
+					: authored.charOffset + concept.bodyOffset;
+			link.run(
+				row.id,
+				chunkAt(pieces, chunkIds, fileOffset),
+				authored.targetPath,
+				authored.rawTarget,
+				authored.text ?? null,
+				authored.anchor ?? null,
+				authored.context ?? null,
+				authored.kind,
+			);
 		}
 	})();
 
 	return { chunks: pieces.length, problem: concept.problem };
+}
+
+/**
+ * The id of the chunk a link was written in.
+ *
+ * Chunks overlap at a split seam, so the first containing chunk wins: that is
+ * the passage the author wrote the link in, and the later one only repeats it.
+ */
+function chunkAt(
+	pieces: Chunk[],
+	chunkIds: Array<number | null>,
+	offset: number | undefined,
+): number | null {
+	if (offset === undefined) {
+		return null;
+	}
+	for (let i = 0; i < pieces.length; i++) {
+		if (offset >= pieces[i].startChar && offset < pieces[i].endChar) {
+			return chunkIds[i];
+		}
+	}
+	return null;
+}
+
+/**
+ * Point every link at the concept its `target_path` names, and at nothing when
+ * no such document is indexed.
+ *
+ * This runs once over the whole bundle after the documents are written, which
+ * is what makes an unresolved link self-healing: whichever order the files were
+ * indexed in, a link written before its target existed resolves as soon as the
+ * target does, without the author touching the link.
+ */
+function resolveLinks(db: Database): void {
+	db.transaction(() => {
+		db.query(
+			`UPDATE links SET target_concept_id = (
+				SELECT c.id FROM concepts c WHERE c.path = links.target_path
+			)`,
+		).run();
+	})();
 }
 
 /** A concept's bundle-relative directory; the empty string at the bundle root. */

@@ -10,6 +10,7 @@
 import { parseArgs } from "./args.js";
 import { runEmbed } from "./commands/embed.js";
 import { runInit } from "./commands/init.js";
+import { runRels } from "./commands/rels.js";
 import { runSql } from "./commands/sql.js";
 import { runStatus } from "./commands/status.js";
 import { runSync } from "./commands/sync.js";
@@ -72,6 +73,13 @@ const COMMANDS: Record<string, CommandSpec> = {
 		summary: "Embed whatever is still waiting for a vector",
 		requiredArgs: [],
 		run: runEmbed,
+	},
+	rels: {
+		usage: "lattice rels <concept> [--json]",
+		summary:
+			"Show what a concept links to, what links back, and what is missing",
+		requiredArgs: ["concept"],
+		run: runRels,
 	},
 	sql: {
 		usage: "lattice sql <query>",

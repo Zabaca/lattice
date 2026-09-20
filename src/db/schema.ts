@@ -9,7 +9,7 @@
  * tables later is fine, renaming them is not.
  */
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS meta (
@@ -150,7 +150,14 @@ CREATE TABLE IF NOT EXISTS concept_embed_failures (
 	failed_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- Authored links: wikilinks and markdown links found in a document.
+-- Authored links: the wikilinks and markdown links in a document's body, plus
+-- the frontmatter citations that point inside the bundle.
+--
+-- 'target_path' is the bundle-relative path the author meant, and it is set
+-- whether or not that document exists. A NULL 'target_concept_id' beside a
+-- 'target_path' is the OKF unresolved link: knowledge not written yet. Nothing
+-- deletes those rows, so writing the missing document resolves them and
+-- deleting a target (ON DELETE SET NULL) returns them to unresolved.
 CREATE TABLE IF NOT EXISTS links (
 	id                INTEGER PRIMARY KEY,
 	source_concept_id INTEGER NOT NULL REFERENCES concepts(id) ON DELETE CASCADE,
@@ -159,7 +166,12 @@ CREATE TABLE IF NOT EXISTS links (
 	target_path       TEXT,
 	raw_target        TEXT NOT NULL,
 	link_text         TEXT,
-	kind              TEXT NOT NULL CHECK (kind IN ('wikilink', 'markdown'))
+	-- The '#fragment' the author aimed at, without the '#'.
+	anchor            TEXT,
+	-- The sentence the link was written in, so a backlink reads as a citation
+	-- rather than as a bare filename.
+	context           TEXT,
+	kind              TEXT NOT NULL CHECK (kind IN ('wikilink', 'markdown', 'source'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_links_source_concept ON links(source_concept_id);

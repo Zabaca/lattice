@@ -17,8 +17,12 @@ lattice sync     # Index the bundle, then embed whatever has no vector
 lattice embed    # Embed the backlog alone (`--retry-failed` retries permanent failures)
 lattice search   # Semantic search
 lattice sql      # Raw SQL queries
-lattice rels     # Show relationships for a node
+lattice rels     # Show a concept's links, backlinks, siblings and unresolved links
 ```
+
+`lattice rels <concept>` takes either an OKF identifier (`concepts/users`) or a
+bundle path (`concepts/users.md`), and `--json` prints the same four relations
+machine-readably.
 
 ## Storage
 
@@ -35,9 +39,9 @@ Run `lattice init` to setup the directory structure.
 
 ### Database
 
-Contains:
-- `nodes` table - entities with embeddings
-- `relationships` table - connections between entities
+The rewrite's index (`lattice.db`, SQLite — see `src/db/schema.ts`) holds
+`concepts`, `tags`, `chunks`, `chunks_fts`, `chunk_embeddings`,
+`concept_embeddings`, the two embedding failure tables and `links`.
 
 ## Embeddings
 
@@ -59,6 +63,17 @@ Environment:
 | `LATTICE_EMBED_PROVIDER` | Provider name; `hash` (the default) is the only one so far. An unknown name is an error, never a silent fallback. |
 | `LATTICE_EMBED_DIM` | Dimensions for the hash provider (default 512). The model name carries it: `hash-512`. |
 | `LATTICE_EMBED_FAIL` | Fault injection for tests: `retryable:<substring>` or `permanent:<substring>` makes the provider fail on any text containing the substring. |
+
+## Links
+
+`links` records the edges an author wrote: markdown links and wikilinks in a
+document's body, plus the frontmatter `sources:` citations that point inside the
+bundle (`kind = 'source'`). Links in fenced code blocks and links to external
+URLs are not edges. A link whose target is not indexed keeps its `target_path`
+with a NULL `target_concept_id` — an OKF unresolved link, standing for knowledge
+not written yet. Every sync re-resolves the whole table at the end, so writing
+the missing document repairs the edge and deleting a target returns its inbound
+links to unresolved.
 
 ## Development Notes
 

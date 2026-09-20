@@ -9,7 +9,9 @@
 
 import { parseArgs } from "./args.js";
 import { runInit } from "./commands/init.js";
+import { runSql } from "./commands/sql.js";
 import { runStatus } from "./commands/status.js";
+import { runSync } from "./commands/sync.js";
 
 export interface CliOptions {
 	/** The argv tail: no executable, no script path. */
@@ -57,6 +59,18 @@ const COMMANDS: Record<string, CommandSpec> = {
 		summary: "Show what is indexed",
 		requiredArgs: [],
 		run: runStatus,
+	},
+	sync: {
+		usage: "lattice sync",
+		summary: "Index the bundle into the database",
+		requiredArgs: [],
+		run: runSync,
+	},
+	sql: {
+		usage: "lattice sql <query> [--write]",
+		summary: "Run a read-only SQL query against the index",
+		requiredArgs: ["query"],
+		run: runSql,
 	},
 	search: {
 		usage: "lattice search <query>",

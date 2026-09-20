@@ -1,7 +1,9 @@
 import { existsSync } from "node:fs";
 import { openDatabase } from "../../db/open.js";
+import { planSync } from "../../okf/plan.js";
 import { resolvePaths } from "../../utils/paths.js";
 import type { CommandContext, CommandOutput } from "../run.js";
+import { readBundle, readIndexedConcepts } from "./sync.js";
 
 /** Tables counted by `status`, in the order they are reported. */
 const COUNTS: ReadonlyArray<{ label: string; table: string }> = [
@@ -42,12 +44,51 @@ export function runStatus(context: CommandContext): CommandOutput {
 		lines.push("");
 		lines.push(
 			total === 0
-				? "Nothing indexed yet. Run `lattice index` to index your documents."
+				? "Nothing indexed yet. Run `lattice sync` to index your documents."
 				: `Documents live in ${paths.docs}.`,
 		);
+
+		if (existsSync(paths.docs)) {
+			const plan = planSync(readBundle(paths.docs), readIndexedConcepts(db));
+			const pending =
+				plan.added.length +
+				plan.changed.length +
+				plan.deleted.length +
+				plan.renamed.length;
+
+			lines.push("");
+			lines.push(
+				pending === 0
+					? "Up to date with the bundle."
+					: `Pending sync: ${plan.added.length} new, ${plan.changed.length} changed, ${plan.deleted.length} deleted, ${plan.renamed.length} renamed.`,
+			);
+		}
+
+		const problems = db
+			.query<{ path: string; frontmatter_error: string }, []>(
+				"SELECT path, frontmatter_error FROM concepts WHERE frontmatter_error IS NOT NULL ORDER BY path",
+			)
+			.all();
+
+		if (problems.length > 0) {
+			lines.push("");
+			lines.push(
+				`Frontmatter problems (${problems.length}) — these documents are indexed anyway:`,
+			);
+			for (const problem of problems) {
+				lines.push(
+					`  ${problem.path}: ${firstLine(problem.frontmatter_error)}`,
+				);
+			}
+		}
 
 		return { code: 0, stdout: `${lines.join("\n")}\n` };
 	} finally {
 		db.close();
 	}
+}
+
+/** YAML errors run to several lines; the first one says what went wrong. */
+function firstLine(message: string): string {
+	return message.split("\n", 1)[0];
 }

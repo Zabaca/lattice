@@ -22,6 +22,8 @@ export interface LatticePaths {
 	database: string;
 	/** The local configuration file. */
 	env: string;
+	/** The sync lock, which keeps two syncs off one index. */
+	lock: string;
 }
 
 /**
@@ -40,6 +42,7 @@ export function resolvePaths(
 		docs: join(home, "docs"),
 		database: join(home, "lattice.db"),
 		env: join(home, ".env"),
+		lock: join(home, ".sync.lock"),
 	};
 }
 

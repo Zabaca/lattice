@@ -9,7 +9,7 @@
  * tables later is fine, renaming them is not.
  */
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS meta (
@@ -17,19 +17,42 @@ CREATE TABLE IF NOT EXISTS meta (
 	value TEXT NOT NULL
 );
 
--- One row per indexed markdown document.
+-- One row per indexed markdown document. The OKF frontmatter fields results
+-- are filtered on are promoted to columns; everything else stays in
+-- 'frontmatter' as JSON, so no authored field is ever lost.
 CREATE TABLE IF NOT EXISTS concepts (
-	id           INTEGER PRIMARY KEY,
-	path         TEXT NOT NULL UNIQUE,
-	title        TEXT,
-	content_hash TEXT NOT NULL,
-	frontmatter  TEXT,
-	byte_size    INTEGER NOT NULL DEFAULT 0,
-	mtime_ms     INTEGER,
-	indexed_at   TEXT NOT NULL DEFAULT (datetime('now'))
+	id                 INTEGER PRIMARY KEY,
+	path               TEXT NOT NULL UNIQUE,
+	identifier         TEXT NOT NULL,
+	dir                TEXT NOT NULL DEFAULT '',
+	title              TEXT,
+	type               TEXT,
+	description        TEXT,
+	status             TEXT,
+	stale_after        TEXT,
+	trust              TEXT NOT NULL DEFAULT 'unverified',
+	frontmatter        TEXT,
+	frontmatter_error  TEXT,
+	content_hash       TEXT NOT NULL,
+	byte_size          INTEGER NOT NULL DEFAULT 0,
+	mtime_ms           INTEGER,
+	indexed_at         TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_concepts_title ON concepts(title);
+CREATE INDEX IF NOT EXISTS idx_concepts_identifier ON concepts(identifier);
+CREATE INDEX IF NOT EXISTS idx_concepts_dir ON concepts(dir);
+CREATE INDEX IF NOT EXISTS idx_concepts_type ON concepts(type);
+CREATE INDEX IF NOT EXISTS idx_concepts_content_hash ON concepts(content_hash);
+
+-- A concept's tags, one row each, so a tag filter is an index lookup.
+CREATE TABLE IF NOT EXISTS tags (
+	concept_id INTEGER NOT NULL REFERENCES concepts(id) ON DELETE CASCADE,
+	tag        TEXT NOT NULL,
+	PRIMARY KEY (concept_id, tag)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tags_tag ON tags(tag);
 
 -- One row per heading-scoped passage of a concept.
 CREATE TABLE IF NOT EXISTS chunks (
@@ -39,8 +62,13 @@ CREATE TABLE IF NOT EXISTS chunks (
 	heading        TEXT,
 	heading_path   TEXT,
 	depth          INTEGER NOT NULL DEFAULT 0,
+	-- Offsets into the ORIGINAL file, frontmatter included, so an editor can
+	-- open the file at the passage. Lines are 1-based and inclusive;
+	-- characters are 0-based and half-open.
 	start_line     INTEGER NOT NULL DEFAULT 0,
 	end_line       INTEGER NOT NULL DEFAULT 0,
+	start_char     INTEGER NOT NULL DEFAULT 0,
+	end_char       INTEGER NOT NULL DEFAULT 0,
 	content        TEXT NOT NULL,
 	content_hash   TEXT NOT NULL,
 	token_estimate INTEGER NOT NULL DEFAULT 0,

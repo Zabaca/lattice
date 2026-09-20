@@ -30,7 +30,7 @@ export function runInit(context: CommandContext): CommandOutput {
 	lines.push(
 		databaseExisted
 			? "Lattice is already initialized."
-			: "Lattice is ready. Put markdown in the docs directory and run `lattice index`.",
+			: "Lattice is ready. Put markdown in the docs directory and run `lattice sync`.",
 	);
 
 	return { code: 0, stdout: `${lines.join("\n")}\n` };

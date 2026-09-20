@@ -1,6 +1,8 @@
 import { existsSync } from "node:fs";
 import { openDatabase } from "../../db/open.js";
 import { selectProvider } from "../../embed/provider.js";
+import type { VectorSpace } from "../../embed/state.js";
+import { checkActiveSpace } from "../../embed/state.js";
 import { type SearchHit, search, searchConcepts } from "../../search/search.js";
 import type { SemanticInput } from "../../search/vector.js";
 import { resolvePaths } from "../../utils/paths.js";
@@ -51,10 +53,26 @@ export async function runSearch(
 		return { code: 1, stderr: (error as Error).message };
 	}
 
-	const embedded = await embedQuery(context.positionals[0], context.env);
+	const embedded = await embedQuery(context.positionals[0], context);
 
 	const db = openDatabase(paths.database);
 	try {
+		// A query embedded by one model cannot be compared against vectors
+		// written by another, and answering anyway would be worse than not
+		// answering: the results would look ordinary. A provider that could
+		// not be built at all is a different matter — that degrades to the
+		// keyword leg below, rather than refusing.
+		if (embedded.space !== undefined) {
+			const mismatch = checkActiveSpace(
+				db,
+				embedded.space,
+				embedded.source ?? "",
+			);
+			if (mismatch !== undefined) {
+				return { code: 1, stderr: mismatch };
+			}
+		}
+
 		// "Which document" and "which passage" are different questions over the
 		// same index, asked with the same filters.
 		const ask = context.flags.concepts !== undefined ? searchConcepts : search;
@@ -119,12 +137,27 @@ export async function runSearch(
  */
 async function embedQuery(
 	query: string,
-	env: Record<string, string | undefined>,
-): Promise<{ semantic?: SemanticInput; reason?: string }> {
+	context: CommandContext,
+): Promise<{
+	semantic?: SemanticInput;
+	reason?: string;
+	/** The space the query was embedded into, when there was one. */
+	space?: VectorSpace;
+	/** Where that model name came from, for the model-change message. */
+	source?: string;
+}> {
 	try {
-		const provider = selectProvider(env);
-		const [vector] = await provider.embed([query]);
-		return { semantic: { vector, model: provider.model } };
+		const provider = selectProvider(context.env, context.report);
+		const space = { model: provider.model, dim: provider.dim };
+		// `embedQuery`, not `embed`: an asymmetric model is trained to be told
+		// that this is a question rather than a passage, and a query embedded
+		// as a passage lands in the wrong part of the space.
+		const [vector] = await provider.embedQuery([query]);
+		return {
+			semantic: { vector, model: provider.model, dim: provider.dim },
+			space,
+			source: provider.source,
+		};
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		return { reason: `the query could not be embedded: ${message}` };

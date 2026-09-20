@@ -26,6 +26,7 @@ export const STUB_GROUPS_VAR = "LATTICE_EMBED_STUB";
 export class StubProvider implements EmbeddingProvider {
 	readonly model: string;
 	readonly dim: number;
+	readonly source = STUB_GROUPS_VAR;
 	/** One list of equivalent phrases per dimension, lower-cased for matching. */
 	private readonly groups: string[][];
 
@@ -39,6 +40,11 @@ export class StubProvider implements EmbeddingProvider {
 
 	async embed(texts: string[]): Promise<Float32Array[]> {
 		return texts.map((text) => this.vector(text));
+	}
+
+	/** Declared meaning is symmetric: a question is matched like a passage. */
+	embedQuery(texts: string[]): Promise<Float32Array[]> {
+		return this.embed(texts);
 	}
 
 	private vector(text: string): Float32Array {

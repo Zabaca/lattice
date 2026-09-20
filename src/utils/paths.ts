@@ -4,6 +4,7 @@
  * All Lattice data lives under a single home directory:
  * - docs/        Markdown documentation
  * - lattice.db   SQLite index (concepts, chunks, links, embeddings)
+ * - models/      Cached embedding model weights (`LATTICE_MODEL_DIR` moves it)
  * - .env         Local configuration
  *
  * The home directory is resolved from an explicit environment rather than a
@@ -22,6 +23,8 @@ export interface LatticePaths {
 	database: string;
 	/** The local configuration file. */
 	env: string;
+	/** Cached embedding model weights, one directory per hub repository. */
+	models: string;
 	/** The lock a running sync holds. */
 	syncLock: string;
 }
@@ -42,6 +45,7 @@ export function resolvePaths(
 		docs: join(home, "docs"),
 		database: join(home, "lattice.db"),
 		env: join(home, ".env"),
+		models: env.LATTICE_MODEL_DIR?.trim() || join(home, "models"),
 		syncLock: join(home, ".sync.lock"),
 	};
 }

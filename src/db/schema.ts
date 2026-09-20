@@ -9,9 +9,13 @@
  * tables later is fine, renaming them is not.
  */
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 export const SCHEMA_SQL = `
+-- Index-wide facts. 'schema_version' is one; 'embedding_model' and 'embedding_dim'
+-- are the other two that matter: together they name the vector space the
+-- index is currently in, and moving that pointer is what completes a
+-- re-embed.
 CREATE TABLE IF NOT EXISTS meta (
 	key   TEXT PRIMARY KEY,
 	value TEXT NOT NULL
@@ -105,49 +109,58 @@ CREATE TRIGGER IF NOT EXISTS chunks_au AFTER UPDATE ON chunks BEGIN
 	VALUES (new.id, new.heading_path, new.content);
 END;
 
--- At most one embedding per chunk. The model and dimension ride with the
--- vector so a model change can be detected rather than silently mixed in.
+-- One embedding per chunk PER VECTOR SPACE, a space being a (model, dim)
+-- pair. Two spaces coexist only while a re-embed is in flight: the new
+-- vectors are written beside the old, and the old set is dropped in the same
+-- transaction that moves 'meta.embedding_model' onto the new one. Which space
+-- answers a query is never guessed from the rows — it is that pointer.
 CREATE TABLE IF NOT EXISTS chunk_embeddings (
-	chunk_id   INTEGER PRIMARY KEY REFERENCES chunks(id) ON DELETE CASCADE,
+	chunk_id   INTEGER NOT NULL REFERENCES chunks(id) ON DELETE CASCADE,
 	model      TEXT NOT NULL,
 	dim        INTEGER NOT NULL,
 	vector     BLOB NOT NULL,
-	created_at TEXT NOT NULL DEFAULT (datetime('now'))
+	created_at TEXT NOT NULL DEFAULT (datetime('now')),
+	PRIMARY KEY (chunk_id, model, dim)
 );
 
-CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_model ON chunk_embeddings(model);
+CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_space ON chunk_embeddings(model, dim);
 
 -- A short vector for the concept itself, built from its title, description
 -- and tags rather than its text, so a query can match a document as a whole.
 CREATE TABLE IF NOT EXISTS concept_embeddings (
-	concept_id INTEGER PRIMARY KEY REFERENCES concepts(id) ON DELETE CASCADE,
+	concept_id INTEGER NOT NULL REFERENCES concepts(id) ON DELETE CASCADE,
 	model      TEXT NOT NULL,
 	dim        INTEGER NOT NULL,
 	vector     BLOB NOT NULL,
-	created_at TEXT NOT NULL DEFAULT (datetime('now'))
+	created_at TEXT NOT NULL DEFAULT (datetime('now')),
+	PRIMARY KEY (concept_id, model, dim)
 );
 
-CREATE INDEX IF NOT EXISTS idx_concept_embeddings_model ON concept_embeddings(model);
+CREATE INDEX IF NOT EXISTS idx_concept_embeddings_space ON concept_embeddings(model, dim);
 
 -- Why a target has no vector. A row here is the only thing that keeps the
 -- embed phase from trying the same hopeless text on every run; it hangs off
 -- the target so re-chunking a document takes its stale failures with it.
 CREATE TABLE IF NOT EXISTS chunk_embed_failures (
-	chunk_id  INTEGER PRIMARY KEY REFERENCES chunks(id) ON DELETE CASCADE,
+	chunk_id  INTEGER NOT NULL REFERENCES chunks(id) ON DELETE CASCADE,
 	model     TEXT NOT NULL,
+	dim       INTEGER NOT NULL,
 	retryable INTEGER NOT NULL,
 	attempts  INTEGER NOT NULL DEFAULT 1,
 	message   TEXT NOT NULL,
-	failed_at TEXT NOT NULL DEFAULT (datetime('now'))
+	failed_at TEXT NOT NULL DEFAULT (datetime('now')),
+	PRIMARY KEY (chunk_id, model, dim)
 );
 
 CREATE TABLE IF NOT EXISTS concept_embed_failures (
-	concept_id INTEGER PRIMARY KEY REFERENCES concepts(id) ON DELETE CASCADE,
+	concept_id INTEGER NOT NULL REFERENCES concepts(id) ON DELETE CASCADE,
 	model      TEXT NOT NULL,
+	dim        INTEGER NOT NULL,
 	retryable  INTEGER NOT NULL,
 	attempts   INTEGER NOT NULL DEFAULT 1,
 	message    TEXT NOT NULL,
-	failed_at  TEXT NOT NULL DEFAULT (datetime('now'))
+	failed_at  TEXT NOT NULL DEFAULT (datetime('now')),
+	PRIMARY KEY (concept_id, model, dim)
 );
 
 -- Authored links: the wikilinks and markdown links in a document's body, plus

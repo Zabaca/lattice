@@ -43,6 +43,7 @@
 		"url": "https://github.com/Zabaca/lattice.git"
 	},
 	"dependencies": {
+		"@huggingface/transformers": "^4.3.0",
 		"gray-matter": "^4.0.3",
 		"zod": "^4.1.13"
 	},
@@ -50,5 +51,9 @@
 		"@biomejs/biome": "^2.2.6",
 		"@types/bun": "latest",
 		"typescript": "^5.0.0"
-	}
+	},
+	"trustedDependencies": [
+		"onnxruntime-node",
+		"protobufjs"
+	]
 }

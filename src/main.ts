@@ -7,9 +7,11 @@
 
 import { runCli } from "./cli/run.js";
 
+/** Progress is written as it happens; the result carries the same lines. */
 const result = await runCli({
 	argv: process.argv.slice(2),
 	env: process.env,
+	onProgress: (line) => process.stderr.write(`${line}\n`),
 });
 
 if (result.stdout) {

@@ -29,6 +29,9 @@ lattice search "your query"    # Hybrid search over passages
 
 ## Quick Start
 
+No API key. Embeddings are computed on your machine by a model `lattice init`
+downloads once (about 145 MB); after that, indexing and search work offline.
+
 ### 1. Install
 
 ```bash
@@ -37,7 +40,9 @@ lattice init
 ```
 
 `lattice init` creates `~/.lattice/` with a `docs/` bundle directory and an
-empty `lattice.db`. It is safe to run again.
+empty `lattice.db`, and downloads the embedding model into `~/.lattice/models/`
+with progress as it goes. It is safe to run again: nothing already in place is
+fetched twice.
 
 To use the `/research` slash command in Claude Code, copy it from the package's
 `commands/` directory into `.claude/commands/` (this project, or `~/.claude/commands/`
@@ -206,8 +211,18 @@ lattice sql "SELECT type, count(*) AS n FROM concepts GROUP BY type"
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `LATTICE_HOME` | The Lattice home directory | `~/.lattice` |
-| `LATTICE_EMBED_PROVIDER` | Embedding provider name. An unknown name is an error, never a silent fallback. | `hash` |
-| `LATTICE_EMBED_DIM` | Dimensions for the `hash` provider | `512` |
+| `LATTICE_EMBED_PROVIDER` | `local` (a real model, in-process) or `hash` (deterministic, for tests). An unknown name is an error, never a silent fallback. | `local` |
+| `LATTICE_EMBED_MODEL` | Which registered model to use | `nomic-embed-text-v1.5` |
+| `LATTICE_EMBED_DIM` | Stored vector width; only a model trained for truncation may go below its native width | `512` |
+| `LATTICE_MODEL_DIR` | Where model weights are cached | `$LATTICE_HOME/models` |
+| `LATTICE_OFFLINE` / `HF_HUB_OFFLINE` | Never download; use what is already cached | unset |
+| `LATTICE_HF_MIRROR` | Download the weights from somewhere other than the hub (`HF_ENDPOINT` also works) | unset |
+
+Changing the model is safe: vectors from two models are not comparable, so a
+`sync` under a changed model refuses, naming both models and the number of
+chunks affected, and `lattice embed --reembed` rebuilds the index — keeping the
+old vectors until the new ones are complete, so an interrupted rebuild still
+searches correctly and simply resumes.
 
 ### Storage
 
@@ -237,15 +252,22 @@ repairs the edge, and deleting one returns its inbound links to unresolved.
 ### Embeddings
 
 Embeddings are produced in-process behind the `EmbeddingProvider` seam
-(`src/embed/provider.ts`). The default `hash` provider is deterministic — no
-model on disk, no network — which makes the pipeline runnable anywhere; it is
-not a semantic model, so with it ranking is what keyword search alone would
-give.
+(`src/embed/provider.ts`). The default `local` provider runs a real ONNX model
+in the command's own process from weights cached under the Lattice home: no
+daemon, no API key, and no network once the model is there. `hash` is the
+deterministic alternative — no model on disk, no network — which makes the
+pipeline runnable anywhere; it is not a semantic model, so with it ranking is
+what keyword search alone would give.
 
-A chunk with no vector is a row missing from `chunk_embeddings`, so an
-interruption leaves a backlog rather than corruption. A provider failure is
-recorded per target as retryable or permanent; retryable failures are picked up
-by the next run, permanent ones only under `lattice embed --retry-failed`.
+A chunk with no vector is a row missing from `chunk_embeddings` for the active
+vector space, so an interruption leaves a backlog rather than corruption. A
+provider failure is recorded per target as retryable or permanent; retryable
+failures are picked up by the next run, permanent ones only under
+`lattice embed --retry-failed`.
+
+A vector space is a `(model, dim)` pair, and the one the index is in is
+recorded rather than inferred, so two models can never be mixed. See
+**Environment variables** above for what a model change does.
 
 ### Ranking
 

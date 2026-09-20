@@ -7,16 +7,17 @@ A CLI that indexes a bundle of OKF markdown documents into SQLite and searches i
 - **Backend**: SQLite via `bun:sqlite` (embedded, no external dependencies)
 - **Keyword search**: SQLite FTS5 over chunks (`chunks_fts`)
 - **Vector search**: a cosine scan over `chunk_embeddings` — no index extension
-- **Embeddings**: in-process, behind the `EmbeddingProvider` seam in `src/embed/provider.ts`. The default `hash` provider is deterministic — 512 dimensions derived from a hash of the text — so the pipeline needs no model on disk and no network.
+- **Embeddings**: in-process, behind the `EmbeddingProvider` seam in `src/embed/provider.ts`. The default `local` provider runs a real ONNX model in the command's own process from weights cached under the Lattice home — no daemon, no API key, and no network after the first download. The `hash` provider is the deterministic alternative the test suite uses: 512 dimensions derived from a hash of the text, needing no model on disk.
 - **Runtime**: Bun
 
 ## Key Commands
 
 ```bash
-lattice init     # Create the home directory, the docs bundle and the index
+lattice init     # Create the home directory and index, and download the embedding model
 lattice status   # Show documents needing sync
 lattice sync     # Index the bundle, then embed whatever has no vector
-lattice embed    # Embed the backlog alone (`--retry-failed` retries permanent failures)
+lattice embed    # Embed the backlog alone (`--retry-failed` retries permanent failures,
+                 # `--reembed` rebuilds the index after a model change)
 lattice search   # Hybrid search: keyword and meaning fused, then expanded one hop
 lattice sql      # Raw SQL queries
 lattice rels     # Show a concept's links, backlinks, siblings and unresolved links
@@ -46,7 +47,9 @@ file appears only while a sync holds it.
 
 The index (`lattice.db`, SQLite — see `src/db/schema.ts`) holds
 `concepts`, `tags`, `chunks`, `chunks_fts`, `chunk_embeddings`,
-`concept_embeddings`, the two embedding failure tables and `links`.
+`concept_embeddings`, the two embedding failure tables and `links`. The four embedding tables are
+keyed by `(target, model, dim)`, which is what lets two vector spaces coexist
+while a re-embed is in flight.
 
 ## Embeddings
 
@@ -61,13 +64,42 @@ picked up by the next run; permanent ones only under
 `lattice embed --retry-failed`. Both tables hang off their target, so
 re-chunking a document takes its stale failure rows with it.
 
+### Models and model changes
+
+`src/embed/registry.ts` describes every model Lattice can run: its hub
+repository, how its token vectors are pooled, the prefixes it was trained to
+expect for a passage as against a query, its native and stored dimensions, and
+its context ceiling. The default is `nomic-embed-text-v1.5` stored at 512 of
+its native 768 dimensions — a truncation only models trained for it (Matryoshka)
+are allowed, and the vector is re-normalised afterwards so a dot product is
+still a cosine similarity. `bge-small-en-v1.5` and `mxbai-embed-large-v1` are
+also registered.
+
+A model name is normalised before it is compared or stored, so `nomic-ai/…`,
+`hf.co/…`, a `:latest` tag and a capital letter are all the same model.
+
+A **vector space** is a `(model, dim)` pair, and the space the index is in is
+recorded in `meta.embedding_model` / `meta.embedding_dim` — not inferred from the rows.
+`sync`, `embed` and `search` refuse when the configured model is not the one
+the index is in, naming both, the number of chunks affected, where the new name
+came from, and the one command that proceeds: `lattice embed --reembed`. That
+command writes the new space's vectors beside the old ones and only when the
+new set is complete does a single transaction move the pointer and delete the
+old rows — so an interrupted re-embed still searches correctly on the old
+vectors and resumes where it stopped.
+
 Environment:
 
 | Variable | Meaning |
 |---|---|
-| `LATTICE_EMBED_PROVIDER` | Provider name; `hash` (the default) is the only one so far. An unknown name is an error, never a silent fallback. |
-| `LATTICE_EMBED_DIM` | Dimensions for the hash provider (default 512). The model name carries it: `hash-512`. |
-| `LATTICE_EMBED_FAIL` | Fault injection for tests: `retryable:<substring>` or `permanent:<substring>` makes the provider fail on any text containing the substring. |
+| `LATTICE_EMBED_PROVIDER` | `local` (the default: a real model, in-process) or `hash` (deterministic, no model, what the tests use). An unknown name is an error, never a silent fallback. |
+| `LATTICE_EMBED_MODEL` | Which registered model to run. An unregistered name is an error listing the registered ones. |
+| `LATTICE_EMBED_DIM` | Stored vector width. For `hash` it is simply the width, and the model name carries it (`hash-512`). For `local` it may only go below the model's native width when the model was trained for truncation. |
+| `LATTICE_MODEL_DIR` | Where weights are cached; defaults to `models` under the Lattice home. |
+| `LATTICE_OFFLINE` / `HF_HUB_OFFLINE` | Never download. A model already cached is used; a missing one is an error naming the directory and the files to place there. |
+| `LATTICE_HF_MIRROR` | Where a download comes from, when not the hub (`HF_ENDPOINT` is honoured as a fallback). |
+| `LATTICE_EMBED_FAIL` | Fault injection for tests: `retryable:<substring>` or `permanent:<substring>` makes the hash provider fail on any text containing the substring. |
+| `LATTICE_E2E_MODEL` | Set to run `src/embed/local.e2e.test.ts`, the one test that downloads and runs the real model. It is skipped otherwise. |
 
 ## Search
 

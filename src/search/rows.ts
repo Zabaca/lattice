@@ -21,7 +21,7 @@ export interface SearchChunk {
 }
 
 /** How a result was reached when it was not matched directly. */
-export type Relation = "link" | "backlink" | "sibling";
+export type Relation = "link" | "backlink";
 
 export interface SearchHit {
 	path: string;

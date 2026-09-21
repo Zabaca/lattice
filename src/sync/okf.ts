@@ -6,6 +6,7 @@
  * recorded and reported, never used as a reason to reject the file.
  */
 
+import { posix } from "node:path";
 import matter from "gray-matter";
 
 /** Frontmatter fields promoted to their own column, and so not repeated in the JSON remainder. */
@@ -109,6 +110,43 @@ export function parseConcept(raw: string): OkfConcept {
 		rest,
 		problem: type === undefined ? "frontmatter has no `type`" : undefined,
 	};
+}
+
+/**
+ * The bundle directory a type's documents live in: `BigQuery Table` files
+ * under `bigquery-table/`. One rule, applied both when a document is written
+ * and when it is checked, so the two can never disagree.
+ */
+export function typeDirectory(type: string): string {
+	return type
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, "-")
+		.replace(/^-+|-+$/g, "");
+}
+
+/**
+ * What is wrong with a concept at a given bundle path, if anything.
+ *
+ * A frontmatter problem comes first — a file with no type cannot be filed
+ * anywhere. Otherwise a document filed outside its type's directory is
+ * reported, because the directory is where a reader will look for it.
+ */
+export function conceptProblem(
+	path: string,
+	concept: OkfConcept,
+): string | undefined {
+	if (concept.problem !== undefined || concept.type === undefined) {
+		return concept.problem;
+	}
+	const dir = posix.dirname(path);
+	const actual = dir === "." ? "" : dir;
+	const expected = typeDirectory(concept.type);
+	if (actual === expected) {
+		return undefined;
+	}
+	const where =
+		actual === "" ? "filed at the bundle root" : `filed under \`${actual}/\``;
+	return `${where} but type \`${concept.type}\` belongs in \`${expected}/\``;
 }
 
 /**

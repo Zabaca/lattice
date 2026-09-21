@@ -2,10 +2,11 @@
  * One hop out from the answers.
  *
  * A retrieval engine that returns only what matched returns only what the
- * asker already knew how to ask for. The documents an author linked to, the
- * documents that cite them, and the documents filed beside them are the
- * author's own statement that these things belong together — a statement made
- * before anyone asked this question, which is what makes it worth following.
+ * asker already knew how to ask for. The documents an author linked to and the
+ * documents that cite them are the author's own statement that these things
+ * belong together — a statement made before anyone asked this question, which
+ * is what makes it worth following. Sharing a directory is not such a
+ * statement, so it is not an edge.
  *
  * Expansion is bounded on purpose. It goes one hop, it is capped, it never
  * returns something already among the answers, and a neighbour always ranks
@@ -69,9 +70,9 @@ export function expand(
 
 	const chosen: NeighbourRow[] = [];
 	const taken = new Set<number>();
-	// Relation order is the order of the author's own claim: an explicit link
-	// says more than sharing a directory, and both are taken before the cap.
-	for (const relation of ["link", "backlink", "sibling"] as const) {
+	// The author's own links come before the links others made to them, and
+	// both are taken before the cap.
+	for (const relation of ["link", "backlink"] as const) {
 		for (const row of neighbours(db, sources, relation, options)) {
 			if (already.has(row.concept_id) || taken.has(row.concept_id)) {
 				continue;
@@ -165,18 +166,6 @@ function neighbours(
 
 	// The source ids are bound twice: once to select the edge, once to order
 	// the results by the rank of the source that reached them.
-	if (relation === "sibling") {
-		return db
-			.query<NeighbourRow, (string | number)[]>(
-				`SELECT DISTINCT c.id AS concept_id, source.id AS source_id, 'sibling' AS relation
-				FROM concepts source
-				JOIN concepts c ON c.dir = source.dir AND c.id <> source.id
-				WHERE source.id IN (${placeholders})${bounds.sql}
-				ORDER BY ${order.replaceAll("c.id", "source.id")}, c.path`,
-			)
-			.all(...sources, ...bounds.values, ...sources);
-	}
-
 	const [from, to] =
 		relation === "link"
 			? ["source_concept_id", "target_concept_id"]

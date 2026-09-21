@@ -179,17 +179,17 @@ describe("lattice sync", () => {
 			"SELECT path FROM concepts ORDER BY path",
 		);
 		expect(paths.map((row) => row.path)).toEqual([
-			"concepts/orders.md",
-			"concepts/users.md",
-			"guides/chunking.md",
-			"notes/broken.md",
-			"notes/plain.md",
-			"notes/unverified.md",
-			"search/body-match.md",
-			"search/fresh-widget.md",
-			"search/heading-match.md",
-			"search/stale-widget.md",
-			"search/title-match.md",
+			"bigquery-table/orders.md",
+			"bigquery-table/users.md",
+			"gauge/body-match.md",
+			"gauge/fresh-widget.md",
+			"gauge/heading-match.md",
+			"gauge/stale-widget.md",
+			"gauge/title-match.md",
+			"guide/chunking.md",
+			"note/broken.md",
+			"note/plain.md",
+			"note/unverified.md",
 		]);
 	});
 
@@ -209,11 +209,11 @@ describe("lattice sync", () => {
 		}>(
 			home,
 			"SELECT identifier, dir, type, title, description, status, stale_after, frontmatter" +
-				" FROM concepts WHERE path = 'concepts/users.md'",
+				" FROM concepts WHERE path = 'bigquery-table/users.md'",
 		);
 
-		expect(users.identifier).toBe("concepts/users");
-		expect(users.dir).toBe("concepts");
+		expect(users.identifier).toBe("bigquery-table/users");
+		expect(users.dir).toBe("bigquery-table");
 		expect(users.type).toBe("BigQuery Table");
 		expect(users.title).toBe("Users table");
 		expect(users.description).toBe("One row per registered account.");
@@ -240,31 +240,31 @@ describe("lattice sync", () => {
 					" ORDER BY c.path, t.tag",
 			),
 		).toEqual([
-			{ path: "concepts/orders.md", tag: "data" },
-			{ path: "concepts/users.md", tag: "core" },
-			{ path: "concepts/users.md", tag: "data" },
-			{ path: "guides/chunking.md", tag: "guide" },
-			{ path: "search/body-match.md", tag: "rank" },
-			{ path: "search/fresh-widget.md", tag: "rank" },
-			{ path: "search/heading-match.md", tag: "rank" },
-			{ path: "search/stale-widget.md", tag: "rank" },
-			{ path: "search/title-match.md", tag: "rank" },
+			{ path: "bigquery-table/orders.md", tag: "data" },
+			{ path: "bigquery-table/users.md", tag: "core" },
+			{ path: "bigquery-table/users.md", tag: "data" },
+			{ path: "gauge/body-match.md", tag: "rank" },
+			{ path: "gauge/fresh-widget.md", tag: "rank" },
+			{ path: "gauge/heading-match.md", tag: "rank" },
+			{ path: "gauge/stale-widget.md", tag: "rank" },
+			{ path: "gauge/title-match.md", tag: "rank" },
+			{ path: "guide/chunking.md", tag: "guide" },
 		]);
 
 		expect(
 			await sql(home, "SELECT path, trust FROM concepts ORDER BY path"),
 		).toEqual([
-			{ path: "concepts/orders.md", trust: "machine-confirmed" },
-			{ path: "concepts/users.md", trust: "human-reviewed" },
-			{ path: "guides/chunking.md", trust: "unverified" },
-			{ path: "notes/broken.md", trust: "unverified" },
-			{ path: "notes/plain.md", trust: "unverified" },
-			{ path: "notes/unverified.md", trust: "unverified" },
-			{ path: "search/body-match.md", trust: "unverified" },
-			{ path: "search/fresh-widget.md", trust: "unverified" },
-			{ path: "search/heading-match.md", trust: "unverified" },
-			{ path: "search/stale-widget.md", trust: "unverified" },
-			{ path: "search/title-match.md", trust: "unverified" },
+			{ path: "bigquery-table/orders.md", trust: "machine-confirmed" },
+			{ path: "bigquery-table/users.md", trust: "human-reviewed" },
+			{ path: "gauge/body-match.md", trust: "unverified" },
+			{ path: "gauge/fresh-widget.md", trust: "unverified" },
+			{ path: "gauge/heading-match.md", trust: "unverified" },
+			{ path: "gauge/stale-widget.md", trust: "unverified" },
+			{ path: "gauge/title-match.md", trust: "unverified" },
+			{ path: "guide/chunking.md", trust: "unverified" },
+			{ path: "note/broken.md", trust: "unverified" },
+			{ path: "note/plain.md", trust: "unverified" },
+			{ path: "note/unverified.md", trust: "unverified" },
 		]);
 	});
 
@@ -277,17 +277,17 @@ describe("lattice sync", () => {
 		expect(
 			await sql(
 				home,
-				"SELECT path, type FROM concepts WHERE path LIKE 'notes/%' AND type IS NULL ORDER BY path",
+				"SELECT path, type FROM concepts WHERE path LIKE 'note/%' AND type IS NULL ORDER BY path",
 			),
 		).toEqual([
-			{ path: "notes/broken.md", type: null },
-			{ path: "notes/plain.md", type: null },
+			{ path: "note/broken.md", type: null },
+			{ path: "note/plain.md", type: null },
 		]);
 	});
 });
 
 /**
- * `guides/chunking.md` is laid out so its line numbers can be quoted here:
+ * `guide/chunking.md` is laid out so its line numbers can be quoted here:
  * the heading of each section, and the fenced block, sit at known lines.
  */
 interface ChunkRow {
@@ -317,7 +317,7 @@ describe("chunking", () => {
 		const home = await bundledHome();
 		await invoke(["sync"], home);
 
-		const chunks = await chunksOf(home, "guides/chunking.md");
+		const chunks = await chunksOf(home, "guide/chunking.md");
 
 		expect(chunks.map((chunk) => chunk.heading)).toEqual([
 			"Chunking guide",
@@ -337,7 +337,7 @@ describe("chunking", () => {
 		const home = await bundledHome();
 		await invoke(["sync"], home);
 
-		const chunks = await chunksOf(home, "guides/chunking.md");
+		const chunks = await chunksOf(home, "guide/chunking.md");
 
 		// The fixture's first heading is on line 7, behind four lines of
 		// frontmatter and its two delimiters; the section runs to the line before
@@ -350,7 +350,7 @@ describe("chunking", () => {
 		expect(chunks[4].end_line).toBe(82);
 
 		const raw = readFileSync(
-			join(home, "docs", "guides", "chunking.md"),
+			join(home, "docs", "guide", "chunking.md"),
 			"utf8",
 		);
 		expect(raw.slice(chunks[0].start_char, chunks[0].end_char).trim()).toBe(
@@ -364,7 +364,7 @@ describe("chunking", () => {
 		const home = await bundledHome();
 		await invoke(["sync"], home);
 
-		const chunks = await chunksOf(home, "guides/chunking.md");
+		const chunks = await chunksOf(home, "guide/chunking.md");
 		const [first, second] = chunks.filter(
 			(chunk) => chunk.heading === "Long section",
 		);
@@ -389,7 +389,7 @@ describe("chunking", () => {
 		const home = await bundledHome();
 		await invoke(["sync"], home);
 
-		const chunks = await chunksOf(home, "guides/chunking.md");
+		const chunks = await chunksOf(home, "guide/chunking.md");
 		const fenced = chunks.filter((chunk) => chunk.heading === "Fenced code");
 
 		expect(fenced).toHaveLength(1);
@@ -430,15 +430,15 @@ describe("authored links", () => {
 
 		await invoke(["sync"], home);
 
-		const links = await linksFrom(home, "concepts/users.md");
+		const links = await linksFrom(home, "bigquery-table/users.md");
 		// Three of the four links in the body point inside the bundle; the fourth
 		// is an external URL, and the one in the fenced block is a code sample.
 		expect(
 			links.map((link) => [link.kind, link.target_path, link.link_text]),
 		).toEqual([
-			["markdown", "concepts/orders.md", "Orders table"],
-			["markdown", "concepts/sessions.md", "Sessions table"],
-			["markdown", "concepts/orders.md", "order columns"],
+			["markdown", "bigquery-table/orders.md", "Orders table"],
+			["markdown", "bigquery-table/sessions.md", "Sessions table"],
+			["markdown", "bigquery-table/orders.md", "order columns"],
 		]);
 	});
 
@@ -447,13 +447,13 @@ describe("authored links", () => {
 
 		await invoke(["sync"], home);
 
-		const links = await linksFrom(home, "concepts/users.md");
+		const links = await linksFrom(home, "bigquery-table/users.md");
 		expect(links.map((link) => link.target)).toEqual([
-			"concepts/orders.md",
-			// `concepts/sessions.md` is not written yet, so the edge is kept and
+			"bigquery-table/orders.md",
+			// `bigquery-table/sessions.md` is not written yet, so the edge is kept and
 			// left unresolved rather than dropped.
 			null,
-			"concepts/orders.md",
+			"bigquery-table/orders.md",
 		]);
 	});
 
@@ -462,9 +462,9 @@ describe("authored links", () => {
 
 		await invoke(["sync"], home);
 
-		const [, , anchored] = await linksFrom(home, "concepts/users.md");
+		const [, , anchored] = await linksFrom(home, "bigquery-table/users.md");
 		expect(anchored.anchor).toBe("columns");
-		expect(anchored.target).toBe("concepts/orders.md");
+		expect(anchored.target).toBe("bigquery-table/orders.md");
 		expect(anchored.context).toBe(
 			"`user_id` is the primary key, and the [order columns](orders.md#columns) are keyed by it too.",
 		);
@@ -475,14 +475,14 @@ describe("authored links", () => {
 
 		await invoke(["sync"], home);
 
-		const links = await linksFrom(home, "concepts/orders.md");
+		const links = await linksFrom(home, "bigquery-table/orders.md");
 		// The citation of `users.md` and the body mention of it are both edges,
 		// told apart by their kind; the cited URL is outside the bundle.
 		expect(
 			links.map((link) => [link.kind, link.target, link.link_text]),
 		).toEqual([
-			["source", "concepts/users.md", "Users table"],
-			["markdown", "concepts/users.md", "Users table"],
+			["source", "bigquery-table/users.md", "Users table"],
+			["markdown", "bigquery-table/users.md", "Users table"],
 		]);
 	});
 
@@ -494,7 +494,7 @@ describe("authored links", () => {
 			home,
 			"SELECT ch.heading FROM links l JOIN chunks ch ON ch.id = l.source_chunk_id" +
 				" JOIN concepts c ON c.id = l.source_concept_id" +
-				" WHERE c.path = 'concepts/users.md' AND l.anchor = 'columns'",
+				" WHERE c.path = 'bigquery-table/users.md' AND l.anchor = 'columns'",
 		);
 
 		expect(rows.heading).toBe("Columns");
@@ -504,21 +504,21 @@ describe("authored links", () => {
 		const home = await bundledHome();
 		await invoke(["sync"], home);
 		const sourceBefore = readFileSync(
-			join(home, "docs", "concepts", "users.md"),
+			join(home, "docs", "bigquery-table", "users.md"),
 			"utf8",
 		);
 
 		writeFileSync(
-			join(home, "docs", "concepts", "sessions.md"),
+			join(home, "docs", "bigquery-table", "sessions.md"),
 			"---\ntype: BigQuery Table\ntitle: Sessions table\n---\n\n# Sessions table\n\nOne row per session.\n",
 		);
 		await invoke(["sync"], home);
 
-		expect((await linksFrom(home, "concepts/users.md"))[1].target).toBe(
-			"concepts/sessions.md",
+		expect((await linksFrom(home, "bigquery-table/users.md"))[1].target).toBe(
+			"bigquery-table/sessions.md",
 		);
 		expect(
-			readFileSync(join(home, "docs", "concepts", "users.md"), "utf8"),
+			readFileSync(join(home, "docs", "bigquery-table", "users.md"), "utf8"),
 		).toBe(sourceBefore);
 	});
 
@@ -528,7 +528,7 @@ describe("authored links", () => {
 
 		mkdirSync(join(home, "docs", "moved"));
 		renameSync(
-			join(home, "docs", "concepts", "users.md"),
+			join(home, "docs", "bigquery-table", "users.md"),
 			join(home, "docs", "moved", "users.md"),
 		);
 		await invoke(["sync"], home);
@@ -552,62 +552,71 @@ describe("authored links", () => {
 		const home = await bundledHome();
 		await invoke(["sync"], home);
 
-		rmSync(join(home, "docs", "concepts", "orders.md"));
+		rmSync(join(home, "docs", "bigquery-table", "orders.md"));
 		await invoke(["sync"], home);
 
-		const links = await linksFrom(home, "concepts/users.md");
+		const links = await linksFrom(home, "bigquery-table/users.md");
 		expect(links).toHaveLength(3);
 		expect(links.map((link) => [link.target_path, link.target])).toEqual([
-			["concepts/orders.md", null],
-			["concepts/sessions.md", null],
-			["concepts/orders.md", null],
+			["bigquery-table/orders.md", null],
+			["bigquery-table/sessions.md", null],
+			["bigquery-table/orders.md", null],
 		]);
 	});
 });
 
 describe("lattice rels", () => {
-	test("reports outlinks, backlinks, siblings and unresolved links", async () => {
+	test("reports outlinks, backlinks and unresolved links", async () => {
 		const home = await bundledHome();
 		await invoke(["sync"], home);
 
-		const result = await invoke(["rels", "concepts/users"], home);
+		const result = await invoke(["rels", "bigquery-table/users"], home);
 
 		expect(result.code).toBe(0);
 		expect(result.stderr).toBe("");
 		// Two body links out to the orders table, one citation and one body link
-		// back from it, one sibling in `concepts/`, one link to a document that
-		// has not been written.
+		// back from it, one link to a document that has not been written. Sharing
+		// `bigquery-table/` with the orders table is not a relation.
 		expect(result.stdout).toContain("Outgoing (2)");
 		expect(result.stdout).toContain("Incoming (2)");
-		expect(result.stdout).toContain("Siblings (1)");
+		expect(result.stdout).not.toContain("Siblings");
 		expect(result.stdout).toContain("Unresolved (1)");
-		expect(result.stdout).toContain("concepts/orders.md");
-		expect(result.stdout).toContain("concepts/sessions.md");
+		expect(result.stdout).toContain("bigquery-table/orders.md");
+		expect(result.stdout).toContain("bigquery-table/sessions.md");
 	});
 
 	test("takes a path as readily as an identifier", async () => {
 		const home = await bundledHome();
 		await invoke(["sync"], home);
 
-		const byPath = await invoke(["rels", "concepts/users.md"], home);
-		const byIdentifier = await invoke(["rels", "concepts/users"], home);
+		const byPath = await invoke(["rels", "bigquery-table/users.md"], home);
+		const byIdentifier = await invoke(["rels", "bigquery-table/users"], home);
 
 		expect(byPath.code).toBe(0);
 		expect(byPath.stdout).toBe(byIdentifier.stdout);
 	});
 
-	test("--json emits the four relations machine-readably", async () => {
+	test("--json emits the three relations machine-readably", async () => {
 		const home = await bundledHome();
 		await invoke(["sync"], home);
 
-		const result = await invoke(["rels", "concepts/users", "--json"], home);
+		const result = await invoke(
+			["rels", "bigquery-table/users", "--json"],
+			home,
+		);
 
 		expect(result.code).toBe(0);
 		const report = JSON.parse(result.stdout);
-		expect(report.concept.path).toBe("concepts/users.md");
+		expect(Object.keys(report)).toEqual([
+			"concept",
+			"outlinks",
+			"backlinks",
+			"unresolved",
+		]);
+		expect(report.concept.path).toBe("bigquery-table/users.md");
 		expect(report.outlinks.map((link: { path: string }) => link.path)).toEqual([
-			"concepts/orders.md",
-			"concepts/orders.md",
+			"bigquery-table/orders.md",
+			"bigquery-table/orders.md",
 		]);
 		expect(
 			report.backlinks.map((link: { path: string; kind: string }) => [
@@ -615,27 +624,24 @@ describe("lattice rels", () => {
 				link.kind,
 			]),
 		).toEqual([
-			["concepts/orders.md", "source"],
-			["concepts/orders.md", "markdown"],
+			["bigquery-table/orders.md", "source"],
+			["bigquery-table/orders.md", "markdown"],
 		]);
-		expect(
-			report.siblings.map((sibling: { path: string }) => sibling.path),
-		).toEqual(["concepts/orders.md"]);
 		expect(
 			report.unresolved.map(
 				(link: { target_path: string }) => link.target_path,
 			),
-		).toEqual(["concepts/sessions.md"]);
+		).toEqual(["bigquery-table/sessions.md"]);
 	});
 
 	test("exits non-zero for a concept that is not indexed", async () => {
 		const home = await bundledHome();
 		await invoke(["sync"], home);
 
-		const result = await invoke(["rels", "concepts/nowhere"], home);
+		const result = await invoke(["rels", "bigquery-table/nowhere"], home);
 
 		expect(result.code).not.toBe(0);
-		expect(result.stderr).toContain("concepts/nowhere");
+		expect(result.stderr).toContain("bigquery-table/nowhere");
 		expect(result.stdout).toBe("");
 	});
 });
@@ -666,15 +672,15 @@ describe("incremental sync", () => {
 		await invoke(["sync"], home);
 		const untouchedBefore = await sql(
 			home,
-			"SELECT id, indexed_at FROM concepts WHERE path <> 'notes/unverified.md' ORDER BY id",
+			"SELECT id, indexed_at FROM concepts WHERE path <> 'note/unverified.md' ORDER BY id",
 		);
 		const [idBefore] = await sql<{ id: number }>(
 			home,
-			"SELECT id FROM concepts WHERE path = 'notes/unverified.md'",
+			"SELECT id FROM concepts WHERE path = 'note/unverified.md'",
 		);
 
 		writeFileSync(
-			join(home, "docs", "notes", "unverified.md"),
+			join(home, "docs", "note", "unverified.md"),
 			"---\ntype: Note\ntitle: Scratch note\n---\n\n# Scratch note\n\nRewritten.\n",
 		);
 		const result = await invoke(["sync"], home);
@@ -683,16 +689,16 @@ describe("incremental sync", () => {
 		expect(
 			await sql(
 				home,
-				"SELECT id, indexed_at FROM concepts WHERE path <> 'notes/unverified.md' ORDER BY id",
+				"SELECT id, indexed_at FROM concepts WHERE path <> 'note/unverified.md' ORDER BY id",
 			),
 		).toEqual(untouchedBefore);
-		expect((await chunksOf(home, "notes/unverified.md"))[0].content).toContain(
+		expect((await chunksOf(home, "note/unverified.md"))[0].content).toContain(
 			"Rewritten.",
 		);
 		// The concept is the path, so an edit keeps the identity it had.
 		const [idAfter] = await sql<{ id: number }>(
 			home,
-			"SELECT id FROM concepts WHERE path = 'notes/unverified.md'",
+			"SELECT id FROM concepts WHERE path = 'note/unverified.md'",
 		);
 		expect(idAfter.id).toBe(idBefore.id);
 	});
@@ -700,19 +706,19 @@ describe("incremental sync", () => {
 	test("deleting a file removes its concept, chunks and tags", async () => {
 		const home = await bundledHome();
 		await invoke(["sync"], home);
-		expect(await chunksOf(home, "concepts/users.md")).not.toHaveLength(0);
+		expect(await chunksOf(home, "bigquery-table/users.md")).not.toHaveLength(0);
 
-		rmSync(join(home, "docs", "concepts", "users.md"));
+		rmSync(join(home, "docs", "bigquery-table", "users.md"));
 		const result = await invoke(["sync"], home);
 
 		expect(result.stdout).toContain("1 deleted");
 		expect(
 			await sql(
 				home,
-				"SELECT path FROM concepts WHERE path = 'concepts/users.md'",
+				"SELECT path FROM concepts WHERE path = 'bigquery-table/users.md'",
 			),
 		).toEqual([]);
-		expect(await chunksOf(home, "concepts/users.md")).toEqual([]);
+		expect(await chunksOf(home, "bigquery-table/users.md")).toEqual([]);
 		expect(
 			await sql(
 				home,
@@ -726,12 +732,12 @@ describe("incremental sync", () => {
 		await invoke(["sync"], home);
 		const [before] = await sql<{ id: number; indexed_at: string }>(
 			home,
-			"SELECT id, indexed_at FROM concepts WHERE path = 'concepts/users.md'",
+			"SELECT id, indexed_at FROM concepts WHERE path = 'bigquery-table/users.md'",
 		);
 
 		renameSync(
-			join(home, "docs", "concepts", "users.md"),
-			join(home, "docs", "concepts", "accounts.md"),
+			join(home, "docs", "bigquery-table", "users.md"),
+			join(home, "docs", "bigquery-table", "accounts.md"),
 		);
 		const result = await invoke(["sync"], home);
 
@@ -739,12 +745,12 @@ describe("incremental sync", () => {
 		expect(
 			await sql(
 				home,
-				"SELECT id, identifier, indexed_at FROM concepts WHERE path = 'concepts/accounts.md'",
+				"SELECT id, identifier, indexed_at FROM concepts WHERE path = 'bigquery-table/accounts.md'",
 			),
 		).toEqual([
 			{
 				id: before.id,
-				identifier: "concepts/accounts",
+				identifier: "bigquery-table/accounts",
 				indexed_at: before.indexed_at,
 			},
 		]);
@@ -790,9 +796,29 @@ describe("lattice status against a bundle", () => {
 		expect(before.stdout).toContain("New:     11");
 		expect(before.stdout).toContain("Changed: 0");
 		expect(before.stdout).toContain("Deleted: 0");
-		expect(before.stdout).toContain("notes/broken.md");
-		expect(before.stdout).toContain("notes/plain.md");
-		expect(before.stdout).not.toContain("concepts/users.md");
+		expect(before.stdout).toContain("note/broken.md");
+		expect(before.stdout).toContain("note/plain.md");
+		expect(before.stdout).not.toContain("bigquery-table/users.md");
+	});
+
+	test("reports a document filed outside its type's directory, before and after sync", async () => {
+		const home = await bundledHome();
+		mkdirSync(join(home, "docs", "misc"));
+		writeFileSync(
+			join(home, "docs", "misc", "x.md"),
+			"---\ntype: Note\n---\n\n# Misfiled\n",
+		);
+		const message =
+			"misc/x.md: filed under `misc/` but type `Note` belongs in `note/`";
+
+		const before = await invoke(["status"], home);
+		expect(before.stdout).toContain(message);
+
+		const synced = await invoke(["sync"], home);
+		expect(synced.stdout).toContain(message);
+
+		const after = await invoke(["status"], home);
+		expect(after.stdout).toContain(message);
 	});
 
 	test("reports an up-to-date bundle after a sync, then the next change", async () => {
@@ -803,8 +829,8 @@ describe("lattice status against a bundle", () => {
 		expect(synced.stdout).toContain("Concepts:   11");
 		expect(synced.stdout).toContain("Up to date");
 
-		writeFileSync(join(home, "docs", "notes", "added.md"), "# Added\n\nNew.\n");
-		rmSync(join(home, "docs", "notes", "plain.md"));
+		writeFileSync(join(home, "docs", "note", "added.md"), "# Added\n\nNew.\n");
+		rmSync(join(home, "docs", "note", "plain.md"));
 		const changed = await invoke(["status"], home);
 
 		expect(changed.stdout).toContain("New:     1");
@@ -819,7 +845,7 @@ describe("interrupting a sync", () => {
 		// if it has already finished, the assertions below still hold.
 		for (let i = 0; i < 2000; i++) {
 			writeFileSync(
-				join(home, "docs", "notes", `bulk-${i}.md`),
+				join(home, "docs", "note", `bulk-${i}.md`),
 				`---\ntype: Note\ntitle: Bulk ${i}\n---\n\n# Bulk ${i}\n\n${"Filler sentence. ".repeat(60)}\n`,
 			);
 		}
@@ -937,7 +963,7 @@ describe("hybrid search", () => {
 		// Neither word appears anywhere in the bundle, so the keyword leg has
 		// nothing to return at all: only the semantic leg can answer this.
 		// `whisper mode` and the document's `Thermal throttle` share a group.
-		for (const name of ["thermal/cooling.md", "refs/airflow-curve.md"]) {
+		for (const name of ["note/cooling.md", "reference/airflow-curve.md"]) {
 			const source = readFileSync(join(home, "docs", name), "utf8");
 			expect(source.toLowerCase()).not.toContain("whisper");
 			expect(source.toLowerCase()).not.toContain("mode");
@@ -951,23 +977,23 @@ describe("hybrid search", () => {
 
 		expect(stderr).toBe("");
 		expect(code).toBe(0);
-		expect(hits[0].path).toBe("thermal/cooling.md");
+		expect(hits[0].path).toBe("note/cooling.md");
 	});
 
 	test("a passage only one leg ranks highly still appears in the fused results", async () => {
 		const home = await hybridHome();
 
 		// Each half of this query is answered by one leg and neither by both:
-		// `XJ_4471` is written in `misc/serial.md` and is in no vector group,
+		// `XJ_4471` is written in `note/serial.md` and is in no vector group,
 		// and `whisper mode` is in no document and is a group with
-		// `thermal/cooling.md`'s title.
+		// `note/cooling.md`'s title.
 		const semanticOnly = await search(
 			home,
 			["whisper mode", "--no-expand"],
 			HYBRID_ENV,
 		);
 		expect(semanticOnly.hits.map((hit) => hit.path)).toEqual([
-			"thermal/cooling.md",
+			"note/cooling.md",
 		]);
 
 		const keywordOnly = await search(
@@ -975,13 +1001,13 @@ describe("hybrid search", () => {
 			["XJ_4471", "--no-expand"],
 			HYBRID_ENV,
 		);
-		expect(keywordOnly.hits.map((hit) => hit.path)).toEqual(["misc/serial.md"]);
+		expect(keywordOnly.hits.map((hit) => hit.path)).toEqual(["note/serial.md"]);
 
 		const both = await search(home, ["XJ_4471 whisper mode"], HYBRID_ENV);
 
 		expect(both.code).toBe(0);
-		expect(both.hits.map((hit) => hit.path)).toContain("misc/serial.md");
-		expect(both.hits.map((hit) => hit.path)).toContain("thermal/cooling.md");
+		expect(both.hits.map((hit) => hit.path)).toContain("note/serial.md");
+		expect(both.hits.map((hit) => hit.path)).toContain("note/cooling.md");
 	});
 
 	test("the concept vector decides between results the legs tied", async () => {
@@ -989,8 +1015,8 @@ describe("hybrid search", () => {
 
 		// Each half of this query is answered by exactly one leg, and each leg
 		// puts its answer first, so the fusion hands both documents the same
-		// score. Left tied, they would come back in path order — `misc/` before
-		// `thermal/`. Only `thermal/cooling.md` names a vector group in its
+		// score. Left tied, they would come back in path order — `note/` before
+		// `note/`. Only `note/cooling.md` names a vector group in its
 		// title and description, which is what a concept vector is built from.
 		const { code, hits } = await search(
 			home,
@@ -1000,21 +1026,21 @@ describe("hybrid search", () => {
 
 		expect(code).toBe(0);
 		expect(hits.map((hit) => hit.path)).toEqual([
-			"thermal/cooling.md",
-			"misc/serial.md",
+			"note/cooling.md",
+			"note/serial.md",
 		]);
 	});
 
 	test("the concept vector never introduces a result of its own", async () => {
 		const home = await hybridHome();
 
-		// `misc/acoustics.md` says "whisper mode" only in its frontmatter
+		// `note/acoustics.md` says "whisper mode" only in its frontmatter
 		// description, which is what a concept vector is built from — so its
 		// CONCEPT vector is as near the query as it can be, while neither of
 		// its passages matches either leg. A third ranked list would surface
 		// it; a tiebreak cannot.
 		const source = readFileSync(
-			join(home, "docs", "misc", "acoustics.md"),
+			join(home, "docs", "note", "acoustics.md"),
 			"utf8",
 		);
 		const [, frontmatter, body] = source.split("---\n");
@@ -1023,7 +1049,7 @@ describe("hybrid search", () => {
 
 		const { hits } = await search(home, ["whisper mode"], HYBRID_ENV);
 
-		expect(hits.map((hit) => hit.path)).not.toContain("misc/acoustics.md");
+		expect(hits.map((hit) => hit.path)).not.toContain("note/acoustics.md");
 	});
 
 	test("says so when the semantic leg cannot run, and still answers", async () => {
@@ -1037,7 +1063,7 @@ describe("hybrid search", () => {
 		expect(broken.degraded).toBe(true);
 		expect(broken.degradedReason).toContain("no-such-model");
 		// Keyword-only, but still an answer.
-		expect(broken.hits.map((hit) => hit.path)).toEqual(["misc/serial.md"]);
+		expect(broken.hits.map((hit) => hit.path)).toEqual(["note/serial.md"]);
 
 		const healthy = await search(home, ["XJ_4471"], HYBRID_ENV);
 		expect(healthy.degraded).toBe(false);
@@ -1095,17 +1121,17 @@ describe("concept-level search", () => {
 
 		expect(code).toBe(0);
 		expect(hits.every((hit) => hit.chunks.length === 0)).toBe(true);
-		expect(hits.map((hit) => hit.path)).toContain("thermal/cooling.md");
+		expect(hits.map((hit) => hit.path)).toContain("note/cooling.md");
 
 		// At concept level the concept vector IS a ranked list, so the document
 		// that says "whisper mode" only in its frontmatter — which no passage
 		// search returns — is a legitimate answer here.
-		expect(hits.map((hit) => hit.path)).toContain("misc/acoustics.md");
+		expect(hits.map((hit) => hit.path)).toContain("note/acoustics.md");
 		expect(
 			(await search(home, ["whisper mode"], HYBRID_ENV)).hits.map(
 				(hit) => hit.path,
 			),
-		).not.toContain("misc/acoustics.md");
+		).not.toContain("note/acoustics.md");
 	});
 
 	test("applies the same filters as passage search", async () => {
@@ -1113,43 +1139,44 @@ describe("concept-level search", () => {
 
 		const { hits } = await search(
 			home,
-			["whisper mode", "--concepts", "--dir", "thermal"],
+			["whisper mode", "--concepts", "--dir", "note"],
 			HYBRID_ENV,
 		);
 
 		expect(hits.length).toBeGreaterThan(0);
-		expect(hits.every((hit) => hit.path.startsWith("thermal/"))).toBe(true);
+		expect(hits.every((hit) => hit.path.startsWith("note/"))).toBe(true);
 	});
 });
 
 describe("graph expansion", () => {
-	test("reaches a link target, a backlink source and a directory sibling", async () => {
+	test("reaches a link target and a backlink source, but not a directory neighbour", async () => {
 		const home = await hybridHome();
 
-		// `thermal/cooling.md` links to `refs/airflow-curve.md`,
-		// `refs/dust.md` links back to it, and `thermal/chassis.md` sits beside
-		// it in `thermal/` with no link either way.
+		// `note/cooling.md` links to `reference/airflow-curve.md`,
+		// `reference/dust.md` links back to it, and `note/chassis.md` sits beside
+		// it in `note/` with no link either way — which is no relation at all.
 		const { code, hits } = await search(home, ["Thermal throttle"], HYBRID_ENV);
 
 		expect(code).toBe(0);
 
 		const direct = hits.filter((hit) => hit.expanded !== true);
 		const expanded = hits.filter((hit) => hit.expanded === true);
-		expect(direct.map((hit) => hit.path)).toEqual(["thermal/cooling.md"]);
+		expect(direct.map((hit) => hit.path)).toEqual(["note/cooling.md"]);
 
 		const byPath = new Map(expanded.map((hit) => [hit.path, hit]));
-		expect(byPath.get("refs/airflow-curve.md")?.via).toEqual({
+		expect(byPath.get("reference/airflow-curve.md")?.via).toEqual({
 			relation: "link",
-			from: "thermal/cooling.md",
+			from: "note/cooling.md",
 		});
-		expect(byPath.get("refs/dust.md")?.via).toEqual({
+		expect(byPath.get("reference/dust.md")?.via).toEqual({
 			relation: "backlink",
-			from: "thermal/cooling.md",
+			from: "note/cooling.md",
 		});
-		expect(byPath.get("thermal/chassis.md")?.via).toEqual({
-			relation: "sibling",
-			from: "thermal/cooling.md",
-		});
+		expect(hits.map((hit) => hit.path)).not.toContain("note/chassis.md");
+		expect(expanded.map((hit) => hit.path).sort()).toEqual([
+			"reference/airflow-curve.md",
+			"reference/dust.md",
+		]);
 
 		// Never above an actual answer.
 		const lowestDirect = Math.min(...direct.map((hit) => hit.score));
@@ -1186,7 +1213,7 @@ describe("graph expansion", () => {
 		const paths = overlapping.hits.map((hit) => hit.path);
 		expect(new Set(paths).size).toBe(paths.length);
 		expect(
-			overlapping.hits.find((hit) => hit.path === "refs/airflow-curve.md")
+			overlapping.hits.find((hit) => hit.path === "reference/airflow-curve.md")
 				?.expanded,
 		).toBeUndefined();
 	});
@@ -1196,18 +1223,15 @@ describe("graph expansion", () => {
 
 		const { hits } = await search(
 			home,
-			["Thermal throttle", "--dir", "thermal"],
+			["Thermal throttle", "--dir", "note"],
 			HYBRID_ENV,
 		);
 
-		// `refs/` is outside the filter, so the link and the backlink are not
-		// pulled back in through the graph; the sibling inside it still is.
-		expect(hits.every((hit) => hit.path.startsWith("thermal/"))).toBe(true);
-		expect(
-			hits.some(
-				(hit) => hit.expanded === true && hit.path === "thermal/chassis.md",
-			),
-		).toBe(true);
+		// `reference/` is outside the filter, so the link and the backlink are not
+		// pulled back in through the graph.
+		expect(hits.map((hit) => hit.path)).toContain("note/cooling.md");
+		expect(hits.every((hit) => hit.path.startsWith("note/"))).toBe(true);
+		expect(hits.every((hit) => hit.expanded !== true)).toBe(true);
 	});
 });
 
@@ -1219,7 +1243,7 @@ describe("lattice search", () => {
 
 		expect(stderr).toBe("");
 		expect(code).toBe(0);
-		expect(hits.map((hit) => hit.path)).toEqual(["concepts/users.md"]);
+		expect(hits.map((hit) => hit.path)).toEqual(["bigquery-table/users.md"]);
 
 		const [users] = hits;
 		expect(users.title).toBe("Users table");
@@ -1230,7 +1254,7 @@ describe("lattice search", () => {
 		expect(users.stale).toBe(false);
 		expect(users.score).toBeGreaterThan(0);
 
-		// `user_id` is written under the "Columns" heading of `concepts/users.md`.
+		// `user_id` is written under the "Columns" heading of `bigquery-table/users.md`.
 		expect(users.chunks).toHaveLength(1);
 		expect(users.chunks[0].headingPath).toBe("Users table > Columns");
 		expect(users.chunks[0].snippet).toContain("user_id");
@@ -1245,7 +1269,7 @@ describe("lattice search", () => {
 
 		expect(stderr).toBe("");
 		expect(code).toBe(0);
-		expect(hits.map((hit) => hit.path)).toContain("concepts/users.md");
+		expect(hits.map((hit) => hit.path)).toContain("bigquery-table/users.md");
 	});
 
 	test("a query holding no searchable text reports no matches rather than failing", async () => {
@@ -1264,13 +1288,13 @@ describe("lattice search", () => {
 		const { code, hits } = await search(home, ["sentinel", "--no-expand"]);
 
 		expect(code).toBe(0);
-		// `search/title-match.md` writes "sentinel" only in its frontmatter title,
-		// `search/heading-match.md` only in its heading, `search/body-match.md`
+		// `gauge/title-match.md` writes "sentinel" only in its frontmatter title,
+		// `gauge/heading-match.md` only in its heading, `gauge/body-match.md`
 		// only in a paragraph.
 		expect(hits.map((hit) => hit.path)).toEqual([
-			"search/title-match.md",
-			"search/heading-match.md",
-			"search/body-match.md",
+			"gauge/title-match.md",
+			"gauge/heading-match.md",
+			"gauge/body-match.md",
 		]);
 	});
 
@@ -1278,11 +1302,11 @@ describe("lattice search", () => {
 		const home = await searchableHome();
 
 		// "Paragraph" is repeated across the split pieces of one long section in
-		// `guides/chunking.md`, so the concept holds more matching passages than
+		// `guide/chunking.md`, so the concept holds more matching passages than
 		// it is allowed to show.
 		const everything = await search(home, ["paragraph", "--no-expand"]);
 		const [guide] = everything.hits.filter(
-			(hit) => hit.path === "guides/chunking.md",
+			(hit) => hit.path === "guide/chunking.md",
 		);
 		expect(guide.chunks.length).toBe(2);
 
@@ -1319,34 +1343,40 @@ describe("lattice search", () => {
 		const home = await searchableHome();
 
 		// No document holds both words, so this falls back to matching either and
-		// spans the `concepts/` and `search/` fixtures at once.
+		// spans the `bigquery-table/` and `gauge/` fixtures at once.
 		const broad = ["table", "gauge"];
 		const paths = async (extra: string[]) =>
 			(await search(home, [broad.join(" "), ...extra])).hits.map(
 				(hit) => hit.path,
 			);
 
-		expect(await paths([])).toContain("concepts/users.md");
-		expect(await paths([])).toContain("search/title-match.md");
+		expect(await paths([])).toContain("bigquery-table/users.md");
+		expect(await paths([])).toContain("gauge/title-match.md");
 
 		expect(await paths(["--type", "BigQuery Table"])).toEqual([
-			"concepts/users.md",
+			"bigquery-table/users.md",
 		]);
-		expect(await paths(["--tag", "core"])).toEqual(["concepts/users.md"]);
-		expect(await paths(["--dir", "concepts"])).toEqual(["concepts/users.md"]);
-		expect(await paths(["--status", "stable"])).toEqual(["concepts/users.md"]);
+		expect(await paths(["--tag", "core"])).toEqual(["bigquery-table/users.md"]);
+		expect(await paths(["--dir", "bigquery-table"])).toEqual([
+			"bigquery-table/users.md",
+		]);
+		expect(await paths(["--status", "stable"])).toEqual([
+			"bigquery-table/users.md",
+		]);
 		expect(await paths(["--trust", "human-reviewed"])).toEqual([
-			"concepts/users.md",
+			"bigquery-table/users.md",
 		]);
 
 		expect(
 			(await paths(["--type", "Gauge"])).every((path) =>
-				path.startsWith("search/"),
+				path.startsWith("gauge/"),
 			),
 		).toBe(true);
 
-		// Composed filters are an AND: a Gauge is never in `concepts/`.
-		expect(await paths(["--type", "Gauge", "--dir", "concepts"])).toEqual([]);
+		// Composed filters are an AND: a Gauge is never in `bigquery-table/`.
+		expect(await paths(["--type", "Gauge", "--dir", "bigquery-table"])).toEqual(
+			[],
+		);
 		expect(await paths(["--type", "Gauge", "--tag", "rank"])).toEqual(
 			await paths(["--type", "Gauge"]),
 		);
@@ -1355,14 +1385,14 @@ describe("lattice search", () => {
 	test("leaves a deprecated concept out until it is asked for", async () => {
 		const home = await searchableHome();
 
-		// `concepts/orders.md` is the only fixture with `status: deprecated`.
+		// `bigquery-table/orders.md` is the only fixture with `status: deprecated`.
 		expect((await search(home, ["purchases", "--no-expand"])).hits).toEqual([]);
 
 		expect(
 			(
 				await search(home, ["purchases", "--include-deprecated", "--no-expand"])
 			).hits.map((hit) => hit.path),
-		).toEqual(["concepts/orders.md"]);
+		).toEqual(["bigquery-table/orders.md"]);
 
 		expect(
 			(
@@ -1373,7 +1403,7 @@ describe("lattice search", () => {
 					"--no-expand",
 				])
 			).hits.map((hit) => hit.path),
-		).toEqual(["concepts/orders.md"]);
+		).toEqual(["bigquery-table/orders.md"]);
 	});
 
 	test("ranks a concept past its staleness date below an equal fresh one", async () => {
@@ -1389,8 +1419,8 @@ describe("lattice search", () => {
 		]);
 
 		expect(hits.map((hit) => hit.path)).toEqual([
-			"search/fresh-widget.md",
-			"search/stale-widget.md",
+			"gauge/fresh-widget.md",
+			"gauge/stale-widget.md",
 		]);
 		expect(hits.map((hit) => hit.stale)).toEqual([false, true]);
 		expect(hits[0].score).toBeGreaterThan(hits[1].score);
@@ -1419,11 +1449,11 @@ describe("lattice search", () => {
 		const home = await searchableHome();
 
 		const { hits } = await search(home, ["fenced"]);
-		const [guide] = hits.filter((hit) => hit.path === "guides/chunking.md");
+		const [guide] = hits.filter((hit) => hit.path === "guide/chunking.md");
 		const chunk = guide.chunks[0];
 
 		const raw = readFileSync(
-			join(home, "docs", "guides", "chunking.md"),
+			join(home, "docs", "guide", "chunking.md"),
 			"utf8",
 		);
 		expect(raw.slice(chunk.startChar, chunk.endChar)).toContain("Fenced code");
@@ -1438,7 +1468,7 @@ describe("lattice search", () => {
 
 		expect(found.code).toBe(0);
 		expect(found.stderr).toBe("");
-		expect(found.stdout).toContain("concepts/users.md — Users table");
+		expect(found.stdout).toContain("bigquery-table/users.md — Users table");
 		expect(found.stdout).toContain(
 			"[BigQuery Table · stable · human-reviewed]",
 		);
@@ -1494,15 +1524,15 @@ describe("concept vectors", () => {
 			"SELECT c.path FROM concepts c JOIN concept_embeddings e ON e.concept_id = c.id ORDER BY c.path",
 		);
 		expect(embedded.map((row) => row.path)).toEqual([
-			"concepts/orders.md",
-			"concepts/users.md",
-			"guides/chunking.md",
-			"notes/unverified.md",
-			"search/body-match.md",
-			"search/fresh-widget.md",
-			"search/heading-match.md",
-			"search/stale-widget.md",
-			"search/title-match.md",
+			"bigquery-table/orders.md",
+			"bigquery-table/users.md",
+			"gauge/body-match.md",
+			"gauge/fresh-widget.md",
+			"gauge/heading-match.md",
+			"gauge/stale-widget.md",
+			"gauge/title-match.md",
+			"guide/chunking.md",
+			"note/unverified.md",
 		]);
 
 		// Two concepts differing only in body text would share a vector; these
@@ -1510,9 +1540,9 @@ describe("concept vectors", () => {
 		const [pair] = await sql<{ same: number }>(
 			home,
 			"SELECT (SELECT vector FROM concept_embeddings e JOIN concepts c ON c.id = e.concept_id" +
-				"   WHERE c.path = 'concepts/users.md')" +
+				"   WHERE c.path = 'bigquery-table/users.md')" +
 				" = (SELECT vector FROM concept_embeddings e JOIN concepts c ON c.id = e.concept_id" +
-				"   WHERE c.path = 'concepts/orders.md') AS same",
+				"   WHERE c.path = 'bigquery-table/orders.md') AS same",
 		);
 		expect(pair.same).toBe(0);
 	});
@@ -1617,7 +1647,7 @@ describe("provider failures", () => {
 		).toBeGreaterThan(0);
 
 		writeFileSync(
-			join(home, "docs", "guides", "chunking.md"),
+			join(home, "docs", "guide", "chunking.md"),
 			"---\ntype: Guide\ntitle: Chunking\n---\n\n# Rewritten\n\nDifferent text entirely.\n",
 		);
 		await invoke(["sync"], home);
@@ -1926,17 +1956,17 @@ describe("search at scale", () => {
  */
 const RESEARCH_TEMPLATE = `---
 type: Research
-title: Value retention
+title: Tesla Model S value retention
 description: How well the Model S holds its resale value.
 status: draft
 tags: [tesla, resale]
 generated: { by: agent:claude-code/research, at: 2026-09-20T00:00:00Z }
 sources:
-  - ../concepts/users.md
+  - ../bigquery-table/users.md
   - https://example.com/depreciation
 ---
 
-# Value retention
+# Tesla Model S value retention
 
 ## Key findings
 
@@ -1950,14 +1980,15 @@ Depreciation flattens after the fourth year.
 describe("the /research document template", () => {
 	test("indexes with its type, title, description and tags, and cites its in-bundle source", async () => {
 		const home = await bundledHome();
-		mkdirSync(join(home, "docs", "tesla-model-s"), { recursive: true });
+		// Filed under the directory its type names, as the skill instructs.
+		mkdirSync(join(home, "docs", "research"), { recursive: true });
 		// The reserved index name: navigation, never a concept of its own.
 		writeFileSync(
-			join(home, "docs", "tesla-model-s", "index.md"),
-			"# Tesla Model S\n\n- [Value retention](value-retention.md)\n",
+			join(home, "docs", "research", "index.md"),
+			"# Research\n\n- [Value retention](tesla-model-s-value-retention.md)\n",
 		);
 		writeFileSync(
-			join(home, "docs", "tesla-model-s", "value-retention.md"),
+			join(home, "docs", "research", "tesla-model-s-value-retention.md"),
 			RESEARCH_TEMPLATE,
 		);
 
@@ -1967,7 +1998,9 @@ describe("the /research document template", () => {
 		// The fixture bundle has its own deliberately broken files; the point
 		// here is that the template is not among them.
 		const status = await invoke(["status"], home);
-		expect(status.stdout).not.toContain("tesla-model-s/value-retention.md:");
+		expect(status.stdout).not.toContain(
+			"research/tesla-model-s-value-retention.md:",
+		);
 
 		// The promoted columns, read back through search rather than the database.
 		const found = await invoke(
@@ -1976,11 +2009,11 @@ describe("the /research document template", () => {
 		);
 		const hit = JSON.parse(found.stdout).hits.find(
 			(candidate: { path: string }) =>
-				candidate.path === "tesla-model-s/value-retention.md",
+				candidate.path === "research/tesla-model-s-value-retention.md",
 		);
 		expect(hit).toMatchObject({
 			type: "Research",
-			title: "Value retention",
+			title: "Tesla Model S value retention",
 			status: "draft",
 		});
 
@@ -1993,7 +2026,7 @@ describe("the /research document template", () => {
 			JSON.parse(byDescription.stdout).hits.map(
 				(candidate: { path: string }) => candidate.path,
 			),
-		).toContain("tesla-model-s/value-retention.md");
+		).toContain("research/tesla-model-s-value-retention.md");
 
 		// Both tags are on the concept, so either one filters to it.
 		for (const tag of ["tesla", "resale"]) {
@@ -2005,23 +2038,23 @@ describe("the /research document template", () => {
 				JSON.parse(filtered.stdout).hits.map(
 					(candidate: { path: string }) => candidate.path,
 				),
-			).toContain("tesla-model-s/value-retention.md");
+			).toContain("research/tesla-model-s-value-retention.md");
 		}
 
 		// The in-bundle citation is an edge; the external URL is not.
 		const rels = await invoke(
-			["rels", "tesla-model-s/value-retention.md", "--json"],
+			["rels", "research/tesla-model-s-value-retention.md", "--json"],
 			home,
 		);
 		expect(JSON.parse(rels.stdout).outlinks).toContainEqual(
-			expect.objectContaining({ path: "concepts/users.md", kind: "source" }),
+			expect.objectContaining({
+				path: "bigquery-table/users.md",
+				kind: "source",
+			}),
 		);
 
 		// The reserved index file is navigation, so it is not indexed as a concept.
-		const indexed = await invoke(
-			["rels", "tesla-model-s/index.md", "--json"],
-			home,
-		);
+		const indexed = await invoke(["rels", "research/index.md", "--json"], home);
 		expect(indexed.code).not.toBe(0);
 	});
 });

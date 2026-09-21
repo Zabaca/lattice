@@ -8,5 +8,5 @@ tags: [hardware]
 # Thermal throttle
 
 Thermal throttle engages once the package reaches ninety five degrees, and the
-controller derates the clock until it settles. The [airflow curve](/refs/airflow-curve.md)
+controller derates the clock until it settles. The [airflow curve](/reference/airflow-curve.md)
 describes what the blower does while that happens.

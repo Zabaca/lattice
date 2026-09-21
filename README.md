@@ -44,9 +44,13 @@ empty `lattice.db`, and downloads the embedding model into `~/.lattice/models/`
 with progress as it goes. It is safe to run again: nothing already in place is
 fetched twice.
 
-To use the `/research` slash command in Claude Code, copy it from the package's
-`commands/` directory into `.claude/commands/` (this project, or `~/.claude/commands/`
-for every project).
+The `/research` and `/search` skills for Claude Code ship as a plugin in this
+repository. Add it as a marketplace and install it:
+
+```
+/plugin marketplace add zabaca/lattice
+/plugin install lattice@lattice
+```
 
 ### 2. Put markdown in the bundle and index it
 
@@ -70,23 +74,28 @@ A Lattice document is an OKF concept: markdown with frontmatter.
 ```markdown
 ---
 type: Research
-title: Value retention
+title: Tesla Model S value retention
 description: How well the Model S holds its resale value.
 status: draft
 tags: [tesla, resale]
 generated: { by: agent:claude-code/research, at: 2026-09-20T00:00:00Z }
 sources:
-  - ../concepts/users.md
+  - ../bigquery-table/users.md
   - https://example.com/depreciation
 ---
 
-# Value retention
+# Tesla Model S value retention
 
 Depreciation flattens after the fourth year.
 ```
 
 `type` is what makes a file conforming. A file without it is still indexed —
 `lattice status` reports it as a frontmatter problem rather than dropping it.
+
+A document lives in the directory named by its type — lowercased, with runs
+of anything but letters and digits turned into a hyphen, so `type: Research`
+files under `research/` and `type: BigQuery Table` under `bigquery-table/`.
+`lattice status` and `lattice sync` report a document filed anywhere else.
 
 `index.md` and `log.md` are reserved in every directory: they are navigation and
 changelog, not knowledge, and are never indexed as concepts.
@@ -101,8 +110,10 @@ answers the question rather than at the file that contains it.
 `/research "your topic"` searches the index first with `lattice search --json`,
 shows you which documents and which passages already cover the topic, and asks
 before doing new research. What it writes is a conforming concept — type, title,
-description, tags, `generated` provenance and its `sources` — filed under a
-topic directory with an `index.md`, and synced.
+description, tags, `generated` provenance and its `sources` — filed under the
+directory its type names (`research/`, or `topic/` for a hub that links out to
+the research on a subject), linked into the graph, and synced. There is no
+`index.md` to maintain: `lattice rels` computes what one would list.
 
 ---
 
@@ -153,8 +164,8 @@ Hybrid search: one query runs keyword matching and semantic matching over the
 same filtered candidate set, and the two rankings are fused, so an exact
 identifier and a paraphrase that shares no words with the document both find
 their answer without choosing a mode. The top hits are then expanded one hop
-over the links the author wrote — in both directions — plus directory
-siblings, and those neighbours are always ranked below the direct hits.
+over the links the author wrote — in both directions — and those neighbours
+are always ranked below the direct hits. Sharing a directory is not a link.
 
 ```bash
 lattice search "query"                   # Passages, with neighbours below them
@@ -163,7 +174,7 @@ lattice search "query" --concepts        # Which document, rather than which pas
 lattice search "query" --expand 5        # More neighbours (default 3)
 lattice search "query" --no-expand       # Direct hits only
 lattice search "query" --require-embeddings  # Fail instead of degrading
-lattice search "query" --type Guide --dir concepts --tag core
+lattice search "query" --type Guide --tag core
 ```
 
 With no usable embedding — no provider, or an index embedded by another model
@@ -174,13 +185,12 @@ usual; `--require-embeddings` turns that into a non-zero exit instead.
 ### `lattice rels`
 
 Show what a document is connected to: the documents it links to, the documents
-linking back at it, the documents filed beside it, and the links it makes that
-nothing answers yet.
+linking back at it, and the links it makes that nothing answers yet.
 
 ```bash
-lattice rels concepts/users        # By OKF identifier
-lattice rels concepts/users.md     # Or by bundle path
-lattice rels concepts/users --json # The same four relations, machine-readable
+lattice rels bigquery-table/users        # By OKF identifier
+lattice rels bigquery-table/users.md     # Or by bundle path
+lattice rels bigquery-table/users --json # The same three relations, machine-readable
 ```
 
 The edges come from the links the author wrote. Links inside fenced code blocks

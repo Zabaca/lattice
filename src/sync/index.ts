@@ -15,7 +15,7 @@ import { readFileSync } from "node:fs";
 import { posix } from "node:path";
 import { type Chunk, chunkDocument } from "./chunk.js";
 import { extractBodyLinks, extractSourceLinks } from "./links.js";
-import { parseConcept } from "./okf.js";
+import { conceptProblem, parseConcept } from "./okf.js";
 import { type BundleFile, scanBundle } from "./scan.js";
 
 interface IndexedConcept {
@@ -196,6 +196,7 @@ function indexFile(
 		concept.bodyLineOffset,
 	);
 	const dir = directoryOf(file.path);
+	const problem = conceptProblem(file.path, concept);
 
 	db.transaction(() => {
 		// The row is updated rather than replaced, so a concept keeps its id
@@ -210,7 +211,7 @@ function indexFile(
 			concept.staleAfter ?? null,
 			concept.trust,
 			JSON.stringify(concept.rest),
-			concept.problem ?? null,
+			problem ?? null,
 			file.contentHash,
 			file.byteSize,
 			file.mtimeMs,
@@ -312,7 +313,7 @@ function indexFile(
 		}
 	})();
 
-	return { chunks: pieces.length, problem: concept.problem };
+	return { chunks: pieces.length, problem };
 }
 
 /**

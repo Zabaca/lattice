@@ -7,4 +7,4 @@ description: What blocks the intake.
 # Dust ingress
 
 A blocked intake raises package temperature, which is why
-[the derating note](/thermal/cooling.md) matters.
+[the derating note](/note/cooling.md) matters.

@@ -20,12 +20,17 @@ lattice embed    # Embed the backlog alone (`--retry-failed` retries permanent f
                  # `--reembed` rebuilds the index after a model change)
 lattice search   # Hybrid search: keyword and meaning fused, then expanded one hop
 lattice sql      # Raw SQL queries
-lattice rels     # Show a concept's links, backlinks, siblings and unresolved links
+lattice rels     # Show a concept's links, backlinks and unresolved links
 ```
 
-`lattice rels <concept>` takes either an OKF identifier (`concepts/users`) or a
-bundle path (`concepts/users.md`), and `--json` prints the same four relations
-machine-readably.
+`lattice rels <concept>` takes either an OKF identifier (`bigquery-table/users`)
+or a bundle path (`bigquery-table/users.md`), and `--json` prints the same three
+relations machine-readably. Sharing a directory is not a relation.
+
+A document lives in the directory named by its `type` (`typeDirectory` in
+`src/sync/okf.ts`: lowercased, non-alphanumeric runs to `-`), so `type: BigQuery
+Table` files under `bigquery-table/`. `status` and `sync` report a document
+filed anywhere else as a frontmatter problem, alongside a missing `type`.
 
 ## Storage
 
@@ -121,8 +126,8 @@ nudge is sized against the smallest gap between two distinct fused scores, so
 it can close a tie and can never cross one. In `--concepts` mode it is a leg of
 its own, because there the question is which document rather than which passage.
 
-The top hits are then expanded one hop over `links` (outbound and inbound) and
-over directory siblings. Neighbours are deduplicated against the answers,
+The top hits are then expanded one hop over `links` (outbound and inbound).
+Directory siblings are not neighbours. Neighbours are deduplicated against the answers,
 capped by `--expand` (default 3, `--no-expand` disables), and always scored
 below the weakest direct hit.
 

@@ -10,7 +10,8 @@ import {
 	type VectorSpace,
 } from "../../embed/state.js";
 import { planSync } from "../../sync/index.js";
-import { parseConcept } from "../../sync/okf.js";
+import { conceptProblem, parseConcept } from "../../sync/okf.js";
+import type { BundleFile } from "../../sync/scan.js";
 import { resolvePaths } from "../../utils/paths.js";
 import type { CommandContext, CommandOutput } from "../run.js";
 
@@ -164,7 +165,7 @@ function frontmatterProblems(
 		if (known.has(file.path)) {
 			continue;
 		}
-		const problem = readProblem(file.absolutePath);
+		const problem = readProblem(file);
 		if (problem !== undefined) {
 			problems.push({ path: file.path, problem });
 		}
@@ -190,6 +191,10 @@ function permanentFailures(
 	);
 }
 
-function readProblem(absolutePath: string): string | undefined {
-	return parseConcept(readFileSync(absolutePath, "utf8")).problem;
+/** The same judgement a sync would record, so the warning does not change once the file is indexed. */
+function readProblem(file: BundleFile): string | undefined {
+	return conceptProblem(
+		file.path,
+		parseConcept(readFileSync(file.absolutePath, "utf8")),
+	);
 }

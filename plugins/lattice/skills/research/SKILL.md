@@ -11,51 +11,26 @@ write something new.
 All documents live in the Lattice bundle, `~/.lattice/docs/` (or `$LATTICE_HOME/docs`
 when that is set). Never write research into a project-local `docs/` directory.
 
+A document lives in the directory named by its OKF `type`, lowercased and
+kebab-cased, flat within that directory. There is no subject directory and no
+`index.md`: the subject is carried by the filename and, when it recurs, by a
+`Topic` document.
+
 | Path | Purpose |
 |------|---------|
 | `~/.lattice/docs/` | The bundle root |
-| `~/.lattice/docs/{topic}/` | A topic directory |
-| `~/.lattice/docs/{topic}/index.md` | The topic index — a reserved name, never indexed as a concept |
-| `~/.lattice/docs/{topic}/*.md` | The concepts: one document per piece of research |
+| `~/.lattice/docs/{type}/{filename}.md` | One concept, filed under its type |
+| `~/.lattice/docs/research/` | `type: Research` — findings on a specific question |
+| `~/.lattice/docs/topic/` | `type: Topic` — a hub that describes a subject and links out to its research |
 
 ## Process
 
-### Step 1: Search what is already indexed
+### Step 1 & 2: Search what is already indexed, and present it
 
-Search first, machine-readably, so nothing is inferred from rendered text:
-
-```bash
-lattice search "<topic>" --json
-```
-
-The JSON carries:
-
-- `hits[]` — each with `path`, `identifier`, `title`, `type`, `status`, `trust`,
-  `stale`, `score`, and `chunks[]` (the matching passages, with `headingPath`,
-  `startLine`/`endLine` and a `snippet`). A hit carrying `expanded: true` and a
-  `via` was reached by a link or a directory sibling, not by matching — treat it
-  as a lead, not an answer.
-- `degraded` and `degradedReason` — `true` means the semantic leg could not run
-  and the answer came from keywords alone. Say so to the user; do not silently
-  treat a keyword-only result as exhaustive.
-
-Narrow when it helps: `--type Research`, `--tag <tag>`, `--dir <topic>`,
-`--limit n`. Use `--no-expand` when you want only documents that matched.
-
-Do not read a score as a percentage of relevance. Scores are only comparable
-within one result set. Open the documents behind the top hits and judge from
-their text.
-
-### Step 2: Present what exists
-
-Summarise, with paths:
-
-- Which documents already cover the topic, and which passages (`headingPath`,
-  line range).
-- What they do not cover — the gap new research would fill.
-- Whether the search was degraded.
-
-If a hit is marked `stale`, say so: it is past its `stale_after` date.
+Run the `search` skill on `<topic>`. It searches `lattice search --json`,
+follows up on the strongest hits, and reports what's already indexed —
+coverage, gaps, staleness, and whether the search was degraded. Use its
+output as the basis for Step 3; do not re-run the search separately here.
 
 ### Step 3: Ask before researching
 
@@ -74,47 +49,89 @@ Use WebSearch and any other sources available. Focus on the gap identified in
 step 2 rather than restating what is already indexed. Keep every URL you use —
 they become the document's `sources`.
 
-### Step 5: Choose the topic directory and filename
+### Step 5: Choose the type and filename
 
-**Topic directory** — reuse an existing `~/.lattice/docs/{topic}/` when one fits
-(`lattice search "<topic>" --json` already told you which directories hold
-related work); otherwise derive a new kebab-case name.
+**Type** — `Research` for findings that answer a specific question. `Topic`
+for a hub: a document that describes a subject and links out to the research
+on it. A run that answers a question writes `Research`; it writes a `Topic`
+only under the rule in Step 6.
 
-**Filename** — kebab-case, 2–4 words, naming the specific focus. Never
-`notes.md` or `research.md`.
+**Filename** — kebab-case, naming the subject *and* the specific focus, since
+the directory no longer carries the subject. Never `notes.md`, `research.md`
+or a name that only makes sense next to a directory name.
 
-| Query | Topic dir | Document |
-|-------|-----------|----------|
-| "tesla model s value retention" | `tesla-model-s/` | `value-retention.md` |
-| "bun vs node performance" | `bun-nodejs/` | `performance-comparison.md` |
-| "graphql authentication patterns" | `graphql/` | `authentication-patterns.md` |
+| Query | Document |
+|-------|----------|
+| "tesla model s value retention" | `research/tesla-model-s-value-retention.md` |
+| "bun vs node performance" | `research/bun-nodejs-performance-comparison.md` |
+| "graphql authentication patterns" | `research/graphql-authentication-patterns.md` |
 
-### Step 6: Write the document
+### Step 6: Connect it to the graph
+
+A document with no in-bundle edges is a leaf nobody can reach except by
+search. Sharing a directory with another document is not an edge — only a
+link or a citation is. Before writing, decide what the new document links to,
+using the hits from Step 1 — do not run a new search for this.
+
+**Cite what it builds on.** For each indexed document the new research
+extends, contradicts, or relies on, add it to `sources:` as a bundle-relative
+path. That is the `cited` edge. Cite because the content depends on it, not
+because it came up in the search.
+
+**Cite the Topic hub.** If a `topic/{subject}.md` exists for the subject,
+cite it in `sources:` — that is how a piece of research declares which
+subject it belongs to. If none exists and the subject will recur, write one in
+the same run: `type: Topic`, a description of the subject, and wikilinks out
+to the research on it (including the document being written). The hub is a
+real concept, not an index, and it is what replaces a subject directory.
+
+**Link what it mentions.** Where the body refers to something an indexed
+document already covers, write a wikilink instead of a bare name. A wikilink
+target is an OKF identifier, resolved from the writing document's directory:
+`[[tesla-model-3-value-retention]]` for another document in `research/`,
+`[[/topic/tesla-model-s]]` or `[[../topic/tesla-model-s]]` for a document of
+another type. Links inside fenced code blocks are not edges.
+
+**Name what is missing.** When the research leans on a concept nobody has
+written yet — a technology, a method, an organisation it keeps returning to —
+link it anyway, as `[[/{type}/{name}]]`, and leave it unresolved. An
+unresolved link is the graph's record that the knowledge is wanted; do not
+stub an empty file to satisfy it. If the concept is worth more than a name
+and you have the material, write it as its own concept in the same run: one
+document per concept, the same frontmatter rules as Step 7.
+
+Do not put entities in frontmatter. The concept is the document; the link is
+the edge.
+
+### Step 7: Write the document
 
 Every document is an OKF concept, and its frontmatter is not optional: `type` is
 what makes the file conforming, and a file without it is indexed but reported by
 `lattice status` as a frontmatter problem.
 
-`~/.lattice/docs/{topic}/{filename}.md`:
+`~/.lattice/docs/research/{filename}.md`:
 
 ```markdown
 ---
 type: Research
-title: Value retention
+title: Tesla Model S value retention
 description: How well the Model S holds its resale value.
 status: draft
 tags: [tesla, resale]
 generated: { by: agent:claude-code/research, at: 2026-09-20T00:00:00Z }
 sources:
-  - ../concepts/users.md
+  - ../topic/tesla-model-s.md
+  - ../bigquery-table/users.md
   - https://example.com/depreciation
 ---
 
-# Value retention
+# Tesla Model S value retention
 
 ## Key findings
 
-Depreciation flattens after the fourth year.
+Depreciation flattens after the fourth year, later than the
+[[tesla-model-3-value-retention]] curve, and the [[/topic/battery-degradation]]
+schedule is the main driver.
 
 ## [Content sections as needed]
 
@@ -127,43 +144,29 @@ Field by field:
 
 | Field | Rule |
 |-------|------|
-| `type` | Required. `Research` for a research document; reuse whatever type a topic already uses. |
-| `title` | Required. Human-readable, the document's own name. |
+| `type` | Required. `Research` for findings, `Topic` for a hub. It decides the directory: a `Research` document in any directory but `research/` is reported by `lattice status`. |
+| `title` | Required. Human-readable, the document's own name, carrying the subject. |
 | `description` | Required. One sentence on what the document answers — it is indexed, so it is how the document is found. |
 | `status` | `draft`, `stable` or `deprecated`. New research is `draft`. |
-| `tags` | A list. Topic and facet, lowercase kebab-case. |
+| `tags` | A list. Subject and facet, lowercase kebab-case. |
 | `generated` | Provenance: `by` (`agent:claude-code/research`) and `at` (the UTC instant, ISO 8601). |
-| `sources` | What the research drew on. A bundle-relative path becomes a `cited` edge in the graph; a URL is kept as a citation and is not an edge. |
+| `sources` | What the research drew on, as decided in Step 6. A bundle-relative path becomes a `cited` edge in the graph; a URL is kept as a citation and is not an edge. |
 
 Cite the same URLs again as markdown links in a `## Sources` section, so a
-reader of the rendered document can follow them.
+reader of the rendered document can follow them. In the body, the wikilinks
+from Step 6 stand where the bare names would have been.
 
-### Step 7: Write or update the topic index
+### Step 8: Link from the Topic hub
 
-`index.md` is OKF's reserved index name. It is navigation, not knowledge, so it
-is never indexed as a concept — which is exactly why it may stay a plain list.
+If `topic/{subject}.md` exists, add a wikilink to the new document there —
+under a heading such as `## Research` — so the new document has a backlink and
+the hub stays the place a reader starts from. If Step 6 wrote a new hub, it
+already links out; nothing more to do.
 
-For a **new** topic, create `~/.lattice/docs/{topic}/index.md`:
+There is no `index.md` to maintain. `index.md` is OKF's reserved navigation
+name and is never indexed; the hub is a concept and is.
 
-```markdown
-# {Topic Title}
-
-Brief description of what this topic covers.
-
-## Documents
-
-| Document | Description |
-|----------|-------------|
-| [{Title}](./{filename}.md) | Brief description |
-
-## Related
-
-- [Related topic](../related-topic/index.md)
-```
-
-For an **existing** topic, add a row to its `index.md` table.
-
-### Step 8: Sync
+### Step 9: Sync
 
 ```bash
 lattice sync
@@ -176,37 +179,51 @@ Then verify, through the CLI rather than by assumption:
 
 ```bash
 lattice status                                   # frontmatter problems, if any
-lattice rels {topic}/{filename}.md               # links, backlinks, siblings, unresolved
+lattice rels research/{filename}.md              # links, backlinks, unresolved
 lattice search "<topic>" --json                  # the new document should now be a hit
 ```
 
 If `lattice status` reports a frontmatter problem for the new file, fix the
-frontmatter and sync again.
+frontmatter and sync again. If it reports the file as filed outside its type's
+directory, move the file — do not change its type to match the directory — and
+sync again; the sync follows the rename.
 
-### Step 9: Confirm
+Read the `lattice rels` output against what Step 6 intended. Every link and
+citation you meant to resolve should appear under **Outgoing**, the hub (when
+there is one) under **Incoming**, and only the concepts you deliberately left
+unwritten under **Unresolved**. A link you expected to resolve but did not is
+almost always a wrong path — fix the link, not the target, and sync again.
+
+### Step 10: Confirm
 
 Tell the user:
 
 - What the search found before the research, and whether it was degraded
-- The topic directory and the document path
-- That the index was updated
+- The document path, and the Topic hub it hangs off (written or updated)
 - What `lattice rels` reports the document is connected to, including anything
   still unresolved
 
 ## Notes
 
-- One document per piece of research; `index.md` stays a navigation index.
+- One document per concept, filed under its type. The subject is in the
+  filename and the `Topic` hub, never in a directory.
 - kebab-case for every directory and filename.
 - Every document has `type`, `title`, `description`, `tags`, `generated` and
   `sources`.
+- Every document cites or links at least what it builds on; the graph is the
+  links the author wrote, and a document nobody links to or from is a leaf.
 - An unresolved link is not a failure: it names a document that has not been
   written yet, and writing it repairs the edge on the next sync.
+- There is no entity extraction. A thing worth a node is a document; a
+  reference to it is a wikilink.
 
 ## File structure
 
 ```
-~/.lattice/docs/{topic}/
-├── index.md               # Reserved: the topic index, not a concept
-├── {research-1}.md        # A conforming OKF concept
-└── {research-2}.md
+~/.lattice/docs/
+├── research/
+│   ├── tesla-model-s-value-retention.md   # type: Research
+│   └── tesla-model-3-value-retention.md
+└── topic/
+    └── tesla-model-s.md                   # type: Topic — links out to both
 ```

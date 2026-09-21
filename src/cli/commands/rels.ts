@@ -5,8 +5,7 @@ import type { CommandContext, CommandOutput } from "../run.js";
 
 /**
  * What one concept is connected to: the documents it links to, the documents
- * linking back at it, the documents filed beside it, and the links it makes
- * that nothing answers yet.
+ * linking back at it, and the links it makes that nothing answers yet.
  *
  * The unresolved list is the point of the last of those: it is the bundle
  * telling its author which documents they have promised and not written.
@@ -79,14 +78,6 @@ export function runRels(context: CommandContext): CommandOutput {
 			)
 			.all(concept.id);
 
-		const siblings = db
-			.query<Omit<ConceptRow, "id">, [number]>(
-				`SELECT path, identifier, title FROM concepts
-				WHERE dir = (SELECT dir FROM concepts WHERE id = ?1) AND id <> ?1
-				ORDER BY path`,
-			)
-			.all(concept.id);
-
 		const unresolved = db
 			.query<UnresolvedRow, [number]>(
 				`SELECT l.target_path, l.raw_target, l.kind, l.link_text, l.anchor, l.context
@@ -96,7 +87,7 @@ export function runRels(context: CommandContext): CommandOutput {
 			)
 			.all(concept.id);
 
-		const report = { concept, outlinks, backlinks, siblings, unresolved };
+		const report = { concept, outlinks, backlinks, unresolved };
 		if (context.flags.json) {
 			return { code: 0, stdout: `${JSON.stringify(report, null, 2)}\n` };
 		}
@@ -107,8 +98,8 @@ export function runRels(context: CommandContext): CommandOutput {
 }
 
 /**
- * The concept the user named, by path or by OKF identifier. `concepts/users`
- * and `concepts/users.md` are the same document, and either is a reasonable
+ * The concept the user named, by path or by OKF identifier. `note/cooling`
+ * and `note/cooling.md` are the same document, and either is a reasonable
  * thing to have copied from somewhere else.
  */
 function findConcept(
@@ -127,7 +118,6 @@ interface Report {
 	concept: ConceptRow;
 	outlinks: EdgeRow[];
 	backlinks: EdgeRow[];
-	siblings: Array<Omit<ConceptRow, "id">>;
 	unresolved: UnresolvedRow[];
 }
 
@@ -144,10 +134,6 @@ function reportText(report: Report): string {
 	section(lines, "Incoming", report.backlinks, (edge) => [
 		`← ${edge.path}`,
 		describe(edge.kind, edge.link_text ?? edge.title),
-	]);
-	section(lines, "Siblings", report.siblings, (sibling) => [
-		`· ${sibling.path}`,
-		sibling.title ?? "",
 	]);
 	section(lines, "Unresolved", report.unresolved, (link) => [
 		`? ${link.target_path}${link.anchor ? `#${link.anchor}` : ""}`,

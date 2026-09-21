@@ -1,4 +1,4 @@
 # Fixture bundle
 
-- [Users](concepts/users.md)
-- [Orders](concepts/orders.md)
+- [Users](bigquery-table/users.md)
+- [Orders](bigquery-table/orders.md)

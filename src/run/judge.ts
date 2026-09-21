@@ -27,6 +27,8 @@ export interface Candidate {
 	text: string;
 	/** True when `text` is passages from the page read in full rather than a search excerpt. */
 	read?: boolean;
+	/** The web leg that found the page, when several were searched; the first to find it, as the runner dedupes. */
+	leg?: string;
 }
 
 export type Transition = "answer" | "rewrite" | "give_up";

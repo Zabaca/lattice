@@ -15,7 +15,12 @@ import {
 import { embedQuery } from "../../search/embed-query.js";
 import { search } from "../../search/search.js";
 import { resolvePaths } from "../../utils/paths.js";
-import { selectWebSearcher, type WebSearcher } from "../../web/provider.js";
+import { MultiSearcher } from "../../web/multi.js";
+import {
+	selectWebSearcher,
+	WebConfigurationError,
+	type WebSearcher,
+} from "../../web/provider.js";
 import { count, text } from "../flags.js";
 import type { CommandContext, CommandOutput } from "../run.js";
 
@@ -25,6 +30,8 @@ const INDEX_LIMIT = 5;
 const CHUNKS_PER_CONCEPT = 2;
 /** Pages one query pulls from the web. */
 const WEB_LIMIT = 5;
+/** The web legs when the environment names none: Exa, and Claude's own WebSearch. */
+const DEFAULT_WEB_LEGS = "exa,claude";
 
 /**
  * Run the judged search loop over the index and the web, or over either
@@ -70,12 +77,16 @@ export async function runRun(context: CommandContext): Promise<CommandOutput> {
 		return { code: 1, stderr: (error as Error).message };
 	}
 	// A web searcher that cannot be built is a reason, not a refusal: the run
-	// goes on over the index, as `search` does without its semantic leg.
+	// goes on over the index, as `search` does without its semantic leg. A
+	// name that is not a searcher is a refusal.
 	let webReason: string | undefined;
 	if (context.flags["no-web"] === undefined) {
 		try {
-			web = selectWebSearcher(context.env);
+			web = selectWebSearcher(context.env, DEFAULT_WEB_LEGS);
 		} catch (error) {
+			if (error instanceof WebConfigurationError) {
+				return { code: 1, stderr: error.message };
+			}
 			webReason = (error as Error).message;
 		}
 	}
@@ -171,6 +182,7 @@ export async function runRun(context: CommandContext): Promise<CommandOutput> {
 										title: page.title ?? page.url,
 										ref: page.url,
 										text: page.highlights.join("\n"),
+										...(page.leg === undefined ? {} : { leg: page.leg }),
 									}),
 								),
 								costUsd: response.cost,
@@ -199,9 +211,16 @@ export async function runRun(context: CommandContext): Promise<CommandOutput> {
 			}
 			throw error;
 		}
-		if (webReason !== undefined && result.webReason === null) {
-			result.webReason = webReason;
-		}
+		// A leg that never built, or was dropped mid-run, is named beside the
+		// runner's own reason, so a run over Exa alone because Claude failed
+		// says so, and vice versa.
+		const reasons = [
+			...(result.webReason === null ? [] : [result.webReason]),
+			...(webReason === undefined ? [] : [webReason]),
+			...(web instanceof MultiSearcher ? web.reasons() : []),
+		];
+		result.webReason =
+			reasons.length === 0 ? null : [...new Set(reasons)].join("; ");
 
 		if (context.flags.json !== undefined) {
 			return { code: 0, stdout: `${JSON.stringify(result)}\n` };

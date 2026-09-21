@@ -6,12 +6,20 @@
  * so a searcher that cannot be built or a request that fails is an error the
  * skill sees and works around itself.
  *
- * `exa` is the real one, behind `EXA_API_KEY`. `stub` returns whatever
+ * `exa` is the real one, behind `EXA_API_KEY`. `claude` is Claude's own
+ * WebSearch tool through the Agent SDK. `stub` returns whatever
  * `LATTICE_WEB_STUB` declares, which is what lets the test suite show the
  * rendering and the failure paths without a key or a network.
+ *
+ * `LATTICE_WEB_PROVIDER` is a comma-separated list of those: one name is one
+ * searcher, several are a `MultiSearcher` that asks every leg. Each command
+ * has its own default: `lattice web` searches Exa alone, `lattice run` Exa
+ * and Claude together.
  */
 
+import { CLAUDE_SEARCHER, claudeSearcherFromEnv } from "./claude.js";
 import { exaSearcherFromEnv } from "./exa.js";
+import { MultiSearcher } from "./multi.js";
 import { STUB_SEARCHER, stubSearcherFromEnv } from "./stub.js";
 
 export const WEB_PROVIDER_VAR = "LATTICE_WEB_PROVIDER";
@@ -47,6 +55,8 @@ export interface WebResult {
 	/** The passages the service picked out as answering the query. */
 	highlights: string[];
 	text?: string;
+	/** Which leg found the page, when several were searched. */
+	leg?: string;
 }
 
 export interface WebResponse {
@@ -73,23 +83,63 @@ export interface WebSearcher {
 	read(url: string): Promise<WebPage>;
 }
 
+const KNOWN_SEARCHERS = ["exa", CLAUDE_SEARCHER, STUB_SEARCHER];
+
+/** A name that is not a searcher: a mistake in the environment, never a reason to search less. */
+export class WebConfigurationError extends Error {}
+
 /**
- * The searcher the environment names; nothing set means Exa.
+ * The searchers the environment names, or `defaultLegs` when it names none.
  *
- * An unknown name, `exa` with no key and a malformed stub all throw: a
- * command with nothing to fall back to has no reason to be quiet about it.
+ * An unknown name anywhere in the list throws, naming the known ones. A
+ * single leg that cannot be built (`exa` with no key, a malformed stub)
+ * throws as well: a command with nothing to fall back to has no reason to
+ * be quiet about it. With several legs, the ones that build make the
+ * searcher and the ones that do not are remembered as reasons; only when
+ * none builds does the call throw, with every reason.
  */
 export function selectWebSearcher(
 	env: Record<string, string | undefined>,
+	defaultLegs = "exa",
 ): WebSearcher {
-	const name = env[WEB_PROVIDER_VAR]?.trim() || "exa";
+	const names = (env[WEB_PROVIDER_VAR]?.trim() || defaultLegs)
+		.split(",")
+		.map((name) => name.trim())
+		.filter((name) => name !== "");
+	for (const name of names) {
+		if (!KNOWN_SEARCHERS.includes(name)) {
+			throw new WebConfigurationError(
+				`Unknown web searcher in ${WEB_PROVIDER_VAR}: ${name}. Known searchers: ${KNOWN_SEARCHERS.join(", ")}.`,
+			);
+		}
+	}
+	if (names.length === 1) {
+		return buildSearcher(names[0], env);
+	}
+	const legs: WebSearcher[] = [];
+	const reasons: string[] = [];
+	for (const name of names) {
+		try {
+			legs.push(buildSearcher(name, env));
+		} catch (error) {
+			reasons.push(`${name}: ${(error as Error).message}`);
+		}
+	}
+	if (legs.length === 0) {
+		throw new Error(reasons.join("; "));
+	}
+	return new MultiSearcher(legs, reasons);
+}
+
+function buildSearcher(
+	name: string,
+	env: Record<string, string | undefined>,
+): WebSearcher {
 	if (name === "exa") {
 		return exaSearcherFromEnv(env);
 	}
-	if (name === STUB_SEARCHER) {
-		return stubSearcherFromEnv(env);
+	if (name === CLAUDE_SEARCHER) {
+		return claudeSearcherFromEnv(env);
 	}
-	throw new Error(
-		`Unknown web searcher in ${WEB_PROVIDER_VAR}: ${name}. Known searchers: exa, ${STUB_SEARCHER}.`,
-	);
+	return stubSearcherFromEnv(env);
 }

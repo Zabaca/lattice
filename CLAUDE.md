@@ -189,7 +189,7 @@ reads `secrets.yaml`; the skill says how to export the key.
 |---|---|
 | `EXA_API_KEY` | Required by the `exa` searcher. |
 | `EXA_BASE_URL` | Where the request goes; default `https://api.exa.ai`. |
-| `LATTICE_WEB_PROVIDER` | Unset or `exa` (the real one) or `stub`. Anything else is an error. |
+| `LATTICE_WEB_PROVIDER` | A comma-separated list of legs: `exa` (the real one), `claude` (Claude's own WebSearch tool through the Agent SDK: Haiku searches, and only a URL the tool returned is kept, with the model's one-sentence snippet as its highlight; it ignores `--type`, `--domain` and `--since`, cannot read pages, and needs the same credential as `LATTICE_LLM_PROVIDER=claude`) and `stub`. Several legs are searched together (`src/web/multi.ts`); a leg that fails is dropped with its reason and the run goes on over the rest. Unset means `exa` for `lattice web` and `exa,claude` for `lattice run`. Anything else is an error naming the known legs. |
 | `LATTICE_WEB_STUB` | With `stub`, a JSON array of `{ title, url, highlights, text? }` returned in that order; `text` is what a read of that page returns. Malformed is an error. |
 | `LATTICE_WEB_FAIL` | With `stub`, a substring; a query containing it makes the request throw. |
 
@@ -231,14 +231,19 @@ The policy (`transition`), in order:
    rewrite because two planned queries on one topic always look alike.
 5. Otherwise `rewrite`, up to `--max-rewrites` (default 2).
 
-A web leg that cannot be built or fails mid-run is `webReason`, and the run
-goes on over the index, as `search` does without its semantic leg. No index
+`run` searches Exa and Claude WebSearch by default (`LATTICE_WEB_PROVIDER`
+unset), and a hit found by Claude is read through Exa's contents endpoint.
+A web leg that cannot be built or fails mid-run is `webReason`, naming the
+leg, and the run goes on over the other leg or the index alone, as `search`
+does without its semantic leg. No index
 is exit 1; no judge or no model is exit 1 naming the variable; a TypeSafe
 key the service rejects is a hard error, as in the reranker. `--json` is
 `{ question, exit, tried, completeness, completenessLabel, kept: [{ source,
-title, ref, text, read? }], records: [...], cost: { llmUsd, llmCalls,
+title, ref, text, read?, leg? }], records: [...], cost: { llmUsd, llmCalls,
 jevInputTokens, webUsd }, webReason }`, one record per judge visit, each
 with `read`: the pages read in full before it, empty for a first visit.
+`leg` names the web leg that found a page when several were searched, the
+first one to find it.
 
 The `claude` text provider runs the Claude Agent SDK with the minimal option
 set from zbc's `@zabaca/agent` (`tools: []`, `settingSources: []`, thinking

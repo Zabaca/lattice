@@ -2375,7 +2375,7 @@ describe("lattice web", () => {
 		});
 		expect(unknown.code).toBe(1);
 		expect(unknown.stderr).toContain("bing");
-		expect(unknown.stderr).toContain("exa, stub");
+		expect(unknown.stderr).toContain("exa, claude, stub");
 
 		const malformed = await invoke(
 			["web", "anything"],
@@ -2769,6 +2769,57 @@ describe("lattice run", () => {
 		});
 		expect(noKey.code).toBe(0);
 		expect(JSON.parse(noKey.stdout).webReason).toContain("EXA_API_KEY");
+	});
+
+	test("several web legs: a leg that cannot be built is a reason, the rest search on", async () => {
+		const home = await bundledHome();
+		await invoke(["sync"], home);
+		const env = runEnv(
+			['{"queries": ["users table"]}'],
+			[{ ...ANSWER, keep: ["exa-limits"] }],
+			{ LATTICE_WEB_PROVIDER: "stub,exa", EXA_API_KEY: undefined },
+		);
+
+		const result = await invoke(
+			["run", "what tables exist", "--json", "--no-index"],
+			home,
+			env,
+		);
+		expect(result.code).toBe(0);
+		const parsed = JSON.parse(result.stdout);
+		expect(parsed.exit).toBe("answer");
+		expect(
+			parsed.kept.map((c: { ref: string; leg?: string }) => [c.ref, c.leg]),
+		).toEqual([["https://example.com/exa-limits", "stub"]]);
+		expect(parsed.webReason).toContain("exa: ");
+		expect(parsed.webReason).toContain("EXA_API_KEY");
+
+		// A leg that fails mid-run is dropped the same way, and the other leg's
+		// pages are still what the judge reads.
+		const failing = await invoke(
+			["run", "what tables exist", "--json", "--no-index"],
+			home,
+			{
+				...env,
+				LATTICE_WEB_PROVIDER: "exa,stub",
+				EXA_API_KEY: "k",
+				EXA_BASE_URL: "http://127.0.0.1:9",
+			},
+		);
+		expect(failing.code).toBe(0);
+		const dropped = JSON.parse(failing.stdout);
+		expect(dropped.kept.map((c: { ref: string }) => c.ref)).toEqual([
+			"https://example.com/exa-limits",
+		]);
+		expect(dropped.webReason).toContain("exa: Could not reach Exa");
+
+		const unknown = await invoke(["run", "what tables exist", "--json"], home, {
+			...env,
+			LATTICE_WEB_PROVIDER: "stub,nope",
+		});
+		expect(unknown.code).toBe(1);
+		expect(unknown.stderr).toContain("nope");
+		expect(unknown.stderr).toContain("exa, claude, stub");
 	});
 
 	test("--no-index searches the web alone, and with --no-web there is nothing to run", async () => {

@@ -110,24 +110,28 @@ Run the loop again, this time over the web alone:
 lattice run "<topic>" --no-index --json
 ```
 
-The index was searched in Step 1 and is not searched again; the judge reads
-Exa's pages, so `completenessLabel` is about what the web adds. The entries
-in `kept` are the Exa sources: their `ref` is a URL and `text` the
-highlights Exa picked out, or, for an entry with `read: true`, the passages
-of the page that best answer the question, chosen after the runner read the
-page in full. Cite the URLs and quote from the text without fetching the
-pages. Reuse this run's `tried` as the WebSearch
-queries below rather than inventing new ones.
+The index was searched in Step 1 and is not searched again. The run sends
+each query through two web legs, Exa and Claude's own WebSearch tool, and
+the judge reads both legs' pages, so `completenessLabel` is about what the
+web adds. The entries in `kept` are the web sources: their `ref` is a URL
+and `text` the highlights the leg picked out, or, for an entry with `read:
+true`, the passages of the page that best answer the question, chosen after
+the runner read the page in full. Cite the URLs and quote from the text
+without fetching the pages.
 
-Exa answers a described need well and a literal string badly. Send an error
-message, a package version or an exact identifier through WebSearch, not
-`lattice run`. **Always also run WebSearch**: Exa lags on new content and
-misses the long tail, so a topic with a fresh or obscure answer needs both.
+The run does the WebSearch step itself, so do not repeat it. Run WebSearch
+yourself, reusing the run's `tried` as the queries, only when:
 
-If `webReason` is set, Exa did not run (no `EXA_API_KEY`, no credits, a
-rejected key, a network failure — the reason is in the field). Say so once
-and continue with WebSearch alone. Do not retry, and do not let the run end
-without web sources because Exa was unavailable.
+- the run exits `give_up`;
+- the topic is a literal string (an error message, a package version, an
+  exact identifier), which Exa answers badly;
+- `webReason` names the `claude` leg, so the run searched Exa alone.
+
+If `webReason` is set, a leg did not run and the field says which and why
+(no `EXA_API_KEY`, no credits, a rejected key, a network failure, no Claude
+credential). Say so once and go on with what the other leg kept. Do not
+retry, and if neither leg ran, do not let the run end without web sources:
+run WebSearch yourself.
 
 When working in the Lattice checkout, the keys are in the repo's
 `secrets.yaml`, and the OAuth token in `~/.claude/settings.json`:
@@ -288,7 +292,7 @@ almost always a wrong path — fix the link, not the target, and sync again.
 Tell the user:
 
 - What the Step 1 run found: the kept documents and the completeness label;
-  and whether Exa ran in Step 4 (`webReason`)
+  and which web legs ran in Step 4 (`webReason`)
 - The document path, and the Topic hub it hangs off (written or updated)
 - What `lattice rels` reports the document is connected to, including anything
   still unresolved

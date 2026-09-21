@@ -14,7 +14,7 @@
  * credential is forwarded explicitly, from the environment the CLI was given.
  */
 
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { type Options, query } from "@anthropic-ai/claude-agent-sdk";
 import type { Completion, TextProvider } from "./provider.js";
 
 export const OAUTH_TOKEN_VAR = "CLAUDE_CODE_OAUTH_TOKEN";
@@ -51,17 +51,7 @@ export class ClaudeProvider implements TextProvider {
 		let costUsd = 0;
 		const turn = query({
 			prompt,
-			options: {
-				model: this.model,
-				tools: [],
-				settingSources: [],
-				thinking: { type: "disabled" },
-				mcpServers: {},
-				strictMcpConfig: true,
-				settings: { autoMemoryEnabled: false, disableClaudeAiConnectors: true },
-				env: this.env,
-				pathToClaudeCodeExecutable: this.executable,
-			},
+			options: minimalOptions(this.model, this.env, this.executable),
 		});
 		for await (const message of turn) {
 			if (message.type === "assistant") {
@@ -84,15 +74,50 @@ export class ClaudeProvider implements TextProvider {
 	}
 }
 
-/** Claude as the environment configures it; no credential is an error naming both accepted ones. */
-export function claudeProviderFromEnv(
+/**
+ * The minimal option set: no tools, no settings, no memory, no connectors,
+ * thinking off. The `claude` web searcher adds its one tool to this.
+ */
+export function minimalOptions(
+	model: string,
+	env: Record<string, string>,
+	executable?: string,
+): Options {
+	return {
+		model,
+		tools: [],
+		settingSources: [],
+		thinking: { type: "disabled" },
+		mcpServers: {},
+		strictMcpConfig: true,
+		settings: { autoMemoryEnabled: false, disableClaudeAiConnectors: true },
+		env,
+		pathToClaudeCodeExecutable: executable,
+	};
+}
+
+/** What a Claude call is built from: the forwarded environment, the model and the executable. */
+export interface ClaudeEnvironment {
+	model: string;
+	env: Record<string, string>;
+	executable?: string;
+}
+
+/**
+ * The environment a Claude call runs in: the credential checked and
+ * forwarded under the name the SDK reads, the rest passed through. No
+ * credential is an error naming every accepted variable; `what` says which
+ * user of Claude is complaining.
+ */
+export function claudeEnvironment(
 	env: Record<string, string | undefined>,
-): ClaudeProvider {
+	what = "The claude text provider",
+): ClaudeEnvironment {
 	const token = env[OAUTH_TOKEN_VAR]?.trim() || env[OAUTH_ALIAS_VAR]?.trim();
 	const apiKey = env[API_KEY_VAR]?.trim();
 	if (!token && !apiKey) {
 		throw new Error(
-			`The claude text provider needs ${OAUTH_TOKEN_VAR} (or ${OAUTH_ALIAS_VAR}, or ${API_KEY_VAR}) set.`,
+			`${what} needs ${OAUTH_TOKEN_VAR} (or ${OAUTH_ALIAS_VAR}, or ${API_KEY_VAR}) set.`,
 		);
 	}
 	const forwarded: Record<string, string> = {};
@@ -107,9 +132,16 @@ export function claudeProviderFromEnv(
 	// No attribution header and no telemetry: this is a completion, not a session.
 	forwarded.CLAUDE_CODE_ATTRIBUTION_HEADER = "0";
 	forwarded.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
-	return new ClaudeProvider({
+	return {
 		model: env[LLM_MODEL_VAR]?.trim() || DEFAULT_LLM_MODEL,
 		env: forwarded,
 		executable: env[CLAUDE_PATH_VAR]?.trim() || undefined,
-	});
+	};
+}
+
+/** Claude as the environment configures it; no credential is an error naming the accepted ones. */
+export function claudeProviderFromEnv(
+	env: Record<string, string | undefined>,
+): ClaudeProvider {
+	return new ClaudeProvider(claudeEnvironment(env));
 }

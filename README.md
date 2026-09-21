@@ -175,12 +175,28 @@ lattice search "query" --expand 5        # More neighbours (default 3)
 lattice search "query" --no-expand       # Direct hits only
 lattice search "query" --require-embeddings  # Fail instead of degrading
 lattice search "query" --type Guide --tag core
+lattice search "query" --candidates 30   # Reranker reads deeper (default 20)
+lattice search "query" --require-rerank  # Fail if a configured reranker fell back
 ```
 
 With no usable embedding — no provider, or an index embedded by another model
 — the search still answers from keywords alone. `--json` then reports
 `"degraded": true` with a reason, so a caller can say the answer is weaker than
 usual; `--require-embeddings` turns that into a non-zero exit instead.
+
+A reranker is optional and off by default. `LATTICE_RERANK_PROVIDER=jev` sends
+the fused top `--candidates` hits (at least `--limit`) to TypeSafe's Jev in one
+request, needs `TYPESAFE_API_KEY`, and takes the model from
+`LATTICE_RERANK_MODEL` (default `jev-latest`). Each hit's `score` becomes the
+probability it answers the query, the pre-rerank score stays beside it as
+`fusedScore`, and `--json` reports `reranked` and `rerank` (provider, model,
+candidates, input tokens). Neighbours are still expanded afterwards, below the
+reranked answers. A misconfigured reranker — an unknown name, `jev` with no key or a rejected one
+— is an error, but a request that fails leaves the fused order and says so:
+`rerankReason` in JSON, `Not reranked: …` in the terminal; `--require-rerank`
+makes that a non-zero exit. `LATTICE_RERANK_PROVIDER=stub` with
+`LATTICE_RERANK_STUB` (a JSON object of phrase → probability) and
+`LATTICE_RERANK_FAIL` (a substring that makes the request fail) exist for tests.
 
 ### `lattice rels`
 
@@ -309,9 +325,9 @@ bun run build
 the SciFact benchmark, indexed with the real embedding model. The first run
 downloads about 5 MB into `eval-cache/` and embeds for a few minutes; later runs
 reuse the synced home and only re-run the queries. `--docs`, `--queries`,
-`--seed`, `--fresh` and `--json` are the knobs. `--rerank jev` reranks the top
-20 candidates with TypeSafe's Jev before scoring and needs `TYPESAFE_API_KEY`
-(or the SOPS-encrypted `secrets.yaml`).
+`--seed`, `--fresh` and `--json` are the knobs. `--rerank jev` runs every search
+with the Jev reranking stage on (`--candidates`, default 20) and needs
+`TYPESAFE_API_KEY` (or the SOPS-encrypted `secrets.yaml`).
 
 </details>
 

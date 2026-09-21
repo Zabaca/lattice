@@ -11,10 +11,10 @@
  *                        [--limit 10] [--expand] [--fresh] [--json]
  *                        [--rerank jev] [--candidates 20] [--model jev-latest]
  *
- * `--rerank jev` asks Lattice for `--candidates` hits, reranks them with
- * TypeSafe's Jev (one request per query, one Noul per candidate) and scores
- * the top `--limit` of the reranked order. It needs `TYPESAFE_API_KEY` in the
- * environment or in the SOPS-encrypted `secrets.yaml`.
+ * `--rerank jev` runs every search with `LATTICE_RERANK_PROVIDER=jev`, so the
+ * reranking stage under test is the one `lattice search` ships: the fused top
+ * `--candidates` reranked by TypeSafe's Jev, sliced to `--limit`. It needs
+ * `TYPESAFE_API_KEY` in the environment or in the SOPS-encrypted `secrets.yaml`.
  */
 
 import {
@@ -27,7 +27,6 @@ import {
 import { basename, join, resolve } from "node:path";
 import { runCli } from "../cli/run.js";
 import { resolvePaths } from "../utils/paths.js";
-import { createJevReranker, type JevReranker } from "./rerank-jev.js";
 
 const DATASET_URL =
 	"https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/scifact.zip";
@@ -66,7 +65,7 @@ interface QueryResult {
 	rank: number | null;
 	degraded: boolean;
 	ms: number;
-	rerank: { ms: number; inputTokens: number; failed: boolean } | null;
+	rerank: { inputTokens: number; failed: boolean } | null;
 }
 
 async function main(): Promise<void> {
@@ -76,10 +75,7 @@ async function main(): Promise<void> {
 	};
 
 	// A missing key fails here, before any search or sync has cost time.
-	const reranker =
-		options.rerank === "jev"
-			? createJevReranker({ apiKey: resolveApiKey(), model: options.model })
-			: null;
+	const apiKey = options.rerank === "jev" ? resolveApiKey() : undefined;
 
 	await ensureDataset(log);
 	const corpus = readCorpus();
@@ -99,6 +95,9 @@ async function main(): Promise<void> {
 		// download the model again.
 		LATTICE_MODEL_DIR:
 			process.env.LATTICE_MODEL_DIR ?? join(CACHE_DIR, "models"),
+		LATTICE_RERANK_PROVIDER: options.rerank ?? undefined,
+		LATTICE_RERANK_MODEL: options.model,
+		TYPESAFE_API_KEY: apiKey,
 	};
 	const paths = resolvePaths(env);
 
@@ -120,7 +119,6 @@ async function main(): Promise<void> {
 	}
 	const model = /^Model:\s+(.+)$/m.exec(status.stdout)?.[1] ?? "unknown";
 
-	const docsById = new Map(sampledDocs.map((doc) => [doc.id, doc]));
 	let rerankModel: string | null = null;
 
 	log(`Searching ${sampledQueries.length} queries...`);
@@ -131,7 +129,9 @@ async function main(): Promise<void> {
 			query.text,
 			"--json",
 			"--limit",
-			String(reranker === null ? options.limit : options.candidates),
+			String(options.limit),
+			"--candidates",
+			String(options.candidates),
 		];
 		if (!options.expand) argv.push("--no-expand");
 		const started = performance.now();
@@ -142,20 +142,26 @@ async function main(): Promise<void> {
 		}
 		const parsed = JSON.parse(result.stdout) as {
 			degraded: boolean;
+			rerank: { model: string; inputTokens: number } | null;
+			rerankReason: string | null;
 			hits: Array<{ path: string }>;
 		};
-		let ids = parsed.hits.map((hit) => basename(hit.path, ".md"));
+		const ids = parsed.hits
+			.map((hit) => basename(hit.path, ".md"))
+			.slice(0, options.limit);
 
 		let rerank: QueryResult["rerank"] = null;
-		if (reranker !== null && ids.length > 0) {
-			const outcome = await rerankQuery(reranker, query.text, ids, docsById);
-			rerank = outcome.stats;
-			if (outcome.order !== null) ids = outcome.order;
-			if (outcome.model !== null) rerankModel = outcome.model;
-			if (outcome.stats.failed) log(`rerank failed for ${query.id}`);
+		if (options.rerank !== null) {
+			if (parsed.rerank !== null) {
+				rerankModel = parsed.rerank.model;
+				rerank = { inputTokens: parsed.rerank.inputTokens, failed: false };
+			} else if (parsed.rerankReason !== null) {
+				log(`rerank failed for ${query.id}: ${parsed.rerankReason}`);
+				rerank = { inputTokens: 0, failed: true };
+			}
+			// A search with no hits has nothing to rerank and is not a failure.
 		}
 
-		ids = ids.slice(0, options.limit);
 		const relevant = qrels.get(query.id) ?? new Set<string>();
 		const index = ids.findIndex((id) => relevant.has(id));
 		results.push({
@@ -178,7 +184,7 @@ async function main(): Promise<void> {
 		model,
 		...metrics,
 		rerank:
-			reranker === null
+			options.rerank === null
 				? null
 				: {
 						provider: "jev",
@@ -277,44 +283,10 @@ function resolveApiKey(): string {
 	return match[1];
 }
 
-/** One Jev request; any SDK error falls back to the unreranked order. */
-async function rerankQuery(
-	reranker: JevReranker,
-	query: string,
-	ids: string[],
-	docsById: Map<string, CorpusDoc>,
-): Promise<{
-	order: string[] | null;
-	model: string | null;
-	stats: NonNullable<QueryResult["rerank"]>;
-}> {
-	const candidates = ids.map((id) => {
-		const doc = docsById.get(id);
-		if (doc === undefined) throw new Error(`hit ${id} is not in the sample`);
-		return { id, title: doc.title, text: doc.text };
-	});
-	const started = performance.now();
-	try {
-		const result = await reranker.rerank(query, candidates);
-		return {
-			order: result.order,
-			model: result.model,
-			stats: { ms: result.ms, inputTokens: result.inputTokens, failed: false },
-		};
-	} catch {
-		return {
-			order: null,
-			model: null,
-			stats: { ms: performance.now() - started, inputTokens: 0, failed: true },
-		};
-	}
-}
-
 function rerankStats(results: QueryResult[]) {
 	const stats = results.flatMap((r) => (r.rerank === null ? [] : [r.rerank]));
 	const n = Math.max(stats.length, 1);
 	return {
-		msPerQuery: stats.reduce((sum, s) => sum + s.ms, 0) / n,
 		inputTokensPerQuery: stats.reduce((sum, s) => sum + s.inputTokens, 0) / n,
 		failures: stats.filter((s) => s.failed).length,
 	};
@@ -502,7 +474,6 @@ function renderTable(
 		rows.push(
 			["Rerank", rerank.model],
 			["Candidates", String(rerank.candidates)],
-			["Jev ms/query", rerank.msPerQuery.toFixed(0)],
 			["Jev tokens/query", rerank.inputTokensPerQuery.toFixed(0)],
 			["Rerank failures", String(rerank.failures)],
 		);

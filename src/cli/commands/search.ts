@@ -3,6 +3,11 @@ import { openDatabase } from "../../db/open.js";
 import { selectProvider } from "../../embed/provider.js";
 import type { VectorSpace } from "../../embed/state.js";
 import { checkActiveSpace } from "../../embed/state.js";
+import {
+	RerankConfigurationError,
+	type Reranker,
+	selectReranker,
+} from "../../rerank/provider.js";
 import { type SearchHit, search, searchConcepts } from "../../search/search.js";
 import type { SemanticInput } from "../../search/vector.js";
 import { resolvePaths } from "../../utils/paths.js";
@@ -14,6 +19,8 @@ const DEFAULT_LIMIT = 10;
 const DEFAULT_CHUNKS_PER_CONCEPT = 2;
 /** Neighbours added below the direct hits when `--expand` is not given. */
 const DEFAULT_EXPAND = 3;
+/** Fused hits a reranker reads when `--candidates` is not given. */
+const DEFAULT_CANDIDATES = 20;
 
 /**
  * Search the index for passages matching a query.
@@ -37,8 +44,20 @@ export async function runSearch(
 	let chunksPerConcept: number;
 	let asOf: number;
 	let expand: number;
+	let candidates: number;
+	let reranker: Reranker | undefined;
 	try {
 		limit = count(context.flags.limit, DEFAULT_LIMIT, "--limit");
+		candidates = count(
+			context.flags.candidates,
+			Math.max(DEFAULT_CANDIDATES, limit),
+			"--candidates",
+		);
+		if (candidates < limit) {
+			throw new Error(
+				`--candidates must be at least --limit (${limit}), got: ${candidates}`,
+			);
+		}
 		chunksPerConcept = count(
 			context.flags.chunks ?? context.flags["chunks-per-concept"],
 			DEFAULT_CHUNKS_PER_CONCEPT,
@@ -49,6 +68,10 @@ export async function runSearch(
 			context.flags["no-expand"] !== undefined
 				? 0
 				: count(context.flags.expand, DEFAULT_EXPAND, "--expand");
+		// A reranker that cannot be built is refused here, unlike an embedding
+		// provider that cannot: a misconfigured reranker would otherwise weaken
+		// every search and never say so.
+		reranker = selectReranker(context.env);
 	} catch (error) {
 		return { code: 1, stderr: (error as Error).message };
 	}
@@ -76,21 +99,33 @@ export async function runSearch(
 		// "Which document" and "which passage" are different questions over the
 		// same index, asked with the same filters.
 		const ask = context.flags.concepts !== undefined ? searchConcepts : search;
-		const result = ask(db, {
-			query: context.positionals[0],
-			limit,
-			chunksPerConcept,
-			asOf,
-			expand,
-			semantic: embedded.semantic,
-			semanticUnavailable: embedded.reason,
-			type: text(context.flags.type),
-			tag: text(context.flags.tag),
-			dir: text(context.flags.dir),
-			status: text(context.flags.status),
-			trust: text(context.flags.trust),
-			includeDeprecated: context.flags["include-deprecated"] !== undefined,
-		});
+		let result: Awaited<ReturnType<typeof ask>>;
+		try {
+			result = await ask(db, {
+				query: context.positionals[0],
+				limit,
+				chunksPerConcept,
+				asOf,
+				expand,
+				reranker,
+				candidates,
+				semantic: embedded.semantic,
+				semanticUnavailable: embedded.reason,
+				type: text(context.flags.type),
+				tag: text(context.flags.tag),
+				dir: text(context.flags.dir),
+				status: text(context.flags.status),
+				trust: text(context.flags.trust),
+				includeDeprecated: context.flags["include-deprecated"] !== undefined,
+			});
+		} catch (error) {
+			// The service rejecting the key is the same mistake as no key at all,
+			// found one step later.
+			if (error instanceof RerankConfigurationError) {
+				return { code: 1, stderr: error.message };
+			}
+			throw error;
+		}
 
 		// A caller that would rather fail than be told the answer is weaker.
 		if (result.degraded && context.flags["require-embeddings"] !== undefined) {
@@ -99,6 +134,17 @@ export async function runSearch(
 				stderr:
 					`--require-embeddings was given and the semantic leg could not run: ` +
 					`${result.degradedReason}`,
+			};
+		}
+		if (
+			result.rerankReason !== undefined &&
+			context.flags["require-rerank"] !== undefined
+		) {
+			return {
+				code: 1,
+				stderr:
+					`--require-rerank was given and the reranker did not run: ` +
+					`${result.rerankReason}`,
 			};
 		}
 
@@ -111,6 +157,9 @@ export async function runSearch(
 					mode: result.mode ?? null,
 					degraded: result.degraded,
 					degradedReason: result.degradedReason ?? null,
+					reranked: result.reranked,
+					rerank: result.rerank,
+					rerankReason: result.rerankReason ?? null,
 					hits: result.hits,
 				})}\n`,
 			};
@@ -120,6 +169,9 @@ export async function runSearch(
 			code: 0,
 			stdout:
 				(result.degraded ? `Keyword-only: ${result.degradedReason}.\n\n` : "") +
+				(result.rerankReason !== undefined
+					? `Not reranked: ${result.rerankReason}.\n\n`
+					: "") +
 				render(result.hits),
 		};
 	} finally {

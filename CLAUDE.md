@@ -136,9 +136,33 @@ nothing in the index embedded with that model — the result is keyword-only and
 says so: `--json` carries `degraded` and `degradedReason`, and
 `--require-embeddings` turns that into a non-zero exit.
 
+### Reranking
+
+An optional stage between fusion and expansion, behind `Reranker` in
+`src/rerank/provider.ts` (the same shape of seam as the embedding provider).
+With `LATTICE_RERANK_PROVIDER` unset nothing changes and nothing touches the
+network. `jev` sends the fused top `--candidates` (default 20, never below
+`--limit`) to TypeSafe's Jev in one request with one Noul per candidate —
+title plus the shown passages in full, or in `--concepts` mode title,
+description and opening passage — and reorders by the returned probability,
+fused score as tiebreak. A reranked hit's `score` is that probability and
+`fusedScore` keeps the pre-rerank score; expansion then hangs off the reranked
+answers, so its floor is the lowest probability (possibly 0). The result
+carries `reranked`, `rerank: { provider, model, candidates, inputTokens } |
+null` and `rerankReason` when a configured reranker fell back. A configuration
+error (unknown name, `jev` without `TYPESAFE_API_KEY` or with one the service
+rejects, malformed stub) is a hard error; a request failure degrades to the
+fused order and says so, and
+`--require-rerank` turns that into a non-zero exit. Semantic degradation and
+rerank degradation are independent: a keyword-only search is still reranked.
+
 | Variable | Meaning |
 |---|---|
 | `LATTICE_EMBED_STUB` | With `LATTICE_EMBED_PROVIDER=stub`, a JSON array of phrase groups; a text's vector has one dimension per group it mentions. For tests and demonstrations — it is the only way to show a paraphrase matching without a real model. |
+| `LATTICE_RERANK_PROVIDER` | Unset (no reranking), `jev` (TypeSafe, needs `TYPESAFE_API_KEY`; `TYPESAFE_BASE_URL` is honoured) or `stub`. Anything else is an error. |
+| `LATTICE_RERANK_MODEL` | The Jev model to ask for; default `jev-latest`. |
+| `LATTICE_RERANK_STUB` | With `stub`, a JSON object of phrase → probability; a candidate scores the highest phrase its text contains, 0 if none. Malformed is an error. |
+| `LATTICE_RERANK_FAIL` | With `stub`, a substring; a query containing it makes the request throw, to exercise the fallback. |
 
 ## Links
 

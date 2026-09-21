@@ -103,6 +103,7 @@ const COMMANDS: Record<string, CommandSpec> = {
 		usage:
 			"lattice search <query> [--json] [--limit n] [--chunks n]\n" +
 			"       [--concepts] [--expand n | --no-expand] [--require-embeddings]\n" +
+			"       [--candidates n] [--require-rerank]\n" +
 			"       [--type t] [--tag t] [--dir d] [--status s] [--trust t]\n" +
 			"       [--include-deprecated] [--as-of date]",
 		summary: "Search the index by keyword and by meaning at once",

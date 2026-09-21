@@ -895,6 +895,7 @@ interface SearchHit {
 	staleAfter: string | null;
 	stale: boolean;
 	score: number;
+	fusedScore?: number;
 	expanded?: true;
 	via?: { relation: string; from: string };
 	chunks: Array<{
@@ -918,6 +919,14 @@ async function search(
 	hits: SearchHit[];
 	degraded?: boolean;
 	degradedReason?: string | null;
+	reranked?: boolean;
+	rerank?: {
+		provider: string;
+		model: string;
+		candidates: number;
+		inputTokens: number;
+	} | null;
+	rerankReason?: string | null;
 }> {
 	const result = await invoke(["search", ...argv, "--json"], home, env);
 	const parsed = result.stdout === "" ? undefined : JSON.parse(result.stdout);
@@ -927,6 +936,9 @@ async function search(
 		hits: parsed?.hits ?? [],
 		degraded: parsed?.degraded,
 		degradedReason: parsed?.degradedReason,
+		reranked: parsed?.reranked,
+		rerank: parsed?.rerank,
+		rerankReason: parsed?.rerankReason,
 	};
 }
 
@@ -1106,6 +1118,220 @@ describe("hybrid search", () => {
 
 		expect(allowed.code).toBe(0);
 		expect(allowed.stderr).toBe("");
+	});
+});
+
+/**
+ * The stub reranker scores a candidate by the phrases its text contains, so a
+ * test can say outright which document is the answer and watch the page
+ * reorder — without a key, a model or a network.
+ */
+function rerankEnv(
+	scores: Record<string, number>,
+	extra: Record<string, string> = {},
+) {
+	return {
+		...HYBRID_ENV,
+		LATTICE_RERANK_PROVIDER: "stub",
+		LATTICE_RERANK_STUB: JSON.stringify(scores),
+		...extra,
+	};
+}
+
+describe("reranking", () => {
+	test("a reranker can put the document the fusion ranked second first", async () => {
+		const home = await hybridHome();
+
+		// Both documents match this query and the fusion puts `note/cooling.md`
+		// first: its title carries two of the four terms, where
+		// `reference/airflow-curve.md` matches on its body alone.
+		const fused = await search(
+			home,
+			["Thermal throttle blower ramps", "--no-expand"],
+			HYBRID_ENV,
+		);
+		expect(fused.hits.map((hit) => hit.path)).toEqual([
+			"note/cooling.md",
+			"reference/airflow-curve.md",
+		]);
+		expect(fused.reranked).toBe(false);
+		expect(fused.rerank).toBeNull();
+		expect(fused.hits[0].fusedScore).toBeUndefined();
+
+		// "ramps linearly" is in the airflow document's passage and nowhere
+		// else; "ninety five" is in the cooling note's.
+		const reranked = await search(
+			home,
+			["Thermal throttle blower ramps", "--no-expand"],
+			rerankEnv({ "ramps linearly": 0.9, "ninety five": 0.2 }),
+		);
+
+		expect(reranked.code).toBe(0);
+		expect(reranked.stderr).toBe("");
+		expect(reranked.reranked).toBe(true);
+		expect(reranked.rerank).toEqual({
+			provider: "stub",
+			model: "stub",
+			candidates: 2,
+			inputTokens: 0,
+		});
+		expect(reranked.rerankReason).toBeNull();
+		expect(reranked.hits.map((hit) => hit.path)).toEqual([
+			"reference/airflow-curve.md",
+			"note/cooling.md",
+		]);
+		// The score is now the probability, and the fused score rides beside it.
+		expect(reranked.hits.map((hit) => hit.score)).toEqual([0.9, 0.2]);
+		expect(reranked.hits[0].fusedScore).toBe(fused.hits[1].score);
+		expect(reranked.hits[1].fusedScore).toBe(fused.hits[0].score);
+	});
+
+	test("neighbours are expanded from the reranked answers and stay below them", async () => {
+		const home = await hybridHome();
+
+		const { hits } = await search(
+			home,
+			["Thermal throttle"],
+			rerankEnv({ "ninety five": 0.8 }),
+		);
+
+		const direct = hits.filter((hit) => hit.expanded !== true);
+		const expanded = hits.filter((hit) => hit.expanded === true);
+		expect(direct.map((hit) => hit.path)).toEqual(["note/cooling.md"]);
+		expect(direct[0].score).toBe(0.8);
+		expect(expanded.map((hit) => hit.path).sort()).toEqual([
+			"reference/airflow-curve.md",
+			"reference/dust.md",
+		]);
+		for (const hit of expanded) {
+			expect(hit.score).toBeLessThan(0.8);
+			expect(hit.fusedScore).toBeUndefined();
+			expect(hits.indexOf(hit)).toBeGreaterThan(hits.indexOf(direct[0]));
+		}
+	});
+
+	test("a failed request keeps the fused order and says so", async () => {
+		const home = await hybridHome();
+		const env = rerankEnv(
+			{ "ramps linearly": 0.9 },
+			{ LATTICE_RERANK_FAIL: "throttle" },
+		);
+
+		const fallen = await search(
+			home,
+			["Thermal throttle blower ramps", "--no-expand"],
+			env,
+		);
+
+		expect(fallen.code).toBe(0);
+		expect(fallen.reranked).toBe(false);
+		expect(fallen.rerank).toBeNull();
+		expect(fallen.rerankReason).toContain("stub reranking failed");
+		expect(fallen.hits.map((hit) => hit.path)).toEqual([
+			"note/cooling.md",
+			"reference/airflow-curve.md",
+		]);
+		expect(fallen.hits[0].fusedScore).toBeUndefined();
+
+		const human = await invoke(
+			["search", "Thermal throttle blower ramps", "--no-expand"],
+			home,
+			env,
+		);
+		expect(human.code).toBe(0);
+		expect(human.stdout).toContain("Not reranked: stub reranking failed");
+
+		const refused = await invoke(
+			["search", "Thermal throttle blower ramps", "--require-rerank", "--json"],
+			home,
+			env,
+		);
+		expect(refused.code).toBe(1);
+		expect(refused.stderr).toContain("--require-rerank");
+		expect(refused.stderr).toContain("stub reranking failed");
+
+		// A query the fault does not match reranks, and --require-rerank is content.
+		const allowed = await invoke(
+			["search", "blower ramps", "--require-rerank", "--json"],
+			home,
+			env,
+		);
+		expect(allowed.code).toBe(0);
+		expect(JSON.parse(allowed.stdout).reranked).toBe(true);
+	});
+
+	test("a reranker that cannot be built is refused, not skipped", async () => {
+		const home = await hybridHome();
+
+		const unknown = await invoke(["search", "XJ_4471"], home, {
+			...HYBRID_ENV,
+			LATTICE_RERANK_PROVIDER: "no-such-reranker",
+		});
+		expect(unknown.code).toBe(1);
+		expect(unknown.stderr).toContain("LATTICE_RERANK_PROVIDER");
+		expect(unknown.stderr).toContain("no-such-reranker");
+
+		const keyless = await invoke(["search", "XJ_4471"], home, {
+			...HYBRID_ENV,
+			LATTICE_RERANK_PROVIDER: "jev",
+			TYPESAFE_API_KEY: "",
+		});
+		expect(keyless.code).toBe(1);
+		expect(keyless.stderr).toContain("TYPESAFE_API_KEY");
+
+		const malformed = await invoke(["search", "XJ_4471"], home, {
+			...HYBRID_ENV,
+			LATTICE_RERANK_PROVIDER: "stub",
+			LATTICE_RERANK_STUB: "not json",
+		});
+		expect(malformed.code).toBe(1);
+		expect(malformed.stderr).toContain("LATTICE_RERANK_STUB");
+	});
+
+	test("--candidates below --limit is refused", async () => {
+		const home = await hybridHome();
+
+		const result = await invoke(
+			["search", "XJ_4471", "--limit", "5", "--candidates", "3"],
+			home,
+			HYBRID_ENV,
+		);
+
+		expect(result.code).toBe(1);
+		expect(result.stderr).toContain("--candidates");
+		expect(result.stderr).toContain("--limit");
+	});
+
+	test("--concepts reranks documents on their title, description and opening", async () => {
+		const home = await hybridHome();
+
+		// At concept level both documents tie on the vector leg and come back in
+		// path order, `note/acoustics.md` first. "ninety five" is in the cooling
+		// note's opening passage and nowhere in the acoustics note.
+		const fused = await search(
+			home,
+			["whisper mode", "--concepts", "--no-expand"],
+			HYBRID_ENV,
+		);
+		expect(fused.hits.map((hit) => hit.path)).toEqual([
+			"note/acoustics.md",
+			"note/cooling.md",
+		]);
+
+		const reranked = await search(
+			home,
+			["whisper mode", "--concepts", "--no-expand"],
+			rerankEnv({ "ninety five": 0.9 }),
+		);
+
+		expect(reranked.code).toBe(0);
+		expect(reranked.reranked).toBe(true);
+		expect(reranked.hits.map((hit) => hit.path)).toEqual([
+			"note/cooling.md",
+			"note/acoustics.md",
+		]);
+		expect(reranked.hits.map((hit) => hit.score)).toEqual([0.9, 0]);
+		expect(reranked.hits.every((hit) => hit.chunks.length === 0)).toBe(true);
 	});
 });
 

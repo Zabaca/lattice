@@ -14,10 +14,13 @@
  * nothing more — it says which document is about the question, which is a
  * weaker claim than which passage answers it.
  *
- * Results are grouped so no single long document can fill the page.
+ * Results are grouped so no single long document can fill the page. A
+ * configured reranker then reads the top of that list against the query and
+ * reorders it, before expansion adds neighbours below.
  */
 
 import type { Database } from "bun:sqlite";
+import type { Reranker } from "../rerank/provider.js";
 import { expand } from "./expand.js";
 import { conceptFilters, type SearchFilters } from "./filters.js";
 import { reciprocalRankFusion, tiebreakEpsilon } from "./fuse.js";
@@ -27,6 +30,7 @@ import {
 	type MatchMode,
 	termCoverage,
 } from "./query.js";
+import { type RerankInfo, type RerankInput, rerankStage } from "./rerank.js";
 import {
 	type CandidateRow,
 	CHUNK_COLUMNS,
@@ -45,6 +49,7 @@ import {
 } from "./vector.js";
 
 export type { SearchFilters } from "./filters.js";
+export type { RerankInfo } from "./rerank.js";
 export type { SearchChunk, SearchHit } from "./rows.js";
 
 /**
@@ -88,6 +93,10 @@ export interface SearchOptions extends SearchFilters {
 	semanticUnavailable?: string;
 	/** Neighbours of the top hits to add below them. Zero turns expansion off. */
 	expand: number;
+	/** The reranker to read the shortlist with, when one is configured. */
+	reranker?: Reranker;
+	/** How deep into the fused ranking the reranker reads; at least `limit`. */
+	candidates: number;
 }
 
 export interface SearchResult {
@@ -99,11 +108,20 @@ export interface SearchResult {
 	degraded: boolean;
 	/** Why, when it is degraded. */
 	degradedReason?: string;
+	/** True when a reranker reordered the direct hits. */
+	reranked: boolean;
+	/** What did the reranking, when something did. */
+	rerank: RerankInfo | null;
+	/** Why a configured reranker did not run, when it did not. */
+	rerankReason?: string;
 	/** Direct hits first, then whatever expansion reached from them. */
 	hits: SearchHit[];
 }
 
-export function search(db: Database, options: SearchOptions): SearchResult {
+export async function search(
+	db: Database,
+	options: SearchOptions,
+): Promise<SearchResult> {
 	const terms = extractTerms(options.query);
 	const semantic = usableSemantic(db, options);
 
@@ -120,28 +138,46 @@ export function search(db: Database, options: SearchOptions): SearchResult {
 			mode: keyword.mode,
 			degraded: semantic.degraded,
 			degradedReason: semantic.reason,
+			reranked: false,
+			rerank: null,
 			hits: [],
 		};
 	}
 
 	const scored = fuse(db, rows, keyword, vector, semantic.input, options);
-	const direct = group(rows, scored, options);
+	const candidates = group(rows, scored, options);
+	const { ordered, rerank, rerankReason } = await rerankStage(
+		options.reranker,
+		options.query,
+		candidates,
+		options.limit,
+	);
 
 	return {
 		terms,
 		mode: keyword.mode,
 		degraded: semantic.degraded,
 		degradedReason: semantic.reason,
+		reranked: rerank !== null,
+		rerank,
+		rerankReason,
 		hits: [
-			...direct.map((entry) => entry.hit),
+			...ordered.map((entry) => entry.hit),
 			...expand(
 				db,
-				direct.map((entry) => entry.hit),
-				direct.map((entry) => entry.conceptId),
+				ordered.map((entry) => entry.hit),
+				ordered.map((entry) => entry.conceptId),
 				{ ...options, semantic: semantic.input },
 			),
 		],
 	};
+}
+
+/** How far down the fused ranking is worth keeping: the page, or the reranker's pool. */
+function shortlistSize(options: SearchOptions): number {
+	return options.reranker === undefined
+		? options.limit
+		: Math.max(options.candidates, options.limit);
 }
 
 /**
@@ -156,10 +192,10 @@ export function search(db: Database, options: SearchOptions): SearchResult {
  * The keyword leg is the same one, read at document level: a document's
  * keyword standing is that of its best passage.
  */
-export function searchConcepts(
+export async function searchConcepts(
 	db: Database,
 	options: SearchOptions,
-): SearchResult {
+): Promise<SearchResult> {
 	const terms = extractTerms(options.query);
 	const semantic = usableSemantic(db, options);
 	const keyword = keywordLeg(db, terms, options);
@@ -183,7 +219,7 @@ export function searchConcepts(
 	]);
 
 	const rows = conceptRows(db, [...fused.keys()]);
-	const direct: { hit: SearchHit; conceptId: number }[] = [];
+	const direct: RerankInput[] = [];
 	for (const [conceptId, fusedScore] of fused) {
 		const row = rows.get(conceptId);
 		if (row === undefined) {
@@ -192,6 +228,9 @@ export function searchConcepts(
 		const stale = isStale(row.stale_after, options.asOf);
 		direct.push({
 			conceptId,
+			// A document, to the reranker, is what it calls itself, what it
+			// says it is about, and how it opens.
+			text: joinText([row.title, row.description, row.opening]),
 			hit: {
 				path: row.path,
 				identifier: row.identifier,
@@ -210,13 +249,18 @@ export function searchConcepts(
 	direct.sort(
 		(a, b) => b.hit.score - a.hit.score || (a.hit.path < b.hit.path ? -1 : 1),
 	);
-	const limited = direct.slice(0, options.limit);
+	const { ordered, rerank, rerankReason } = await rerankStage(
+		options.reranker,
+		options.query,
+		direct.slice(0, shortlistSize(options)),
+		options.limit,
+	);
 
 	// A neighbour is a document here too, so it arrives without its passage.
 	const expanded = expand(
 		db,
-		limited.map((entry) => entry.hit),
-		limited.map((entry) => entry.conceptId),
+		ordered.map((entry) => entry.hit),
+		ordered.map((entry) => entry.conceptId),
 		{ ...options, semantic: semantic.input },
 	).map((hit) => ({ ...hit, chunks: [] }));
 
@@ -225,8 +269,20 @@ export function searchConcepts(
 		mode: keyword.mode,
 		degraded: semantic.degraded,
 		degradedReason: semantic.reason,
-		hits: [...limited.map((entry) => entry.hit), ...expanded],
+		reranked: rerank !== null,
+		rerank,
+		rerankReason,
+		hits: [...ordered.map((entry) => entry.hit), ...expanded],
 	};
+}
+
+/** Non-empty parts as paragraphs. */
+function joinText(parts: (string | null | undefined)[]): string {
+	return parts
+		.filter((part): part is string => typeof part === "string")
+		.map((part) => part.trim())
+		.filter((part) => part !== "")
+		.join("\n\n");
 }
 
 /** Ids best first, by a score each of them has. */
@@ -245,6 +301,9 @@ interface ConceptRow {
 	status: string | null;
 	trust: string;
 	stale_after: string | null;
+	description: string | null;
+	/** The document's first passage, which is what a reranker reads of it. */
+	opening: string | null;
 }
 
 function conceptRows(
@@ -257,7 +316,10 @@ function conceptRows(
 	const placeholders = conceptIds.map(() => "?").join(", ");
 	const rows = db
 		.query<ConceptRow, number[]>(
-			`SELECT c.id, ${CONCEPT_COLUMNS} FROM concepts c WHERE c.id IN (${placeholders})`,
+			`SELECT c.id, ${CONCEPT_COLUMNS}, c.description,
+				(SELECT ch.content FROM chunks ch
+					WHERE ch.concept_id = c.id AND ch.ordinal = 0) AS opening
+			FROM concepts c WHERE c.id IN (${placeholders})`,
 		)
 		.all(...conceptIds);
 	return new Map(rows.map((row) => [row.id, row]));
@@ -498,14 +560,20 @@ function titleCandidates(
  *
  * A concept's score is its best passage's, so a document is ranked by the
  * strongest answer it holds rather than by how many times it repeats itself.
+ *
+ * Each entry also carries the text a reranker would read: the title and the
+ * passages the page shows, in full rather than as snippets.
  */
 function group(
 	rows: Map<number, CandidateRow>,
 	scores: Map<number, number>,
 	options: SearchOptions,
-): { hit: SearchHit; conceptId: number }[] {
+): RerankInput[] {
 	const terms = extractTerms(options.query);
-	const hits = new Map<number, SearchHit>();
+	const hits = new Map<
+		number,
+		{ hit: SearchHit; passages: { chunk: SearchChunk; content: string }[] }
+	>();
 
 	for (const [chunkId, score] of scores) {
 		const row = rows.get(chunkId);
@@ -514,46 +582,63 @@ function group(
 		}
 
 		const stale = isStale(row.stale_after, options.asOf);
-		const chunk: SearchChunk = {
-			ordinal: row.ordinal,
-			headingPath: row.heading_path ?? "",
-			startLine: row.start_line,
-			endLine: row.end_line,
-			startChar: row.start_char,
-			endChar: row.end_char,
-			snippet: snippetOf(row.content, terms),
-			score,
+		const passage = {
+			content: row.content,
+			chunk: {
+				ordinal: row.ordinal,
+				headingPath: row.heading_path ?? "",
+				startLine: row.start_line,
+				endLine: row.end_line,
+				startChar: row.start_char,
+				endChar: row.end_char,
+				snippet: snippetOf(row.content, terms),
+				score,
+			},
 		};
 
-		const hit = hits.get(row.concept_id);
-		if (hit === undefined) {
+		const entry = hits.get(row.concept_id);
+		if (entry === undefined) {
 			hits.set(row.concept_id, {
-				path: row.path,
-				identifier: row.identifier,
-				title: row.title,
-				type: row.type,
-				status: row.status,
-				trust: row.trust,
-				staleAfter: row.stale_after,
-				stale,
-				score,
-				chunks: [chunk],
+				hit: {
+					path: row.path,
+					identifier: row.identifier,
+					title: row.title,
+					type: row.type,
+					status: row.status,
+					trust: row.trust,
+					staleAfter: row.stale_after,
+					stale,
+					score,
+					chunks: [],
+				},
+				passages: [passage],
 			});
 			continue;
 		}
-		hit.chunks.push(chunk);
-		hit.score = Math.max(hit.score, score);
+		entry.passages.push(passage);
+		entry.hit.score = Math.max(entry.hit.score, score);
 	}
 
-	for (const hit of hits.values()) {
-		hit.chunks.sort(byScoreThenOrdinal);
-		hit.chunks = hit.chunks.slice(0, options.chunksPerConcept);
+	for (const entry of hits.values()) {
+		entry.passages.sort((a, b) => byScoreThenOrdinal(a.chunk, b.chunk));
+		entry.passages = entry.passages.slice(0, options.chunksPerConcept);
+		entry.hit.chunks = entry.passages.map((passage) => passage.chunk);
 	}
 
 	return [...hits.entries()]
-		.sort(([, a], [, b]) => b.score - a.score || (a.path < b.path ? -1 : 1))
-		.slice(0, options.limit)
-		.map(([conceptId, hit]) => ({ hit, conceptId }));
+		.sort(
+			([, a], [, b]) =>
+				b.hit.score - a.hit.score || (a.hit.path < b.hit.path ? -1 : 1),
+		)
+		.slice(0, shortlistSize(options))
+		.map(([conceptId, { hit, passages }]) => ({
+			hit,
+			conceptId,
+			text: joinText([
+				hit.title,
+				...passages.map((passage) => passage.content),
+			]),
+		}));
 }
 
 function byScoreThenOrdinal(a: SearchChunk, b: SearchChunk): number {

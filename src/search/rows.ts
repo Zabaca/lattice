@@ -33,6 +33,8 @@ export interface SearchHit {
 	staleAfter: string | null;
 	stale: boolean;
 	score: number;
+	/** The score before reranking, present only when a reranker reordered the page. */
+	fusedScore?: number;
 	/** Present only on a hit reached by expansion rather than by matching. */
 	expanded?: true;
 	/** Which answer it hangs off, and how. */

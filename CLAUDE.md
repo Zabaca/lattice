@@ -23,6 +23,8 @@ lattice sql      # Raw SQL queries
 lattice rels     # Show a concept's links, backlinks and unresolved links
 lattice web      # Search the web through Exa, for the research skill
 lattice run      # A judged search loop: plan, search index and web, judge, rewrite
+lattice research # The research skill as a command: judge the index, research the web,
+                 # write or extend the document, link it, sync, verify
 ```
 
 `lattice rels <concept>` takes either an OKF identifier (`bigquery-table/users`)
@@ -265,6 +267,36 @@ environment.
 | `LATTICE_OAUTH_TOKEN` | The same token under a name the Claude Code harness does not scrub from a Bash tool's environment; a skill running `lattice run` has to use this one. Forwarded to the SDK as `CLAUDE_CODE_OAUTH_TOKEN`. |
 | `LATTICE_JUDGE_PROVIDER` | Unset or `jev` (TypeSafe, needs `TYPESAFE_API_KEY`; model from `LATTICE_RERANK_MODEL`) or `stub`. Anything else is an error. |
 | `LATTICE_JUDGE_STUB` | With `stub`, a JSON array of `{ keep: [ref substrings], read?: [ref substrings], completeness, repeating, next, confidence }` consumed in order; the last repeats. Malformed is an error. |
+
+### Research
+
+`lattice research <topic>` is the research skill as a second state machine
+(`src/run/research.ts`) over the first:
+
+| State | Runs | Then |
+|---|---|---|
+| `index` | `runLoop` over the index alone | `assess` |
+| `assess` | pure code over what the index run kept: label "A complete answer" → `answered`, stop; else the first kept `research/` document → `extend` it; else `new`. The hub is the first kept `topic/` document, or none; a hub is never extended and never created. A `decide` exit falls through on `kept` the same way | `web` unless `answered` |
+| `web` | `runLoop` over the web alone on the index run's `tried`, so no second plan is paid; escalation as in `run`. No searcher → `reason`; `give_up` or nothing kept → `reason`; `decide` with something kept writes | `write` |
+| `write` | one writer call (`src/write/prompt.ts`): the topic, the decision, the existing document in full for `extend`, the kept web and index passages, the allowed `sources`, and the skill's document template and field rules verbatim | `check` |
+| `check` | pure code, before anything touches disk: a wrapping fence stripped; `parseConcept` + `conceptProblem` clean, `title`, `description` and a body present; `sources` filtered to the allowed set by resolved bundle path (`normalizeTarget`) and `canonicalUrl`, the rest in `droppedSources`, the hub added if missing, an extension's sources kept as written; frontmatter rewritten with gray-matter (`status: draft`, `generated: { by: agent:lattice/research, at }`, unknown fields such as `verified` kept); path `research/<slug(title)>.md` (`typeDirectory` on the title, `-2`, `-3` on collision) or the existing path. One retry with the problems appended; a second refusal is exit 1 with `draft` in the JSON and nothing written | `link` |
+| `link` | the file written; the hub re-read and `- [[/research/<slug>]] — <description>` appended to its `## Research` section (created at the end if absent) unless a line already targets it | `sync` |
+| `sync` | the search connection closed, then `syncBundle` (the sync command's own code: lock, space check, plan, apply, embed) with the provider the command built; problems on the written path or the hub are an error | `verify` |
+| `verify` | a fresh connection and `relationsFor` on the document: outlinks, backlinks, unresolved as paths | exit 0 |
+
+`--json` is `{ topic, decision, index: { exit, tried, completeness,
+completenessLabel, kept: [path] }, web: { …, kept: [{ ref, leg?, read? }] }
+| null, document: { path, action: written | extended, title, hub, sources,
+droppedSources, outlinks, backlinks, unresolved } | null, reason, cost: {
+llmUsd, llmCalls, jevInputTokens, webUsd, writeUsd, writeCalls },
+webReason, draft? }`. Exit 0 is the loop finishing, whatever it decided.
+The `/research-jev` skill is two steps: run this, present the JSON.
+
+| Variable | Meaning |
+|---|---|
+| `LATTICE_WRITE_PROVIDER` | `claude` (default) or `stub`. Anything else is an error. |
+| `LATTICE_WRITE_MODEL` | The model that writes the document; default `claude-sonnet-5`. The planner stays on `LATTICE_LLM_MODEL`. `claude` runs with `CLAUDE_CODE_MAX_OUTPUT_TOKENS` at 16000 and a $1 budget, so an extension echoing a long document is not cut. |
+| `LATTICE_WRITE_STUB` | With `stub`, a JSON array of documents returned in order, the last repeating. Separate from `LATTICE_LLM_STUB` so a test's queries and its documents are not one positional list. Malformed is an error. |
 
 ## Links
 

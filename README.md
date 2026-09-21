@@ -261,6 +261,31 @@ index. `LATTICE_LLM_PROVIDER=stub` with `LATTICE_LLM_STUB` (a JSON array of
 completions) and `LATTICE_JUDGE_PROVIDER=stub` with `LATTICE_JUDGE_STUB` (a
 JSON array of verdicts) exist for tests.
 
+### `lattice research`
+
+The research skill as one command. The judged loop runs over the index; from
+what the judge kept the command decides `answered` (a complete answer is
+already indexed; nothing is written), `extend` (a research document it kept
+has most of the answer) or `new`. Unless answered, the loop runs again over
+the web on the same queries, a model (Sonnet by default) writes or extends the
+document from the kept passages, the command checks it — type, title,
+description, `sources` cut to what the run actually read — files it under
+`research/`, cites the topic hub and links back from the hub's `## Research`
+section, syncs, and reads the document's links back. `/research-jev` is the
+skill built on it: run, then present.
+
+```bash
+lattice research "reciprocal rank fusion tie handling"          # decision, what was written where, hub, rels, cost
+lattice research "what Exa's deep search type costs" --json     # { topic, decision, index, web, document, reason, cost, webReason }
+lattice research "topic" --max-rewrites 0                        # One round per loop
+```
+
+Exit 0 is the loop finishing, whatever it decided; `reason` says why nothing
+was written when nothing was. A document the writer gets wrong twice is exit
+1 with the `draft` in the JSON and nothing on disk. It needs what `lattice
+run` needs, and `LATTICE_WRITE_PROVIDER=stub` with `LATTICE_WRITE_STUB` (a
+JSON array of documents) exists for tests.
+
 ### `lattice rels`
 
 Show what a document is connected to: the documents it links to, the documents
@@ -315,6 +340,8 @@ lattice sql "SELECT type, count(*) AS n FROM concepts GROUP BY type"
 | `LATTICE_OAUTH_TOKEN` | The same token under a name a Claude Code session's Bash tool can see; skills need this one | unset |
 | `LATTICE_LLM_PROVIDER` | `claude`, or `stub` for tests (with `LATTICE_LLM_STUB`) | `claude` |
 | `LATTICE_LLM_MODEL` | The model `lattice run` plans and rewrites with | `claude-haiku-4-5` |
+| `LATTICE_WRITE_PROVIDER` | `claude`, or `stub` for tests (with `LATTICE_WRITE_STUB`); the writer `lattice research` calls once | `claude` |
+| `LATTICE_WRITE_MODEL` | The model `lattice research` writes the document with | `claude-sonnet-5` |
 | `LATTICE_CLAUDE_PATH` | A Claude Code executable for the SDK to run, when not the bundled one | unset |
 | `LATTICE_JUDGE_PROVIDER` | `jev`, or `stub` for tests (with `LATTICE_JUDGE_STUB`) | `jev` |
 

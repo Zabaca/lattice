@@ -113,8 +113,10 @@ lattice run "<topic>" --no-index --json
 The index was searched in Step 1 and is not searched again; the judge reads
 Exa's pages, so `completenessLabel` is about what the web adds. The entries
 in `kept` are the Exa sources: their `ref` is a URL and `text` the
-highlights Exa picked out; cite the URLs and quote from the highlights
-without fetching the pages. Reuse this run's `tried` as the WebSearch
+highlights Exa picked out, or, for an entry with `read: true`, the passages
+of the page that best answer the question, chosen after the runner read the
+page in full. Cite the URLs and quote from the text without fetching the
+pages. Reuse this run's `tried` as the WebSearch
 queries below rather than inventing new ones.
 
 Exa answers a described need well and a literal string badly. Send an error

@@ -2806,6 +2806,123 @@ describe("lattice run", () => {
 		expect(neither.stderr).toContain("nothing to search");
 	});
 
+	test("a page dropped on its excerpt is read in full when the judge asks, and judged again on its best passages", async () => {
+		const home = await bundledHome();
+		await invoke(["sync"], home);
+		// A long reference page: the excerpt Exa picked is about a backing
+		// table, and the section that answers the question is far down.
+		const page = [
+			"# The FTS5 extension",
+			"",
+			"FTS5 maintains a special backing table that stores the size of each column value in tokens. ".repeat(
+				6,
+			),
+			"",
+			"## Tokenizers",
+			"",
+			"The unicode61 tokenizer is the default and splits on whitespace and punctuation. ".repeat(
+				6,
+			),
+			"",
+			"## Auxiliary functions",
+			"",
+			"Auxiliary functions such as bm25 may only be used within full-text queries that use the MATCH operator, so a window function cannot call bm25 directly and the rank must be computed in a subquery first. ".repeat(
+				3,
+			),
+			"",
+			"## Contentless tables",
+			"",
+			"A contentless table stores no column values and cannot return them. ".repeat(
+				6,
+			),
+		].join("\n");
+		const env = runEnv(
+			['{"queries": ["users table"]}'],
+			[
+				// First visit: the excerpt says nothing, but the page is worth reading.
+				{
+					...ANSWER,
+					keep: [],
+					read: ["fts5"],
+					next: "rewrite",
+					completeness: 0.5,
+				},
+				// Second visit, over the passages: keep it and answer.
+				{ ...ANSWER, keep: ["fts5"] },
+			],
+			{
+				LATTICE_WEB_STUB: JSON.stringify([
+					{
+						title: "SQLite FTS5 Extension",
+						url: "https://sqlite.org/fts5.html",
+						highlights: ["FTS5 maintains a special backing table."],
+						text: page,
+					},
+					{
+						title: "Unrelated",
+						url: "https://example.com/unrelated",
+						highlights: ["Nothing here."],
+					},
+				]),
+			},
+		);
+
+		const result = await invoke(
+			[
+				"run",
+				"how does bm25 rank inside a window function",
+				"--json",
+				"--no-index",
+			],
+			home,
+			env,
+		);
+		expect(result.code).toBe(0);
+		const parsed = JSON.parse(result.stdout);
+		expect(parsed.exit).toBe("answer");
+		expect(parsed.records.map((r: { read: string[] }) => r.read)).toEqual([
+			[],
+			["https://sqlite.org/fts5.html"],
+		]);
+		expect(parsed.records[1].candidates).toBe(1);
+		expect(parsed.kept).toHaveLength(1);
+		expect(parsed.kept[0].read).toBe(true);
+		// The passages are the best-ranked sections, not the whole page: the
+		// rule that shares the question's words is in, the tokenizer section
+		// that shares none is out.
+		expect(parsed.kept[0].text).toContain("computed in a subquery first");
+		expect(parsed.kept[0].text).not.toContain("unicode61");
+		expect(parsed.kept[0].text.split("\n## ").length).toBeLessThanOrEqual(3);
+
+		const rendered = await invoke(
+			["run", "how does bm25 rank inside a window function", "--no-index"],
+			home,
+			env,
+		);
+		expect(rendered.stdout).toContain("[web, read] SQLite FTS5 Extension");
+	});
+
+	test("a page that cannot be read keeps its excerpt's verdict, and a read page is never read twice", async () => {
+		const home = await bundledHome();
+		await invoke(["sync"], home);
+		const env = runEnv(
+			['{"queries": ["users table"]}'],
+			// The judge keeps asking for the page; the stub has no text for it.
+			[{ ...ANSWER, keep: [], read: ["exa-limits"], next: "give_up" }],
+		);
+
+		const result = await invoke(
+			["run", "what tables exist", "--json", "--no-index"],
+			home,
+			env,
+		);
+		expect(result.code).toBe(0);
+		const parsed = JSON.parse(result.stdout);
+		expect(parsed.exit).toBe("give_up");
+		expect(parsed.records).toHaveLength(1);
+		expect(parsed.kept).toEqual([]);
+	});
+
 	test("web pages are merged with the index and the same page under two spellings is one candidate", async () => {
 		const home = await bundledHome();
 		await invoke(["sync"], home);

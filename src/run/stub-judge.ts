@@ -3,8 +3,10 @@
  *
  * `LATTICE_JUDGE_STUB` is a JSON array of verdicts consumed one per visit to
  * the `judge` state, the last repeating once they run out. Each is
- * `{ keep, completeness, repeating, next, confidence }`, where `keep` lists
- * substrings: a candidate is kept when its ref contains one of them.
+ * `{ keep, completeness, repeating, next, confidence, read? }`, where `keep`
+ * and `read` list substrings: a candidate is kept when its ref contains one
+ * of `keep`, and a web candidate not kept is read in full when its ref
+ * contains one of `read`.
  *
  * It is named `stub` in the environment so it can never be selected by
  * accident.
@@ -23,6 +25,7 @@ export const STUB_VERDICTS_VAR = "LATTICE_JUDGE_STUB";
 
 export interface StubVerdict {
 	keep: string[];
+	read?: string[];
 	completeness: number;
 	repeating: number;
 	next: Transition;
@@ -55,10 +58,24 @@ export class StubJudge implements Judge {
 			probabilities[transition] =
 				transition === scripted.next ? scripted.confidence : rest;
 		}
-		return {
-			kept: candidates
+		const keptSet = new Set(
+			candidates
 				.filter((candidate) =>
 					scripted.keep.some((needle) => candidate.ref.includes(needle)),
+				)
+				.map((candidate) => candidate.ref),
+		);
+		return {
+			kept: [...keptSet],
+			read: candidates
+				.filter(
+					(candidate) =>
+						candidate.source === "web" &&
+						candidate.read !== true &&
+						!keptSet.has(candidate.ref) &&
+						(scripted.read ?? []).some((needle) =>
+							candidate.ref.includes(needle),
+						),
 				)
 				.map((candidate) => candidate.ref),
 			completeness: scripted.completeness,
@@ -115,6 +132,9 @@ function isVerdict(value: unknown): value is StubVerdict {
 	return (
 		Array.isArray(v.keep) &&
 		v.keep.every((needle) => typeof needle === "string") &&
+		(v.read === undefined ||
+			(Array.isArray(v.read) &&
+				v.read.every((needle) => typeof needle === "string"))) &&
 		typeof v.completeness === "number" &&
 		typeof v.repeating === "number" &&
 		typeof v.next === "string" &&

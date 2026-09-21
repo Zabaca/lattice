@@ -1,8 +1,8 @@
 /**
  * TypeSafe's Jev as the runner's judge: one request per visit to the `judge`
- * state, with a Noul per candidate, a Score for completeness, a Noul for
- * whether the queries are going round in circles, and a Choice for what to
- * do next. Every question sees the same state, so the candidates are read
+ * state, with a Noul per candidate, a second Noul per web page still known
+ * only by its excerpt, a Score for completeness, a Noul for whether the
+ * queries are going round in circles, and a Choice for what to do next. Every question sees the same state, so the candidates are read
  * against each other and against the queries that found them.
  */
 
@@ -30,12 +30,26 @@ import {
 
 /** Noul probability a candidate needs to be kept. */
 const KEEP_BAR = 0.5;
+/**
+ * Noul probability below which a dropped page is not worth reading. It is a
+ * floor, not a bar: Jev's answers to this question sit in a narrow band, so
+ * the pages above it are ranked and the runner reads the best few.
+ */
+const READ_FLOOR = 0.3;
 /** How much of a candidate Jev reads; a page's highlights fit, a page does not. */
 const TEXT_LIMIT = 1500;
+/** A page read in full arrives as a few ranked passages, which are worth more room. */
+const READ_TEXT_LIMIT = 6000;
 
 const RELEVANCE = {
 	true: "It states a specific fact or design the question asks about.",
 	false: "It is only on a related topic or too vague to cite.",
+};
+
+const WORTH_READING = {
+	true: "The page as a whole probably covers what the question asks, and the excerpt is just the wrong part of it.",
+	false:
+		"The page is off the topic, or the excerpt already shows what it has to say.",
 };
 
 const TRANSITIONS = {
@@ -66,11 +80,18 @@ export class JevJudge implements Judge {
 	): Promise<Verdict> {
 		const ids = candidates.map((_, index) => `c${index + 1}`);
 		const perCandidate: Record<string, ReturnType<typeof noul>> = {};
-		ids.forEach((id) => {
+		ids.forEach((id, index) => {
 			perCandidate[id] = noul(
 				`Does candidate ${id} contain information that answers the research question?`,
 				RELEVANCE,
 			);
+			const candidate = candidates[index];
+			if (candidate.source === "web" && candidate.read !== true) {
+				perCandidate[`${id}_read`] = noul(
+					`Judging by its title and excerpt, would the full page behind candidate ${id} be worth reading for the research question?`,
+					WORTH_READING,
+				);
+			}
 		});
 		const questions = {
 			...perCandidate,
@@ -94,7 +115,11 @@ export class JevJudge implements Judge {
 						id: ids[index],
 						source: candidate.source,
 						title: candidate.title,
-						text: candidate.text.slice(0, TEXT_LIMIT),
+						...(candidate.read === true ? { read: true } : {}),
+						text: candidate.text.slice(
+							0,
+							candidate.read === true ? READ_TEXT_LIMIT : TEXT_LIMIT,
+						),
 					})),
 				},
 				questions,
@@ -124,12 +149,21 @@ export class JevJudge implements Judge {
 			  }
 		>;
 		const kept: string[] = [];
+		const worthReading: { ref: string; probability: number }[] = [];
 		candidates.forEach((candidate, index) => {
 			const answer = answers[ids[index]];
 			if (answer?.type === "noul" && answer.noul >= KEEP_BAR) {
 				kept.push(candidate.ref);
+				return;
+			}
+			const worth = answers[`${ids[index]}_read`];
+			if (worth?.type === "noul" && worth.noul >= READ_FLOOR) {
+				worthReading.push({ ref: candidate.ref, probability: worth.noul });
 			}
 		});
+		const read = worthReading
+			.sort((a, b) => b.probability - a.probability)
+			.map((entry) => entry.ref);
 		const completeness = answers.completeness;
 		const repeating = answers.repeating;
 		const next = answers.next;
@@ -142,6 +176,7 @@ export class JevJudge implements Judge {
 		}
 		return {
 			kept,
+			read,
 			completeness: completeness.score,
 			completenessLabel:
 				completeness.legend[String(Math.round(completeness.score))] ??

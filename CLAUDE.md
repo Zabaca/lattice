@@ -190,7 +190,7 @@ reads `secrets.yaml`; the skill says how to export the key.
 | `EXA_API_KEY` | Required by the `exa` searcher. |
 | `EXA_BASE_URL` | Where the request goes; default `https://api.exa.ai`. |
 | `LATTICE_WEB_PROVIDER` | Unset or `exa` (the real one) or `stub`. Anything else is an error. |
-| `LATTICE_WEB_STUB` | With `stub`, a JSON array of `{ title, url, highlights }` returned in that order. Malformed is an error. |
+| `LATTICE_WEB_STUB` | With `stub`, a JSON array of `{ title, url, highlights, text? }` returned in that order; `text` is what a read of that page returns. Malformed is an error. |
 | `LATTICE_WEB_FAIL` | With `stub`, a substring; a query containing it makes the request throw. |
 
 ## Runner
@@ -207,13 +207,16 @@ run in one process:
 |---|---|---|
 | `plan` | the LLM writes two queries; skipped when `--tried` gives them | `search` |
 | `search` | each query over `search()` (limit 5, no expand) unless `--no-index`, and the web searcher (limit 5, type `fast`) unless `--no-web`; merged, first occurrence kept. Both flags together is exit 1 | `judge` |
-| `judge` | one Jev request: a Noul per candidate, a four-level completeness Score, a repeating Noul, a Choice `answer\|rewrite\|give_up` | the policy |
+| `judge` | one Jev request: a Noul per candidate, a second Noul per web page still known only by its excerpt (worth reading in full?), a four-level completeness Score, a repeating Noul, a Choice `answer\|rewrite\|give_up` | `read` if it named pages, else the policy |
+| `read` | up to 2 dropped pages the judge wanted in full: fetched through the web searcher's `read`, chunked at headings like an indexed document, the chunks ranked against the question (shared words, plus cosine when the embedding model is available, fused by rank), the top 3 passages replacing the excerpt | `judge`, once, over the kept set plus the read pages |
 | `rewrite` | the LLM writes two new queries from the tried list and the reason | `search` |
 
 The judge reads everything kept so far plus the round's new finds, so
 completeness is about the whole set; a candidate's own relevance is settled
 the first time it is read, because Jev's verdict on a page flips between
-reads. Index hits dedupe by path, web pages by canonical URL (scheme, `www.`,
+reads. A page read in full is the one exception: its text has changed, so it
+returns once, marked `read: true`, and a page that cannot be read keeps its
+excerpt's verdict. Index hits dedupe by path, web pages by canonical URL (scheme, `www.`,
 trailing slash and fragment dropped, host lowercased).
 
 The policy (`transition`), in order:
@@ -233,8 +236,9 @@ goes on over the index, as `search` does without its semantic leg. No index
 is exit 1; no judge or no model is exit 1 naming the variable; a TypeSafe
 key the service rejects is a hard error, as in the reranker. `--json` is
 `{ question, exit, tried, completeness, completenessLabel, kept: [{ source,
-title, ref, text }], records: [...], cost: { llmUsd, llmCalls,
-jevInputTokens, webUsd }, webReason }`, one record per judge visit.
+title, ref, text, read? }], records: [...], cost: { llmUsd, llmCalls,
+jevInputTokens, webUsd }, webReason }`, one record per judge visit, each
+with `read`: the pages read in full before it, empty for a first visit.
 
 The `claude` text provider runs the Claude Agent SDK with the minimal option
 set from zbc's `@zabaca/agent` (`tools: []`, `settingSources: []`, thinking
@@ -252,7 +256,7 @@ environment.
 | `CLAUDE_CODE_OAUTH_TOKEN` | Required by `claude` unless `LATTICE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` is set; missing all three is an error naming them. |
 | `LATTICE_OAUTH_TOKEN` | The same token under a name the Claude Code harness does not scrub from a Bash tool's environment; a skill running `lattice run` has to use this one. Forwarded to the SDK as `CLAUDE_CODE_OAUTH_TOKEN`. |
 | `LATTICE_JUDGE_PROVIDER` | Unset or `jev` (TypeSafe, needs `TYPESAFE_API_KEY`; model from `LATTICE_RERANK_MODEL`) or `stub`. Anything else is an error. |
-| `LATTICE_JUDGE_STUB` | With `stub`, a JSON array of `{ keep: [ref substrings], completeness, repeating, next, confidence }` consumed in order; the last repeats. Malformed is an error. |
+| `LATTICE_JUDGE_STUB` | With `stub`, a JSON array of `{ keep: [ref substrings], read?: [ref substrings], completeness, repeating, next, confidence }` consumed in order; the last repeats. Malformed is an error. |
 
 ## Links
 

@@ -1,9 +1,11 @@
 import { existsSync } from "node:fs";
 import { openDatabase } from "../../db/open.js";
+import { selectProvider } from "../../embed/provider.js";
 import { checkActiveSpace } from "../../embed/state.js";
 import { selectTextProvider, type TextProvider } from "../../llm/provider.js";
 import { RerankConfigurationError } from "../../rerank/provider.js";
 import { type Candidate, type Judge, selectJudge } from "../../run/judge.js";
+import { type PassageEmbedder, passagesFor } from "../../run/read.js";
 import {
 	DEFAULT_MAX_REWRITES,
 	type RunnerDeps,
@@ -79,6 +81,20 @@ export async function runRun(context: CommandContext): Promise<CommandOutput> {
 	}
 
 	const question = context.positionals[0];
+	// The model that ranks a read page's passages is the same one the index
+	// uses, when it can be had; without it the keyword leg ranks alone, as a
+	// search without its semantic leg does.
+	let passageEmbedder: PassageEmbedder | undefined | null = null;
+	const embedder = (): PassageEmbedder | undefined => {
+		if (passageEmbedder === null) {
+			try {
+				passageEmbedder = selectProvider(context.env, context.report);
+			} catch {
+				passageEmbedder = undefined;
+			}
+		}
+		return passageEmbedder;
+	};
 	const tried = text(context.flags.tried)
 		?.split(",")
 		.map((query) => query.trim())
@@ -160,6 +176,16 @@ export async function runRun(context: CommandContext): Promise<CommandOutput> {
 								costUsd: response.cost,
 							};
 						},
+			readPage:
+				web === undefined
+					? undefined
+					: async (question, url) => {
+							const page = await web.read(url);
+							return {
+								passages: await passagesFor(question, page.text, embedder()),
+								costUsd: page.cost,
+							};
+						},
 			judge,
 			llm,
 		};
@@ -204,8 +230,10 @@ function render(result: RunResult): string {
 		lines.push("Nothing kept.");
 	}
 	result.kept.forEach((candidate, index) => {
+		const source =
+			candidate.read === true ? `${candidate.source}, read` : candidate.source;
 		lines.push(
-			`${index + 1}. [${candidate.source}] ${candidate.title} — ${candidate.ref}`,
+			`${index + 1}. [${source}] ${candidate.title} — ${candidate.ref}`,
 		);
 	});
 	lines.push("");

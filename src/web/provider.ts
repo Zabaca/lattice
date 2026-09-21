@@ -58,9 +58,19 @@ export interface WebResponse {
 	requestId: string | null;
 }
 
+/** One page in full, for the runner's `read` state. */
+export interface WebPage {
+	url: string;
+	text: string;
+	/** What the fetch cost in dollars, when the service says. */
+	cost: number | null;
+}
+
 export interface WebSearcher {
 	readonly name: string;
 	search(request: WebRequest): Promise<WebResponse>;
+	/** The page's text, when the searcher can fetch it. Throws when it cannot. */
+	read(url: string): Promise<WebPage>;
 }
 
 /**

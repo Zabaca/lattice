@@ -1,10 +1,14 @@
 /**
  * The search loop as a state machine.
  *
- *   plan → search → judge → { answer | rewrite → search … | give_up | decide }
+ *   plan → search → judge → [read → judge] → { answer | rewrite → search … | give_up | decide }
  *
  * Code drives, the judge judges, and a language model is called only in the
- * two states that turn prose into queries. The judge's verdict is advice; the
+ * two states that turn prose into queries. `read` is the one state that
+ * goes back to the web for more of a page: a search excerpt is one short
+ * highlight, and when the judge drops a page while saying the page itself
+ * probably holds the answer, the page is fetched, chunked and ranked, and
+ * the judge reads the best passages instead. The judge's verdict is advice; the
  * policy in `transition` is what moves the machine, and it corrects the one
  * habit the spike showed — a judge that says `answer` over a set it itself
  * rated incomplete. A rewrite is bounded by the budget and by the repeating
@@ -26,6 +30,8 @@ const REPEATING_BAR = 0.7;
 const COMPLETE_ENOUGH = 2;
 /** Choice confidence needed to follow the judge; below it the caller decides. */
 const CONFIDENCE_BAR = 0.6;
+/** Pages read in full after one judge visit; a bad round must not read the whole web. */
+const READ_BUDGET = 2;
 
 export type Exit = Transition | "decide";
 
@@ -34,11 +40,19 @@ export interface WebSearch {
 	costUsd: number | null;
 }
 
+export interface PageRead {
+	/** The page's best passages for the question, in page order. */
+	passages: string[];
+	costUsd: number | null;
+}
+
 export interface RunnerDeps {
 	/** Absent when the caller asked for the web alone. */
 	searchIndex?(query: string): Promise<Candidate[]>;
 	/** Absent when the caller asked for the index alone. Throwing is not fatal to the run. */
 	searchWeb?(query: string): Promise<WebSearch>;
+	/** Absent when pages cannot be read in full. Throwing costs that page, not the run. */
+	readPage?(question: string, url: string): Promise<PageRead>;
 	judge: Judge;
 	llm: TextProvider;
 }
@@ -52,6 +66,8 @@ export interface RunOptions {
 
 export interface JudgeRecord {
 	queries: string[];
+	/** Pages read in full before this visit, when it is a re-read of them. */
+	read: string[];
 	/** How many candidates the judge read: everything kept so far plus this round's finds. */
 	candidates: number;
 	/** Everything kept so far, after this verdict. */
@@ -149,25 +165,76 @@ export async function runLoop(
 		// set is judged whole, so completeness is about everything kept; a
 		// candidate's own relevance is settled the first time the judge reads
 		// it, because the spike showed that verdict flipping on a re-read.
-		const candidates = dedupe([...kept, ...fresh]);
-		verdict = await deps.judge.judge(question, tried, candidates);
-		cost.jevInputTokens += verdict.inputTokens;
-		const keptRefs = new Set(verdict.kept);
-		const keptNow = fresh.filter((candidate) => keptRefs.has(candidate.ref));
-		kept = dedupe([...kept, ...keptNow]);
-		records.push({
-			queries,
-			candidates: candidates.length,
-			kept: kept.map((candidate) => candidate.ref),
-			dropped: fresh.length - keptNow.length,
-			completeness: verdict.completeness,
-			repeating: verdict.repeating,
-			next: verdict.next,
-			confidence: verdict.confidence,
-			probabilities: verdict.probabilities,
-			model: verdict.model,
-			inputTokens: verdict.inputTokens,
-		});
+		// The one exception is a page read in full: its text has changed, so
+		// it comes back once as a new candidate.
+		let round = fresh;
+		let read: string[] = [];
+		let candidates: Candidate[];
+		for (;;) {
+			candidates = dedupe([...kept, ...round]);
+			verdict = await deps.judge.judge(question, tried, candidates);
+			cost.jevInputTokens += verdict.inputTokens;
+			const keptRefs = new Set(verdict.kept);
+			const keptNow = round.filter((candidate) => keptRefs.has(candidate.ref));
+			kept = dedupe([...kept, ...keptNow]);
+			records.push({
+				queries,
+				read,
+				candidates: candidates.length,
+				kept: kept.map((candidate) => candidate.ref),
+				dropped: round.length - keptNow.length,
+				completeness: verdict.completeness,
+				repeating: verdict.repeating,
+				next: verdict.next,
+				confidence: verdict.confidence,
+				probabilities: verdict.probabilities,
+				model: verdict.model,
+				inputTokens: verdict.inputTokens,
+			});
+
+			// read: the pages the judge dropped on their excerpt but wants in
+			// full, the likeliest few. A page that cannot be read is dropped as
+			// its excerpt was; the run goes on.
+			if (deps.readPage === undefined || read.length > 0) {
+				break;
+			}
+			const byRef = new Map(
+				round.map((candidate) => [candidate.ref, candidate]),
+			);
+			const reread: Candidate[] = [];
+			for (const ref of verdict.read) {
+				if (reread.length >= READ_BUDGET) {
+					break;
+				}
+				const candidate = byRef.get(ref);
+				if (
+					candidate === undefined ||
+					candidate.source !== "web" ||
+					candidate.read === true ||
+					keptRefs.has(candidate.ref)
+				) {
+					continue;
+				}
+				try {
+					const page = await deps.readPage(question, candidate.ref);
+					cost.webUsd += page.costUsd ?? 0;
+					const full: Candidate = {
+						...candidate,
+						text: page.passages.join("\n\n"),
+						read: true,
+					};
+					seen.set(candidateKey(full), full);
+					reread.push(full);
+				} catch {
+					// The excerpt's verdict stands.
+				}
+			}
+			if (reread.length === 0) {
+				break;
+			}
+			round = reread;
+			read = reread.map((candidate) => candidate.ref);
+		}
 
 		const next = transition(verdict, rewrites, options.maxRewrites);
 		if (next === "exhausted") {

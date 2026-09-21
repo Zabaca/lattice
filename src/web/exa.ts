@@ -7,6 +7,7 @@
  */
 
 import type {
+	WebPage,
 	WebRequest,
 	WebResponse,
 	WebResult,
@@ -19,6 +20,8 @@ export const DEFAULT_BASE_URL = "https://api.exa.ai";
 
 /** Page text is capped so one result cannot fill the reader's context. */
 const TEXT_MAX_CHARACTERS = 4000;
+/** A page read in full is chunked and ranked before anyone reads it, so the cap is the service's. */
+const READ_MAX_CHARACTERS = 500_000;
 
 /** The shape of Exa's response, as much of it as is read. */
 interface ExaResponse {
@@ -70,9 +73,43 @@ export class ExaSearcher implements WebSearcher {
 			body.startPublishedDate = request.since;
 		}
 
+		const parsed = await this.post("/search", body);
+		const results: WebResult[] = (parsed.results ?? []).map((result) => ({
+			title: result.title ?? null,
+			url: result.url,
+			publishedDate: result.publishedDate ?? null,
+			author: result.author ?? null,
+			highlights: result.highlights ?? [],
+			...(result.text !== undefined ? { text: result.text } : {}),
+		}));
+		return {
+			results,
+			cost: parsed.costDollars?.total ?? null,
+			searchTime: parsed.searchTime ?? null,
+			requestId: parsed.requestId ?? null,
+		};
+	}
+
+	/** One `POST /contents` for the page's text. */
+	async read(url: string): Promise<WebPage> {
+		const parsed = await this.post("/contents", {
+			urls: [url],
+			text: { maxCharacters: READ_MAX_CHARACTERS },
+		});
+		const page = parsed.results?.[0];
+		if (page?.text === undefined || page.text === "") {
+			throw new Error(`Exa returned no text for ${url}`);
+		}
+		return { url, text: page.text, cost: parsed.costDollars?.total ?? null };
+	}
+
+	private async post(
+		path: string,
+		body: Record<string, unknown>,
+	): Promise<ExaResponse> {
 		let response: Response;
 		try {
-			response = await fetch(`${this.baseUrl}/search`, {
+			response = await fetch(`${this.baseUrl}${path}`, {
 				method: "POST",
 				headers: {
 					"content-type": "application/json",
@@ -90,26 +127,10 @@ export class ExaSearcher implements WebSearcher {
 				`Could not reach Exa at ${this.baseUrl}: ${cause ?? message}`,
 			);
 		}
-
 		if (!response.ok) {
 			throw new Error(await describeFailure(response));
 		}
-
-		const parsed = (await response.json()) as ExaResponse;
-		const results: WebResult[] = (parsed.results ?? []).map((result) => ({
-			title: result.title ?? null,
-			url: result.url,
-			publishedDate: result.publishedDate ?? null,
-			author: result.author ?? null,
-			highlights: result.highlights ?? [],
-			...(result.text !== undefined ? { text: result.text } : {}),
-		}));
-		return {
-			results,
-			cost: parsed.costDollars?.total ?? null,
-			searchTime: parsed.searchTime ?? null,
-			requestId: parsed.requestId ?? null,
-		};
+		return (await response.json()) as ExaResponse;
 	}
 }
 

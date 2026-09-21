@@ -1,8 +1,9 @@
 /**
  * A web searcher that can be told what the web says.
  *
- * `LATTICE_WEB_STUB` is a JSON array of `{ title, url, highlights }`, returned
- * in that order and cut to the request's limit. `LATTICE_WEB_FAIL` names a
+ * `LATTICE_WEB_STUB` is a JSON array of `{ title, url, highlights, text? }`,
+ * returned in that order and cut to the request's limit; `text` is what a
+ * read of that page returns, and a page without one cannot be read. `LATTICE_WEB_FAIL` names a
  * substring that makes the request throw when the query contains it, which
  * is the only way to exercise the failure path without a network to lose.
  *
@@ -11,6 +12,7 @@
  */
 
 import type {
+	WebPage,
 	WebRequest,
 	WebResponse,
 	WebResult,
@@ -36,11 +38,21 @@ export class StubSearcher implements WebSearcher {
 			throw new Error(`injected failure on "${this.failOn}"`);
 		}
 		return {
-			results: this.results.slice(0, request.limit),
+			results: this.results
+				.slice(0, request.limit)
+				.map(({ text: _text, ...result }) => result),
 			cost: 0,
 			searchTime: 0,
 			requestId: null,
 		};
+	}
+
+	async read(url: string): Promise<WebPage> {
+		const page = this.results.find((result) => result.url === url);
+		if (page?.text === undefined) {
+			throw new Error(`stub has no text for ${url}`);
+		}
+		return { url, text: page.text, cost: 0 };
 	}
 }
 
@@ -75,19 +87,25 @@ export function stubSearcherFromEnv(
 			publishedDate: null,
 			author: null,
 			highlights: result.highlights,
+			...(result.text !== undefined ? { text: result.text } : {}),
 		})),
 		env[STUB_FAIL_VAR]?.trim() || undefined,
 	);
 }
 
-function isStubResult(
-	value: unknown,
-): value is { title: string; url: string; highlights: string[] } {
+function isStubResult(value: unknown): value is {
+	title: string;
+	url: string;
+	highlights: string[];
+	text?: string;
+} {
+	const text = (value as { text?: unknown }).text;
 	return (
 		typeof value === "object" &&
 		value !== null &&
 		typeof (value as { title?: unknown }).title === "string" &&
 		typeof (value as { url?: unknown }).url === "string" &&
+		(text === undefined || typeof text === "string") &&
 		Array.isArray((value as { highlights?: unknown }).highlights) &&
 		(value as { highlights: unknown[] }).highlights.every(
 			(highlight) => typeof highlight === "string",

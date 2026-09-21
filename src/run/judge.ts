@@ -3,8 +3,9 @@
  *
  * The runner puts the question, the queries tried so far and every candidate
  * in front of a judge once per `judge` state and gets back one verdict: which
- * candidates are worth keeping, how complete the set is, whether the queries
- * have started repeating, and what the judge would do next. The runner's
+ * candidates are worth keeping, which dropped pages are worth reading in
+ * full, how complete the set is, whether the queries have started repeating,
+ * and what the judge would do next. The runner's
  * policy, not the judge, then decides the transition.
  *
  * `jev` is the real one, TypeSafe's Jev behind `TYPESAFE_API_KEY`. `stub`
@@ -24,6 +25,8 @@ export interface Candidate {
 	/** A bundle path for the index, a URL for the web; unique within a run. */
 	ref: string;
 	text: string;
+	/** True when `text` is passages from the page read in full rather than a search excerpt. */
+	read?: boolean;
 }
 
 export type Transition = "answer" | "rewrite" | "give_up";
@@ -31,6 +34,8 @@ export type Transition = "answer" | "rewrite" | "give_up";
 export interface Verdict {
 	/** The refs of the candidates the judge would cite. */
 	kept: string[];
+	/** Web candidates not kept whose full page the judge thinks likely holds the answer, most likely first. */
+	read: string[];
 	/** Expected completeness on the four-level rubric, 0 to 3. */
 	completeness: number;
 	completenessLabel: string;

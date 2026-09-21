@@ -242,6 +242,10 @@ lattice run "question" --max-rewrites 0                                  # Plan,
 lattice run "question" --tried "first query" --tried "second query"      # Skip the plan; search these
 ```
 
+A web page the judge drops on its excerpt while saying the page itself
+probably holds the answer is read in full (Exa's contents endpoint, about a
+tenth of a cent), chunked at its headings, and judged again on the passages
+that best match the question; such a page is marked `read` in `kept`.
 `exit` is `answer` (cite `kept`), `give_up` (nothing citable), or `decide`
 (the judge was unsure; `records[-1].probabilities` says how). The policy in
 code corrects the judge's known habits: an `answer` over a set it rated below

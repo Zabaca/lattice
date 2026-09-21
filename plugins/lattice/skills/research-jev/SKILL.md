@@ -134,14 +134,20 @@ credential). Say so once and go on with what the other leg kept. Do not
 retry, and if neither leg ran, do not let the run end without web sources:
 run WebSearch yourself.
 
-When working in the Lattice checkout, the keys are in the repo's
-`secrets.yaml`, and the OAuth token in `~/.claude/settings.json`:
+Do not export keys before the run: it reads its environment, and a
+missing key is reported in `webReason` (or, for the judge and the planner,
+as an exit-1 error naming the variable). Only when a run has named a
+missing key, and only when working in the Lattice checkout, the keys are in
+the repo's `secrets.yaml` and the OAuth token in `~/.claude/settings.json`:
 
 ```bash
 export EXA_API_KEY=$(sops -d --extract '["EXA_API_KEY"]' secrets.yaml)
 export TYPESAFE_API_KEY=$(sops -d --extract '["TYPESAFE_API_KEY"]' secrets.yaml)
 export LATTICE_OAUTH_TOKEN=...   # never CLAUDE_CODE_OAUTH_TOKEN: the harness hides that name
 ```
+
+If that export is refused or unavailable, do not retry it: go on with
+WebSearch as the web step.
 
 ### Step 5: Choose the type and filename
 

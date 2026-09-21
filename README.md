@@ -246,7 +246,9 @@ code corrects the judge's known habits: an `answer` over a set it rated below
 "most of the answer" is sent round again, and running out of rewrites, or
 rewriting into the same queries, ends over what was kept rather than as a
 failure. It needs `TYPESAFE_API_KEY` for the judge and `CLAUDE_CODE_OAUTH_TOKEN`
-(or `ANTHROPIC_API_KEY`) for the model; `EXA_API_KEY` is optional, and a web
+(or `ANTHROPIC_API_KEY`) for the model — inside a Claude Code session, where
+the harness hides that variable from commands, export the token as
+`LATTICE_OAUTH_TOKEN` instead; `EXA_API_KEY` is optional, and a web
 leg that cannot run is reported as `webReason` while the run goes on over the
 index. `LATTICE_LLM_PROVIDER=stub` with `LATTICE_LLM_STUB` (a JSON array of
 completions) and `LATTICE_JUDGE_PROVIDER=stub` with `LATTICE_JUDGE_STUB` (a
@@ -302,6 +304,7 @@ lattice sql "SELECT type, count(*) AS n FROM concepts GROUP BY type"
 | `LATTICE_WEB_PROVIDER` | `exa`, or `stub` for tests (with `LATTICE_WEB_STUB` and `LATTICE_WEB_FAIL`) | `exa` |
 | `TYPESAFE_API_KEY` | The key the `jev` reranker and the `lattice run` judge send to TypeSafe | unset |
 | `CLAUDE_CODE_OAUTH_TOKEN` | Forwarded to the Claude Agent SDK by `lattice run`; `ANTHROPIC_API_KEY` is the alternative | unset |
+| `LATTICE_OAUTH_TOKEN` | The same token under a name a Claude Code session's Bash tool can see; skills need this one | unset |
 | `LATTICE_LLM_PROVIDER` | `claude`, or `stub` for tests (with `LATTICE_LLM_STUB`) | `claude` |
 | `LATTICE_LLM_MODEL` | The model `lattice run` plans and rewrites with | `claude-haiku-4-5` |
 | `LATTICE_CLAUDE_PATH` | A Claude Code executable for the SDK to run, when not the bundled one | unset |

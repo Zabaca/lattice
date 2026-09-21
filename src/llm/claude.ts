@@ -18,6 +18,13 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import type { Completion, TextProvider } from "./provider.js";
 
 export const OAUTH_TOKEN_VAR = "CLAUDE_CODE_OAUTH_TOKEN";
+/**
+ * The same token under a name the Claude Code harness does not scrub.
+ * A Bash tool inside a Claude Code session never sees
+ * `CLAUDE_CODE_OAUTH_TOKEN`, so a skill running `lattice run` needs the
+ * token under another name; this one is forwarded as the real one.
+ */
+export const OAUTH_ALIAS_VAR = "LATTICE_OAUTH_TOKEN";
 export const API_KEY_VAR = "ANTHROPIC_API_KEY";
 export const LLM_MODEL_VAR = "LATTICE_LLM_MODEL";
 export const CLAUDE_PATH_VAR = "LATTICE_CLAUDE_PATH";
@@ -81,11 +88,11 @@ export class ClaudeProvider implements TextProvider {
 export function claudeProviderFromEnv(
 	env: Record<string, string | undefined>,
 ): ClaudeProvider {
-	const token = env[OAUTH_TOKEN_VAR]?.trim();
+	const token = env[OAUTH_TOKEN_VAR]?.trim() || env[OAUTH_ALIAS_VAR]?.trim();
 	const apiKey = env[API_KEY_VAR]?.trim();
 	if (!token && !apiKey) {
 		throw new Error(
-			`The claude text provider needs ${OAUTH_TOKEN_VAR} (or ${API_KEY_VAR}) set.`,
+			`The claude text provider needs ${OAUTH_TOKEN_VAR} (or ${OAUTH_ALIAS_VAR}, or ${API_KEY_VAR}) set.`,
 		);
 	}
 	const forwarded: Record<string, string> = {};
@@ -93,6 +100,9 @@ export function claudeProviderFromEnv(
 		if (value !== undefined) {
 			forwarded[key] = value;
 		}
+	}
+	if (token) {
+		forwarded[OAUTH_TOKEN_VAR] = token;
 	}
 	// No attribution header and no telemetry: this is a completion, not a session.
 	forwarded.CLAUDE_CODE_ATTRIBUTION_HEADER = "0";

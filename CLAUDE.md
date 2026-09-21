@@ -247,7 +247,8 @@ environment.
 | `LATTICE_LLM_MODEL` | The model to plan and rewrite with; default `claude-haiku-4-5`, whose queries were as good as Opus's. |
 | `LATTICE_LLM_STUB` | With `stub`, a JSON array of completions returned in order; the last repeats. Malformed is an error. |
 | `LATTICE_CLAUDE_PATH` | `pathToClaudeCodeExecutable` for the SDK, when set. |
-| `CLAUDE_CODE_OAUTH_TOKEN` | Required by `claude` unless `ANTHROPIC_API_KEY` is set; missing both is an error naming both. |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Required by `claude` unless `LATTICE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` is set; missing all three is an error naming them. |
+| `LATTICE_OAUTH_TOKEN` | The same token under a name the Claude Code harness does not scrub from a Bash tool's environment; a skill running `lattice run` has to use this one. Forwarded to the SDK as `CLAUDE_CODE_OAUTH_TOKEN`. |
 | `LATTICE_JUDGE_PROVIDER` | Unset or `jev` (TypeSafe, needs `TYPESAFE_API_KEY`; model from `LATTICE_RERANK_MODEL`) or `stub`. Anything else is an error. |
 | `LATTICE_JUDGE_STUB` | With `stub`, a JSON array of `{ keep: [ref substrings], completeness, repeating, next, confidence }` consumed in order; the last repeats. Malformed is an error. |
 

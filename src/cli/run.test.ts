@@ -2820,10 +2820,12 @@ describe("lattice run", () => {
 			LATTICE_JUDGE_PROVIDER: "stub",
 			LATTICE_JUDGE_STUB: JSON.stringify([ANSWER]),
 			CLAUDE_CODE_OAUTH_TOKEN: undefined,
+			LATTICE_OAUTH_TOKEN: undefined,
 			ANTHROPIC_API_KEY: undefined,
 		});
 		expect(noModel.code).toBe(1);
 		expect(noModel.stderr).toContain("CLAUDE_CODE_OAUTH_TOKEN");
+		expect(noModel.stderr).toContain("LATTICE_OAUTH_TOKEN");
 
 		const badLlm = await invoke(
 			["run", "anything", "--no-web"],

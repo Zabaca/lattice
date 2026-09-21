@@ -16,32 +16,6 @@ All documents live in the Lattice bundle, `~/.lattice/docs/` (or
 
 ### Step 1: Search
 
-When `TYPESAFE_API_KEY` is in the environment, run the judged loop first. It
-plans queries, searches the index, has Jev judge the hits and rewrites when
-the judge finds gaps — one command instead of several search turns:
-
-```bash
-lattice run "<topic>" --no-web --json
-```
-
-Read `exit` first:
-
-- `answer` — report from `kept` (each `{ source, title, ref, text }`, all
-  `source: "index"` here; `ref` is the bundle path) and from `completeness`
-  with its `completenessLabel`. `tried` lists every query it searched.
-- `decide` — the judge was unsure. Read `records[-1].probabilities` (over
-  `answer`, `rewrite`, `give_up`) and choose: treat it as `answer` when
-  `kept` is non-empty and the mass sits on `answer`; otherwise run
-  `lattice search --json` below with your own query.
-- `give_up` — nothing citable was found; say so, and run `lattice search
-  --json` once to confirm before reporting a gap.
-
-A non-zero exit (no `TYPESAFE_API_KEY`, no `CLAUDE_CODE_OAUTH_TOKEN`, no
-index) prints why; say so once and fall back to the plain search. Do not
-retry. The runner is read-only, like the rest of this skill.
-
-Otherwise, or as the fallback:
-
 ```bash
 lattice search "<topic>" --json
 ```

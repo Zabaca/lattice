@@ -111,9 +111,10 @@ lattice run "<topic>" --no-index --json
 ```
 
 The index was searched in Step 1 and is not searched again. The run sends
-each query through two web legs, Exa and Claude's own WebSearch tool, and
-the judge reads both legs' pages, so `completenessLabel` is about what the
-web adds. The entries in `kept` are the web sources: their `ref` is a URL
+its planned queries through Exa, and once a round has fallen short of the
+judge's bar it adds Claude's own WebSearch tool on the rewritten ones; the
+judge reads both legs' pages, so `completenessLabel` is about what the web
+adds. The entries in `kept` are the web sources: their `ref` is a URL
 and `text` the highlights the leg picked out, or, for an entry with `read:
 true`, the passages of the page that best answer the question, chosen after
 the runner read the page in full. Cite the URLs and quote from the text

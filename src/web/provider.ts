@@ -12,9 +12,11 @@
  * rendering and the failure paths without a key or a network.
  *
  * `LATTICE_WEB_PROVIDER` is a comma-separated list of those: one name is one
- * searcher, several are a `MultiSearcher` that asks every leg. Each command
- * has its own default: `lattice web` searches Exa alone, `lattice run` Exa
- * and Claude together.
+ * searcher, several are a `MultiSearcher` that asks every leg. Nothing set
+ * means Exa. `lattice run` also reads `LATTICE_WEB_ESCALATE`, the legs it
+ * adds once a round has failed to satisfy the judge; with neither set that
+ * is Claude, so the slow, dear leg is paid for only after the cheap one has
+ * come up short.
  */
 
 import { CLAUDE_SEARCHER, claudeSearcherFromEnv } from "./claude.js";
@@ -23,6 +25,8 @@ import { MultiSearcher } from "./multi.js";
 import { STUB_SEARCHER, stubSearcherFromEnv } from "./stub.js";
 
 export const WEB_PROVIDER_VAR = "LATTICE_WEB_PROVIDER";
+/** Legs `lattice run` adds from its first rewrite on; nothing else reads it. */
+export const WEB_ESCALATE_VAR = "LATTICE_WEB_ESCALATE";
 
 /** Exa's search types, in its own words; `auto` is what it recommends. */
 export const WEB_SEARCH_TYPES = [
@@ -97,23 +101,37 @@ export class WebConfigurationError extends Error {}
  * be quiet about it. With several legs, the ones that build make the
  * searcher and the ones that do not are remembered as reasons; only when
  * none builds does the call throw, with every reason.
+ *
+ * `escalation` names legs held back for `MultiSearcher.escalate()`: a
+ * literal list, or `null` to read `LATTICE_WEB_ESCALATE` with
+ * `defaultEscalation` standing in when both that and `LATTICE_WEB_PROVIDER`
+ * are unset. An explicit `LATTICE_WEB_PROVIDER` with no
+ * `LATTICE_WEB_ESCALATE` escalates to nothing: the caller said what to
+ * search. A later leg that cannot be built is a reason only once escalation
+ * asks for it.
  */
 export function selectWebSearcher(
 	env: Record<string, string | undefined>,
 	defaultLegs = "exa",
+	escalation: { defaultEscalation: string } | null = null,
 ): WebSearcher {
-	const names = (env[WEB_PROVIDER_VAR]?.trim() || defaultLegs)
-		.split(",")
-		.map((name) => name.trim())
-		.filter((name) => name !== "");
-	for (const name of names) {
+	const configured = env[WEB_PROVIDER_VAR]?.trim();
+	const names = legNames(configured || defaultLegs);
+	const laterNames =
+		escalation === null
+			? []
+			: legNames(
+					env[WEB_ESCALATE_VAR]?.trim() ||
+						(configured ? "" : escalation.defaultEscalation),
+				).filter((name) => !names.includes(name));
+	for (const name of [...names, ...laterNames]) {
 		if (!KNOWN_SEARCHERS.includes(name)) {
 			throw new WebConfigurationError(
 				`Unknown web searcher in ${WEB_PROVIDER_VAR}: ${name}. Known searchers: ${KNOWN_SEARCHERS.join(", ")}.`,
 			);
 		}
 	}
-	if (names.length === 1) {
+	if (names.length === 1 && laterNames.length === 0) {
 		return buildSearcher(names[0], env);
 	}
 	const legs: WebSearcher[] = [];
@@ -128,7 +146,26 @@ export function selectWebSearcher(
 	if (legs.length === 0) {
 		throw new Error(reasons.join("; "));
 	}
-	return new MultiSearcher(legs, reasons);
+	const later: WebSearcher[] = [];
+	const laterReasons: string[] = [];
+	for (const name of laterNames) {
+		try {
+			later.push(buildSearcher(name, env));
+		} catch (error) {
+			laterReasons.push(`${name}: ${(error as Error).message}`);
+		}
+	}
+	return new MultiSearcher(legs, reasons, {
+		legs: later,
+		dropped: laterReasons,
+	});
+}
+
+function legNames(list: string): string[] {
+	return list
+		.split(",")
+		.map((name) => name.trim())
+		.filter((name) => name !== "");
 }
 
 function buildSearcher(

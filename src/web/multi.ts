@@ -7,6 +7,11 @@
  * its message kept; the composite itself throws only when no leg is left,
  * so the runner's existing handling of a failed web leg still applies.
  * `read` tries the legs in order, because not every leg can fetch a page.
+ *
+ * Some legs are `later` ones: held back until `escalate()` is called, which
+ * the runner does from its first rewrite, or until every other leg has
+ * failed in one search. A leg that is slow or dear is paid for only on a
+ * round the cheap legs have already failed.
  */
 
 import type {
@@ -19,12 +24,37 @@ import type {
 export class MultiSearcher implements WebSearcher {
 	readonly name: string;
 	private legs: WebSearcher[];
+	private later: WebSearcher[];
 	private readonly dropped: string[];
+	/** Later legs that could not be built: a reason only once escalation asks for them. */
+	private laterDropped: string[];
 
-	constructor(legs: WebSearcher[], dropped: string[] = []) {
+	constructor(
+		legs: WebSearcher[],
+		dropped: string[] = [],
+		later: { legs: WebSearcher[]; dropped: string[] } = {
+			legs: [],
+			dropped: [],
+		},
+	) {
 		this.legs = legs;
 		this.dropped = [...dropped];
-		this.name = legs.map((leg) => leg.name).join(",");
+		this.later = [...later.legs];
+		this.laterDropped = [...later.dropped];
+		this.name = [...legs, ...later.legs].map((leg) => leg.name).join(",");
+	}
+
+	/** Bring the later legs into every search from now on. A second call is a no-op. */
+	escalate(): void {
+		this.legs.push(...this.later);
+		this.dropped.push(...this.laterDropped);
+		this.later = [];
+		this.laterDropped = [];
+	}
+
+	/** The legs the next search asks, by name. */
+	active(): string[] {
+		return this.legs.map((leg) => leg.name);
 	}
 
 	async search(request: WebRequest): Promise<WebResponse> {
@@ -44,6 +74,15 @@ export class MultiSearcher implements WebSearcher {
 		});
 		this.legs = remaining;
 		if (responses.length === 0) {
+			// Every leg of this round failed. Legs held back for a later round
+			// are the fallback now: waiting for a rewrite would leave the round
+			// with no web at all.
+			if (this.later.length > 0 || this.laterDropped.length > 0) {
+				this.escalate();
+				if (this.legs.length > 0) {
+					return this.search(request);
+				}
+			}
 			throw new Error(this.dropped.join("; "));
 		}
 		let cost: number | null = null;

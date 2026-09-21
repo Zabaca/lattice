@@ -226,8 +226,8 @@ reason, and the `/research` skill falls back to its ordinary web search.
 ### `lattice run`
 
 Run the search as a judged loop: a model plans two queries, the index and the
-web (Exa and Claude's own WebSearch tool, each query through both) are
-searched, TypeSafe's Jev judges every candidate and the set as a whole,
+web (Exa first, and Claude's own WebSearch tool as well once a round has
+fallen short) are searched, TypeSafe's Jev judges every candidate and the set as a whole,
 and code decides whether to answer, rewrite the queries (up to `--max-rewrites`,
 default 2), give up, or hand the decision back. The point is fewer agent turns
 for the `/search` and `/research` skills: one command returns the sources worth
@@ -308,7 +308,8 @@ lattice sql "SELECT type, count(*) AS n FROM concepts GROUP BY type"
 | `LATTICE_HF_MIRROR` | Download the weights from somewhere other than the hub (`HF_ENDPOINT` also works) | unset |
 | `EXA_API_KEY` | The key `lattice web` sends to Exa; the command refuses without it | unset |
 | `EXA_BASE_URL` | Where `lattice web` sends its request | `https://api.exa.ai` |
-| `LATTICE_WEB_PROVIDER` | A comma-separated list of web legs: `exa`, `claude` (Claude's own WebSearch tool, through the Agent SDK) and `stub` for tests (with `LATTICE_WEB_STUB` and `LATTICE_WEB_FAIL`); several are searched together | `exa` for `lattice web`, `exa,claude` for `lattice run` |
+| `LATTICE_WEB_PROVIDER` | A comma-separated list of web legs: `exa`, `claude` (Claude's own WebSearch tool, through the Agent SDK) and `stub` for tests (with `LATTICE_WEB_STUB` and `LATTICE_WEB_FAIL`); several are searched together | `exa` |
+| `LATTICE_WEB_ESCALATE` | Legs `lattice run` adds from its first rewrite on, once Exa has failed to satisfy the judge | `claude` when `LATTICE_WEB_PROVIDER` is unset, else none |
 | `TYPESAFE_API_KEY` | The key the `jev` reranker and the `lattice run` judge send to TypeSafe | unset |
 | `CLAUDE_CODE_OAUTH_TOKEN` | Forwarded to the Claude Agent SDK by `lattice run`; `ANTHROPIC_API_KEY` is the alternative | unset |
 | `LATTICE_OAUTH_TOKEN` | The same token under a name a Claude Code session's Bash tool can see; skills need this one | unset |

@@ -2822,6 +2822,71 @@ describe("lattice run", () => {
 		expect(unknown.stderr).toContain("exa, claude, stub");
 	});
 
+	test("an escalation leg is searched only from the first rewrite on", async () => {
+		const home = await bundledHome();
+		await invoke(["sync"], home);
+		// Exa is the escalation leg and has no key, so it can only ever be a
+		// reason; whether that reason appears says whether it was asked for.
+		const env = runEnv(
+			['{"queries": ["users table"]}', '{"queries": ["users schema"]}'],
+			[{ ...ANSWER, keep: ["exa-limits"] }],
+			{ LATTICE_WEB_ESCALATE: "exa", EXA_API_KEY: undefined },
+		);
+
+		const settled = await invoke(
+			["run", "what tables exist", "--json", "--no-index"],
+			home,
+			env,
+		);
+		expect(settled.code).toBe(0);
+		expect(JSON.parse(settled.stdout).webReason).toBeNull();
+
+		const escalated = await invoke(
+			["run", "what tables exist", "--json", "--no-index"],
+			home,
+			runEnv(
+				['{"queries": ["users table"]}', '{"queries": ["users schema"]}'],
+				[
+					{ ...REWRITE, keep: ["exa-limits"] },
+					{ ...ANSWER, keep: ["exa-limits"] },
+				],
+				{ LATTICE_WEB_ESCALATE: "exa", EXA_API_KEY: undefined },
+			),
+		);
+		expect(escalated.code).toBe(0);
+		const parsed = JSON.parse(escalated.stdout);
+		expect(parsed.exit).toBe("answer");
+		expect(parsed.tried).toHaveLength(2);
+		expect(parsed.webReason).toContain("exa: ");
+		expect(parsed.webReason).toContain("EXA_API_KEY");
+		expect(
+			parsed.kept.map((c: { ref: string; leg?: string }) => [c.ref, c.leg]),
+		).toEqual([["https://example.com/exa-limits", "stub"]]);
+
+		// With the provider set and no escalation named, nothing is added:
+		// the environment said what to search. Unset, the default escalation
+		// is Claude, which without a credential is a reason after a rewrite.
+		const unset = await invoke(
+			["run", "what tables exist", "--json", "--no-index"],
+			home,
+			runEnv(
+				['{"queries": ["users table"]}', '{"queries": ["users schema"]}'],
+				[REWRITE, ANSWER],
+				{
+					LATTICE_WEB_PROVIDER: undefined,
+					LATTICE_WEB_STUB: undefined,
+					EXA_API_KEY: "k",
+					EXA_BASE_URL: "http://127.0.0.1:9",
+				},
+			),
+		);
+		expect(unset.code).toBe(0);
+		expect(JSON.parse(unset.stdout).webReason).toContain("claude: ");
+		expect(JSON.parse(unset.stdout).webReason).toContain(
+			"CLAUDE_CODE_OAUTH_TOKEN",
+		);
+	});
+
 	test("--no-index searches the web alone, and with --no-web there is nothing to run", async () => {
 		const home = await bundledHome();
 		await invoke(["sync"], home);

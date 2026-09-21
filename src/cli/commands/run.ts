@@ -30,8 +30,14 @@ const INDEX_LIMIT = 5;
 const CHUNKS_PER_CONCEPT = 2;
 /** Pages one query pulls from the web. */
 const WEB_LIMIT = 5;
-/** The web legs when the environment names none: Exa, and Claude's own WebSearch. */
-const DEFAULT_WEB_LEGS = "exa,claude";
+/** The web leg every round searches when the environment names none. */
+const DEFAULT_WEB_LEGS = "exa";
+/**
+ * The legs added from the first rewrite on, when the environment names
+ * none: Claude's own WebSearch, fifteen seconds and a few cents a query,
+ * paid for only once Exa has failed to satisfy the judge.
+ */
+const DEFAULT_WEB_ESCALATION = "claude";
 
 /**
  * Run the judged search loop over the index and the web, or over either
@@ -82,7 +88,9 @@ export async function runRun(context: CommandContext): Promise<CommandOutput> {
 	let webReason: string | undefined;
 	if (context.flags["no-web"] === undefined) {
 		try {
-			web = selectWebSearcher(context.env, DEFAULT_WEB_LEGS);
+			web = selectWebSearcher(context.env, DEFAULT_WEB_LEGS, {
+				defaultEscalation: DEFAULT_WEB_ESCALATION,
+			});
 		} catch (error) {
 			if (error instanceof WebConfigurationError) {
 				return { code: 1, stderr: error.message };
@@ -168,7 +176,10 @@ export async function runRun(context: CommandContext): Promise<CommandOutput> {
 			searchWeb:
 				web === undefined
 					? undefined
-					: async (query) => {
+					: async (query, round) => {
+							if (round > 0 && web instanceof MultiSearcher) {
+								web.escalate();
+							}
 							const response = await web.search({
 								query,
 								type: "fast",

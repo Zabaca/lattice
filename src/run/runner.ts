@@ -49,8 +49,13 @@ export interface PageRead {
 export interface RunnerDeps {
 	/** Absent when the caller asked for the web alone. */
 	searchIndex?(query: string): Promise<Candidate[]>;
-	/** Absent when the caller asked for the index alone. Throwing is not fatal to the run. */
-	searchWeb?(query: string): Promise<WebSearch>;
+	/**
+	 * Absent when the caller asked for the index alone. Throwing is not fatal
+	 * to the run. `round` is how many rewrites came before this query: 0 on
+	 * the planned queries, so a caller can search harder once a round has
+	 * failed.
+	 */
+	searchWeb?(query: string, round: number): Promise<WebSearch>;
 	/** Absent when pages cannot be read in full. Throwing costs that page, not the run. */
 	readPage?(question: string, url: string): Promise<PageRead>;
 	judge: Judge;
@@ -139,7 +144,7 @@ export async function runLoop(
 				deps.searchIndex === undefined ? [] : await deps.searchIndex(query);
 			if (searchWeb !== undefined) {
 				try {
-					const web = await searchWeb(query);
+					const web = await searchWeb(query, rewrites);
 					cost.webUsd += web.costUsd ?? 0;
 					found.push(...web.candidates);
 				} catch (error) {

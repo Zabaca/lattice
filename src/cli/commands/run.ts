@@ -77,6 +77,11 @@ export async function runRun(context: CommandContext): Promise<CommandOutput> {
 
 	const db = openDatabase(paths.database);
 	try {
+		const passageText = db.prepare<{ content: string }, [string, number]>(
+			`SELECT ch.content FROM chunks ch
+			 JOIN concepts c ON c.id = ch.concept_id
+			 WHERE c.path = ? AND ch.ordinal = ?`,
+		);
 		const deps: RunnerDeps = {
 			searchIndex: async (query) => {
 				const embedded = await embedQuery(query, context.env, context.report);
@@ -100,12 +105,21 @@ export async function runRun(context: CommandContext): Promise<CommandOutput> {
 					semantic: embedded.semantic,
 					semanticUnavailable: embedded.reason,
 				});
+				// The judge and the skill read the passage itself, not the
+				// 180-character window `search` shows: a snippet cut mid-sentence
+				// reads as a gap that the document does not have.
 				return result.hits.map(
 					(hit): Candidate => ({
 						source: "index",
 						title: hit.title ?? hit.path,
 						ref: hit.path,
-						text: hit.chunks.map((chunk) => chunk.snippet).join("\n"),
+						text: hit.chunks
+							.map(
+								(chunk) =>
+									passageText.get(hit.path, chunk.ordinal)?.content ??
+									chunk.snippet,
+							)
+							.join("\n\n"),
 					}),
 				);
 			},

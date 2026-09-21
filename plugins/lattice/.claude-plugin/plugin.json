@@ -1,0 +1,11 @@
+{
+	"name": "lattice",
+	"description": "Skills for working with a Lattice knowledge graph bundle.",
+	"version": "1.0.0",
+	"author": {
+		"name": "Zabaca"
+	},
+	"homepage": "https://github.com/zabaca/lattice",
+	"repository": "https://github.com/zabaca/lattice",
+	"license": "MIT"
+}

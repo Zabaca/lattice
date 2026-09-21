@@ -1,10 +1,9 @@
 ---
+name: research
 description: Research a topic - searches existing docs, asks before new research
-argument-hint: topic-query
-model: sonnet
 ---
 
-Research the topic "$ARGUMENTS": search what is already indexed, and only then
+Research the topic given in `args`: search what is already indexed, and only then
 write something new.
 
 ## Where documents live
@@ -26,7 +25,7 @@ when that is set). Never write research into a project-local `docs/` directory.
 Search first, machine-readably, so nothing is inferred from rendered text:
 
 ```bash
-lattice search "$ARGUMENTS" --json
+lattice search "<topic>" --json
 ```
 
 The JSON carries:
@@ -78,7 +77,7 @@ they become the document's `sources`.
 ### Step 5: Choose the topic directory and filename
 
 **Topic directory** — reuse an existing `~/.lattice/docs/{topic}/` when one fits
-(`lattice search "$ARGUMENTS" --json` already told you which directories hold
+(`lattice search "<topic>" --json` already told you which directories hold
 related work); otherwise derive a new kebab-case name.
 
 **Filename** — kebab-case, 2–4 words, naming the specific focus. Never
@@ -178,7 +177,7 @@ Then verify, through the CLI rather than by assumption:
 ```bash
 lattice status                                   # frontmatter problems, if any
 lattice rels {topic}/{filename}.md               # links, backlinks, siblings, unresolved
-lattice search "$ARGUMENTS" --json               # the new document should now be a hit
+lattice search "<topic>" --json                  # the new document should now be a hit
 ```
 
 If `lattice status` reports a frontmatter problem for the new file, fix the

@@ -21,6 +21,7 @@ lattice embed    # Embed the backlog alone (`--retry-failed` retries permanent f
 lattice search   # Hybrid search: keyword and meaning fused, then expanded one hop
 lattice sql      # Raw SQL queries
 lattice rels     # Show a concept's links, backlinks and unresolved links
+lattice web      # Search the web through Exa, for the research skill
 ```
 
 `lattice rels <concept>` takes either an OKF identifier (`bigquery-table/users`)
@@ -163,6 +164,33 @@ rerank degradation are independent: a keyword-only search is still reranked.
 | `LATTICE_RERANK_MODEL` | The Jev model to ask for; default `jev-latest`. |
 | `LATTICE_RERANK_STUB` | With `stub`, a JSON object of phrase → probability; a candidate scores the highest phrase its text contains, 0 if none. Malformed is an error. |
 | `LATTICE_RERANK_FAIL` | With `stub`, a substring; a query containing it makes the request throw, to exercise the fallback. |
+
+## Web
+
+`lattice web <query>` is the one command that searches outside the index: one
+`POST /search` to Exa, behind the `WebSearcher` seam in `src/web/provider.ts`
+(the same shape as the reranker seam). It exists for the `/research` skill's
+web step and nothing else in Lattice calls it. The result is the pages Exa
+found with the highlights it picked out, so the skill can cite a URL without
+fetching it; `--json` carries `{ query, type, results: [{ title, url,
+publishedDate, author, highlights, text? }], cost, searchTime, requestId }`.
+`--type` is Exa's own enum (`auto` by default), `--limit` is 1 to 100,
+`--since` an ISO date, `--domain` repeats, `--text` adds page text capped at
+4000 characters.
+
+There is no degradation contract: nothing inside the command can stand in for
+the web, so a missing or rejected key (401/402 name `EXA_API_KEY`), a rate
+limit or server error (Exa's `error` and `tag`) and a network failure are all
+exit 1 with the reason, and the skill falls back to WebSearch. The CLI never
+reads `secrets.yaml`; the skill says how to export the key.
+
+| Variable | Meaning |
+|---|---|
+| `EXA_API_KEY` | Required by the `exa` searcher. |
+| `EXA_BASE_URL` | Where the request goes; default `https://api.exa.ai`. |
+| `LATTICE_WEB_PROVIDER` | Unset or `exa` (the real one) or `stub`. Anything else is an error. |
+| `LATTICE_WEB_STUB` | With `stub`, a JSON array of `{ title, url, highlights }` returned in that order. Malformed is an error. |
+| `LATTICE_WEB_FAIL` | With `stub`, a substring; a query containing it makes the request throw. |
 
 ## Links
 

@@ -11,6 +11,7 @@ import {
 import { type SearchHit, search, searchConcepts } from "../../search/search.js";
 import type { SemanticInput } from "../../search/vector.js";
 import { resolvePaths } from "../../utils/paths.js";
+import { count, text } from "../flags.js";
 import type { CommandContext, CommandOutput } from "../run.js";
 
 /** Concepts returned when `--limit` is not given. */
@@ -214,27 +215,6 @@ async function embedQuery(
 		const message = error instanceof Error ? error.message : String(error);
 		return { reason: `the query could not be embedded: ${message}` };
 	}
-}
-
-/** A flag's value as text; `--flag` with no value is not a value. */
-function text(flag: string | true | undefined): string | undefined {
-	return typeof flag === "string" ? flag : undefined;
-}
-
-/** A positive whole number, or the reason it was refused. */
-function count(
-	flag: string | true | undefined,
-	fallback: number,
-	name: string,
-): number {
-	if (flag === undefined) {
-		return fallback;
-	}
-	const value = typeof flag === "string" ? Number(flag) : Number.NaN;
-	if (!Number.isInteger(value) || value < 1) {
-		throw new Error(`${name} expects a positive whole number, got: ${flag}`);
-	}
-	return value;
 }
 
 /** The instant staleness is judged against: `--as-of`, or now. */

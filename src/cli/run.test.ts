@@ -2284,3 +2284,143 @@ describe("the /research document template", () => {
 		expect(indexed.code).not.toBe(0);
 	});
 });
+
+/**
+ * `lattice web` is the research skill's window on the web. The stub searcher
+ * says outright what the web returns, so the tests can show the rendering and
+ * every way the command refuses — without a key or a network.
+ */
+const WEB_STUB_RESULTS = [
+	{
+		title: "Exa search limitations",
+		url: "https://example.com/exa-limits",
+		highlights: ["Exa lags on new content.", "It misses the long tail."],
+	},
+	{
+		title: "Neural search compared",
+		url: "https://example.com/compared",
+		highlights: ["Keyword search still wins on exact strings."],
+	},
+];
+
+function webEnv(extra: Record<string, string> = {}) {
+	return {
+		LATTICE_WEB_PROVIDER: "stub",
+		LATTICE_WEB_STUB: JSON.stringify(WEB_STUB_RESULTS),
+		...extra,
+	};
+}
+
+describe("lattice web", () => {
+	test("renders each result with its highlights, and --json carries them in order", async () => {
+		const home = freshHome();
+
+		const rendered = await invoke(["web", "exa weaknesses"], home, webEnv());
+		expect(rendered.code).toBe(0);
+		expect(rendered.stdout).toContain(
+			"1. Exa search limitations — https://example.com/exa-limits",
+		);
+		expect(rendered.stdout).toContain("   Exa lags on new content.");
+		expect(rendered.stdout).toContain(
+			"2. Neural search compared — https://example.com/compared",
+		);
+
+		const json = await invoke(
+			["web", "exa weaknesses", "--json", "--type", "fast"],
+			home,
+			webEnv(),
+		);
+		expect(json.code).toBe(0);
+		const parsed = JSON.parse(json.stdout);
+		expect(parsed.query).toBe("exa weaknesses");
+		expect(parsed.type).toBe("fast");
+		expect(
+			parsed.results.map((result: { title: string; url: string }) => [
+				result.title,
+				result.url,
+			]),
+		).toEqual([
+			["Exa search limitations", "https://example.com/exa-limits"],
+			["Neural search compared", "https://example.com/compared"],
+		]);
+		expect(parsed.results[0].highlights).toEqual([
+			"Exa lags on new content.",
+			"It misses the long tail.",
+		]);
+		expect(parsed.cost).toBe(0);
+	});
+
+	test("--limit cuts the results", async () => {
+		const result = await invoke(
+			["web", "exa weaknesses", "--json", "--limit", "1"],
+			freshHome(),
+			webEnv(),
+		);
+		expect(result.code).toBe(0);
+		expect(JSON.parse(result.stdout).results).toHaveLength(1);
+	});
+
+	test("without a key the exa searcher refuses, naming the variable", async () => {
+		const result = await invoke(["web", "anything"], freshHome(), {
+			EXA_API_KEY: undefined,
+		});
+		expect(result.code).toBe(1);
+		expect(result.stdout).toBe("");
+		expect(result.stderr).toContain("EXA_API_KEY");
+	});
+
+	test("an unknown searcher and a malformed stub are errors", async () => {
+		const unknown = await invoke(["web", "anything"], freshHome(), {
+			LATTICE_WEB_PROVIDER: "bing",
+		});
+		expect(unknown.code).toBe(1);
+		expect(unknown.stderr).toContain("bing");
+		expect(unknown.stderr).toContain("exa, stub");
+
+		const malformed = await invoke(
+			["web", "anything"],
+			freshHome(),
+			webEnv({ LATTICE_WEB_STUB: "not json" }),
+		);
+		expect(malformed.code).toBe(1);
+		expect(malformed.stderr).toContain("LATTICE_WEB_STUB");
+
+		const wrongShape = await invoke(
+			["web", "anything"],
+			freshHome(),
+			webEnv({ LATTICE_WEB_STUB: JSON.stringify([{ url: 1 }]) }),
+		);
+		expect(wrongShape.code).toBe(1);
+		expect(wrongShape.stderr).toContain("LATTICE_WEB_STUB");
+	});
+
+	test("a limit outside Exa's range and an unknown type are refused", async () => {
+		for (const limit of ["0", "101"]) {
+			const result = await invoke(
+				["web", "anything", "--limit", limit],
+				freshHome(),
+				webEnv(),
+			);
+			expect(result.code).toBe(1);
+			expect(result.stderr).toContain("--limit");
+		}
+		const type = await invoke(
+			["web", "anything", "--type", "slow"],
+			freshHome(),
+			webEnv(),
+		);
+		expect(type.code).toBe(1);
+		expect(type.stderr).toContain("--type");
+	});
+
+	test("a failed request is an error with the message and no output", async () => {
+		const result = await invoke(
+			["web", "please break"],
+			freshHome(),
+			webEnv({ LATTICE_WEB_FAIL: "break" }),
+		);
+		expect(result.code).toBe(1);
+		expect(result.stdout).toBe("");
+		expect(result.stderr).toContain('injected failure on "break"');
+	});
+});

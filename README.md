@@ -198,6 +198,31 @@ makes that a non-zero exit. `LATTICE_RERANK_PROVIDER=stub` with
 `LATTICE_RERANK_STUB` (a JSON object of phrase → probability) and
 `LATTICE_RERANK_FAIL` (a substring that makes the request fail) exist for tests.
 
+### `lattice web`
+
+Search the web through [Exa](https://exa.ai) and print the results with the
+passages Exa picked out as answering the query, so the `/research` skill can
+cite a page without fetching it. It needs `EXA_API_KEY`, and it is the only
+command that touches the network beyond the embedding-model download and an
+optional reranker.
+
+```bash
+lattice web "what exa search is not good for"          # Numbered results, highlights indented
+lattice web "query" --json                              # { query, type, results, cost, searchTime, requestId }
+lattice web "query" --type fast                         # instant, fast, auto (default), deep-lite, deep, deep-reasoning
+lattice web "query" --since 2026-01-01                  # Published on or after a date
+lattice web "query" --domain exa.ai --domain github.com # Only these hosts
+lattice web "query" --text                              # Page text beside the highlights (up to 4000 characters)
+lattice web "query" --limit 20                          # Results, 1 to 100 (default 10)
+```
+
+There is no fallback inside the command: a missing or rejected key, an empty
+balance, a rate limit or an unreachable host is a non-zero exit with the
+reason, and the `/research` skill falls back to its ordinary web search.
+`EXA_BASE_URL` points the request elsewhere. `LATTICE_WEB_PROVIDER=stub` with
+`LATTICE_WEB_STUB` (a JSON array of `{ title, url, highlights }`) and
+`LATTICE_WEB_FAIL` (a substring that makes the request fail) exist for tests.
+
 ### `lattice rels`
 
 Show what a document is connected to: the documents it links to, the documents
@@ -243,6 +268,9 @@ lattice sql "SELECT type, count(*) AS n FROM concepts GROUP BY type"
 | `LATTICE_MODEL_DIR` | Where model weights are cached | `$LATTICE_HOME/models` |
 | `LATTICE_OFFLINE` / `HF_HUB_OFFLINE` | Never download; use what is already cached | unset |
 | `LATTICE_HF_MIRROR` | Download the weights from somewhere other than the hub (`HF_ENDPOINT` also works) | unset |
+| `EXA_API_KEY` | The key `lattice web` sends to Exa; the command refuses without it | unset |
+| `EXA_BASE_URL` | Where `lattice web` sends its request | `https://api.exa.ai` |
+| `LATTICE_WEB_PROVIDER` | `exa`, or `stub` for tests (with `LATTICE_WEB_STUB` and `LATTICE_WEB_FAIL`) | `exa` |
 
 Changing the model is safe: vectors from two models are not comparable, so a
 `sync` under a changed model refuses, naming both models and the number of

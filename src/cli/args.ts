@@ -18,7 +18,9 @@ export interface ParsedArgs {
  * Parse an argv tail (no executable or script path — just the user's words).
  *
  * Everything after a bare `--` is treated as a positional argument, so a query
- * that starts with a dash can still be passed through.
+ * that starts with a dash can still be passed through. A flag given twice
+ * with values keeps both, comma-separated, so `--domain a --domain b` reads
+ * the same as `--domain a,b`.
  */
 export function parseArgs(argv: string[]): ParsedArgs {
 	const positionals: string[] = [];
@@ -43,12 +45,12 @@ export function parseArgs(argv: string[]): ParsedArgs {
 			const body = arg.slice(2);
 			const eq = body.indexOf("=");
 			if (eq !== -1) {
-				flags[body.slice(0, eq)] = body.slice(eq + 1);
+				setFlag(flags, body.slice(0, eq), body.slice(eq + 1));
 				continue;
 			}
 			const next = argv[i + 1];
 			if (next !== undefined && !next.startsWith("-")) {
-				flags[body] = next;
+				setFlag(flags, body, next);
 				i++;
 				continue;
 			}
@@ -65,4 +67,13 @@ export function parseArgs(argv: string[]): ParsedArgs {
 	}
 
 	return { command, positionals, flags };
+}
+
+function setFlag(
+	flags: Record<string, string | true>,
+	name: string,
+	value: string,
+): void {
+	const previous = flags[name];
+	flags[name] = typeof previous === "string" ? `${previous},${value}` : value;
 }

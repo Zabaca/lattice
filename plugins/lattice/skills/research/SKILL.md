@@ -45,9 +45,37 @@ If **No**, stop here.
 
 ### Step 4: Research
 
-Use WebSearch and any other sources available. Focus on the gap identified in
-step 2 rather than restating what is already indexed. Keep every URL you use —
-they become the document's `sources`.
+Focus on the gap identified in step 2 rather than restating what is already
+indexed. Keep every URL you use — they become the document's `sources`.
+
+**If `EXA_API_KEY` is in the environment**, start with `lattice web`:
+
+```bash
+lattice web "<topic>" --json                     # Neural search; read the highlights
+lattice web "<topic>" --json --type fast         # A quicker, shallower pass
+lattice web "<topic>" --json --since 2026-01-01  # Anything time-sensitive
+lattice web "<topic>" --json --domain docs.example.com --text  # One site, with page text
+```
+
+Each result carries the page's `url`, `title`, `publishedDate` and
+`highlights` — the passages Exa judged to answer the query — so a result can be
+cited without fetching the page. The URLs go into `sources`.
+
+Exa answers a described need well and a literal string badly. Send an error
+message, a package version or an exact identifier through WebSearch, not
+`lattice web`. **Always also run WebSearch**: Exa lags on new content and
+misses the long tail, so a topic with a fresh or obscure answer needs both.
+
+If the key is absent, or `lattice web` exits non-zero (no credits, a rejected
+key, a network failure — it prints why), say so once and continue with
+WebSearch alone. Do not retry, and do not let the run end without web sources
+because Exa was unavailable.
+
+When working in the Lattice checkout, the key is in the repo's `secrets.yaml`:
+
+```bash
+export EXA_API_KEY=$(sops -d --extract '["EXA_API_KEY"]' secrets.yaml)
+```
 
 ### Step 5: Choose the type and filename
 

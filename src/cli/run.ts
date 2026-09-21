@@ -15,6 +15,7 @@ import { runSearch } from "./commands/search.js";
 import { runSql } from "./commands/sql.js";
 import { runStatus } from "./commands/status.js";
 import { runSync } from "./commands/sync.js";
+import { runWeb } from "./commands/web.js";
 
 export interface CliOptions {
 	/** The argv tail: no executable, no script path. */
@@ -109,6 +110,14 @@ const COMMANDS: Record<string, CommandSpec> = {
 		summary: "Search the index by keyword and by meaning at once",
 		requiredArgs: ["query"],
 		run: runSearch,
+	},
+	web: {
+		usage:
+			"lattice web <query> [--json] [--limit n] [--type t] [--since date]\n" +
+			"       [--domain d]... [--text]",
+		summary: "Search the web through Exa, for the research skill",
+		requiredArgs: ["query"],
+		run: runWeb,
 	},
 };
 

@@ -309,7 +309,9 @@ bun run build
 the SciFact benchmark, indexed with the real embedding model. The first run
 downloads about 5 MB into `eval-cache/` and embeds for a few minutes; later runs
 reuse the synced home and only re-run the queries. `--docs`, `--queries`,
-`--seed`, `--fresh` and `--json` are the knobs.
+`--seed`, `--fresh` and `--json` are the knobs. `--rerank jev` reranks the top
+20 candidates with TypeSafe's Jev before scoring and needs `TYPESAFE_API_KEY`
+(or the SOPS-encrypted `secrets.yaml`).
 
 </details>
 

@@ -9,6 +9,12 @@
  *
  *   bun run eval:scifact [--docs 1000] [--queries 100] [--seed 42]
  *                        [--limit 10] [--expand] [--fresh] [--json]
+ *                        [--rerank jev] [--candidates 20] [--model jev-latest]
+ *
+ * `--rerank jev` asks Lattice for `--candidates` hits, reranks them with
+ * TypeSafe's Jev (one request per query, one Noul per candidate) and scores
+ * the top `--limit` of the reranked order. It needs `TYPESAFE_API_KEY` in the
+ * environment or in the SOPS-encrypted `secrets.yaml`.
  */
 
 import {
@@ -21,6 +27,7 @@ import {
 import { basename, join, resolve } from "node:path";
 import { runCli } from "../cli/run.js";
 import { resolvePaths } from "../utils/paths.js";
+import { createJevReranker, type JevReranker } from "./rerank-jev.js";
 
 const DATASET_URL =
 	"https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/scifact.zip";
@@ -38,6 +45,9 @@ interface Options {
 	fresh: boolean;
 	json: boolean;
 	home: string;
+	rerank: "jev" | null;
+	candidates: number;
+	model: string;
 }
 
 interface CorpusDoc {
@@ -56,6 +66,7 @@ interface QueryResult {
 	rank: number | null;
 	degraded: boolean;
 	ms: number;
+	rerank: { ms: number; inputTokens: number; failed: boolean } | null;
 }
 
 async function main(): Promise<void> {
@@ -63,6 +74,12 @@ async function main(): Promise<void> {
 	const log = (line: string) => {
 		if (!options.json) console.error(line);
 	};
+
+	// A missing key fails here, before any search or sync has cost time.
+	const reranker =
+		options.rerank === "jev"
+			? createJevReranker({ apiKey: resolveApiKey(), model: options.model })
+			: null;
 
 	await ensureDataset(log);
 	const corpus = readCorpus();
@@ -103,6 +120,9 @@ async function main(): Promise<void> {
 	}
 	const model = /^Model:\s+(.+)$/m.exec(status.stdout)?.[1] ?? "unknown";
 
+	const docsById = new Map(sampledDocs.map((doc) => [doc.id, doc]));
+	let rerankModel: string | null = null;
+
 	log(`Searching ${sampledQueries.length} queries...`);
 	const results: QueryResult[] = [];
 	for (const query of sampledQueries) {
@@ -111,7 +131,7 @@ async function main(): Promise<void> {
 			query.text,
 			"--json",
 			"--limit",
-			String(options.limit),
+			String(reranker === null ? options.limit : options.candidates),
 		];
 		if (!options.expand) argv.push("--no-expand");
 		const started = performance.now();
@@ -124,14 +144,26 @@ async function main(): Promise<void> {
 			degraded: boolean;
 			hits: Array<{ path: string }>;
 		};
+		let ids = parsed.hits.map((hit) => basename(hit.path, ".md"));
+
+		let rerank: QueryResult["rerank"] = null;
+		if (reranker !== null && ids.length > 0) {
+			const outcome = await rerankQuery(reranker, query.text, ids, docsById);
+			rerank = outcome.stats;
+			if (outcome.order !== null) ids = outcome.order;
+			if (outcome.model !== null) rerankModel = outcome.model;
+			if (outcome.stats.failed) log(`rerank failed for ${query.id}`);
+		}
+
+		ids = ids.slice(0, options.limit);
 		const relevant = qrels.get(query.id) ?? new Set<string>();
-		const ids = parsed.hits.map((hit) => basename(hit.path, ".md"));
 		const index = ids.findIndex((id) => relevant.has(id));
 		results.push({
 			id: query.id,
 			rank: index === -1 ? null : index + 1,
 			degraded: parsed.degraded,
 			ms,
+			rerank,
 		});
 	}
 
@@ -145,6 +177,15 @@ async function main(): Promise<void> {
 		expand: options.expand,
 		model,
 		...metrics,
+		rerank:
+			reranker === null
+				? null
+				: {
+						provider: "jev",
+						model: rerankModel ?? options.model,
+						candidates: options.candidates,
+						...rerankStats(results),
+					},
 	};
 
 	if (options.json) {
@@ -180,12 +221,23 @@ function parseOptions(argv: string[]): Options {
 	};
 	const docs = int("docs", 1000);
 	const queries = int("queries", 100);
+	const limit = int("limit", 10);
+	const candidates = int("candidates", 20);
+	if (candidates < limit) {
+		throw new Error("--candidates must be at least --limit");
+	}
+	const rerankFlag = flags.get("rerank");
+	if (rerankFlag !== undefined && rerankFlag !== "jev") {
+		throw new Error("--rerank takes one value: jev");
+	}
+	const modelFlag = flags.get("model");
+	if (modelFlag === true) throw new Error("--model needs a model name");
 	const homeFlag = flags.get("home");
 	return {
 		docs,
 		queries,
 		seed: int("seed", 42),
-		limit: int("limit", 10),
+		limit,
 		expand: flags.has("expand"),
 		fresh: flags.has("fresh"),
 		json: flags.has("json"),
@@ -193,6 +245,78 @@ function parseOptions(argv: string[]): Options {
 			typeof homeFlag === "string"
 				? resolve(homeFlag)
 				: join(CACHE_DIR, `home-${docs}-${queries}-${int("seed", 42)}`),
+		rerank: rerankFlag === "jev" ? "jev" : null,
+		candidates,
+		model: modelFlag ?? "jev-latest",
+	};
+}
+
+/**
+ * `TYPESAFE_API_KEY` from the environment, else from the SOPS-encrypted
+ * `secrets.yaml` at the repo root. The key is never printed.
+ */
+function resolveApiKey(): string {
+	const fromEnv = process.env.TYPESAFE_API_KEY;
+	if (fromEnv !== undefined && fromEnv !== "") return fromEnv;
+	const secrets = resolve(import.meta.dir, "../../secrets.yaml");
+	if (!existsSync(secrets)) {
+		throw new Error(
+			"--rerank jev needs TYPESAFE_API_KEY in the environment or in secrets.yaml",
+		);
+	}
+	const sops = Bun.spawnSync(["sops", "--decrypt", secrets]);
+	if (sops.exitCode !== 0) {
+		throw new Error(`sops --decrypt failed: ${sops.stderr.toString().trim()}`);
+	}
+	const match = /^TYPESAFE_API_KEY:\s*["']?([^"'\s]+)["']?\s*$/m.exec(
+		sops.stdout.toString(),
+	);
+	if (match === null) {
+		throw new Error("secrets.yaml has no TYPESAFE_API_KEY line");
+	}
+	return match[1];
+}
+
+/** One Jev request; any SDK error falls back to the unreranked order. */
+async function rerankQuery(
+	reranker: JevReranker,
+	query: string,
+	ids: string[],
+	docsById: Map<string, CorpusDoc>,
+): Promise<{
+	order: string[] | null;
+	model: string | null;
+	stats: NonNullable<QueryResult["rerank"]>;
+}> {
+	const candidates = ids.map((id) => {
+		const doc = docsById.get(id);
+		if (doc === undefined) throw new Error(`hit ${id} is not in the sample`);
+		return { id, title: doc.title, text: doc.text };
+	});
+	const started = performance.now();
+	try {
+		const result = await reranker.rerank(query, candidates);
+		return {
+			order: result.order,
+			model: result.model,
+			stats: { ms: result.ms, inputTokens: result.inputTokens, failed: false },
+		};
+	} catch {
+		return {
+			order: null,
+			model: null,
+			stats: { ms: performance.now() - started, inputTokens: 0, failed: true },
+		};
+	}
+}
+
+function rerankStats(results: QueryResult[]) {
+	const stats = results.flatMap((r) => (r.rerank === null ? [] : [r.rerank]));
+	const n = Math.max(stats.length, 1);
+	return {
+		msPerQuery: stats.reduce((sum, s) => sum + s.ms, 0) / n,
+		inputTokensPerQuery: stats.reduce((sum, s) => sum + s.inputTokens, 0) / n,
+		failures: stats.filter((s) => s.failed).length,
 	};
 }
 
@@ -370,6 +494,19 @@ function renderTable(
 		["Degraded", String(record.degraded)],
 		["ms/query", record.msPerQuery.toFixed(0)],
 	];
+	const rerank = record.rerank as ReturnType<typeof rerankStats> & {
+		model: string;
+		candidates: number;
+	};
+	if (rerank !== null) {
+		rows.push(
+			["Rerank", rerank.model],
+			["Candidates", String(rerank.candidates)],
+			["Jev ms/query", rerank.msPerQuery.toFixed(0)],
+			["Jev tokens/query", rerank.inputTokensPerQuery.toFixed(0)],
+			["Rerank failures", String(rerank.failures)],
+		);
+	}
 	const width = Math.max(...rows.map(([label]) => label.length));
 	return rows
 		.map(([label, value]) => `${label.padEnd(width)}  ${value}`)

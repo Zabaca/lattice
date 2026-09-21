@@ -7,13 +7,15 @@ import {
 } from "../../embed/provider.js";
 import { selectTextProvider, type TextProvider } from "../../llm/provider.js";
 import { RerankConfigurationError } from "../../rerank/provider.js";
-import { type Judge, selectJudge } from "../../run/judge.js";
+import { type HubCandidate, type Judge, selectJudge } from "../../run/judge.js";
 import {
 	type ResearchDeps,
 	type ResearchResult,
 	researchLoop,
 } from "../../run/research.js";
 import { DEFAULT_MAX_REWRITES } from "../../run/runner.js";
+import { embedQueryWith } from "../../search/embed-query.js";
+import { searchConcepts } from "../../search/search.js";
 import { LockHeldError } from "../../sync/lock.js";
 import { resolvePaths } from "../../utils/paths.js";
 import {
@@ -32,6 +34,9 @@ import {
 	webReasons,
 } from "./run-deps.js";
 import { SpaceMismatchError, syncBundle } from "./sync.js";
+
+/** Hubs shortlisted for the judge to place the topic under; the bundle's hubs grow, a request should not. */
+const HUB_SHORTLIST = 10;
 
 /**
  * Research a topic end to end: the judged loop over the index, a decision
@@ -111,8 +116,37 @@ export async function runResearch(
 		if (legs.searchIndex === undefined) {
 			throw new Error("the index leg was not built");
 		}
+		const hubText = db.prepare<
+			{ title: string | null; description: string | null },
+			[string]
+		>("SELECT title, description FROM concepts WHERE path = ?");
 		const deps: ResearchDeps = {
 			searchIndex: legs.searchIndex,
+			listHubs: async (question) => {
+				if (db === undefined) {
+					throw new Error("the index connection is closed");
+				}
+				const embedded = await embedQueryWith(question, () => provider);
+				const result = await searchConcepts(db, {
+					query: question,
+					limit: HUB_SHORTLIST,
+					chunksPerConcept: 1,
+					asOf: Date.now(),
+					expand: 0,
+					candidates: HUB_SHORTLIST,
+					semantic: embedded.semantic,
+					semanticUnavailable: embedded.reason,
+					type: "Topic",
+				});
+				return result.hits.map((hit): HubCandidate => {
+					const row = hubText.get(hit.path);
+					return {
+						path: hit.path,
+						title: row?.title ?? hit.title ?? hit.path,
+						description: row?.description ?? "",
+					};
+				});
+			},
 			searchWeb: legs.searchWeb,
 			readPage: legs.readPage,
 			judge,
@@ -204,7 +238,11 @@ function render(result: ResearchResult): string {
 	} else {
 		const doc = result.document;
 		lines.push(`${doc.action}: ${doc.path} — ${doc.title}`);
-		lines.push(`hub: ${doc.hub ?? "none"}`);
+		lines.push(
+			doc.hub === null
+				? "hub: none"
+				: `hub: ${doc.hub}${doc.hubFrom === "created" ? " (created)" : doc.hubFrom === "judge" ? " (placed by the judge)" : ""}`,
+		);
 		lines.push(
 			`sources: ${doc.sources.join(", ")}` +
 				(doc.droppedSources.length === 0

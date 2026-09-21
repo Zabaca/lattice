@@ -28,9 +28,16 @@ export interface WritePromptInput {
 	 * a bundle path relative to the document, or a URL.
 	 */
 	allowedSources: string[];
-	/** The hub the document belongs to, as a citation, when there is one. */
+	/**
+	 * The hub the document belongs to, as a citation, when one was found.
+	 * Without one the writer is asked to name the subject, and the command
+	 * writes the hub.
+	 */
 	hub?: string;
 }
+
+/** The line a draft ends with when it names its own hub: `hub: <Name> — <one sentence>`. */
+export const HUB_TRAILER = /^hub:\s*(.+?)\s+(?:—|--|-)\s+(.+?)\s*$/;
 
 /** The skill's document template and field rules, verbatim. */
 const TEMPLATE = `\`~/.lattice/docs/research/{filename}.md\`:
@@ -80,12 +87,30 @@ Cite the same URLs again as markdown links in a \`## Sources\` section, so a
 reader of the rendered document can follow them. In the body, the wikilinks
 from Step 6 stand where the bare names would have been.`;
 
-const LINKING = `Link what the document mentions. Where the body refers to something an
-indexed document already covers, write a wikilink instead of a bare name:
-\`[[name]]\` for another document in \`research/\`, \`[[/topic/name]]\` for a
-document of another type. Where it leans on a concept nobody has written
-yet, link it anyway as \`[[/{type}/{name}]]\` and leave it unresolved. Links
-inside fenced code blocks are not edges. Do not put entities in frontmatter.`;
+const LINKING = `Connect the document to the graph. A document with no in-bundle links is a
+leaf nobody can reach except by search, so the body must contain at least
+one wikilink, and it is refused without one. Where the body refers to
+something an indexed document already covers, write a wikilink instead of a
+bare name: \`[[name]]\` for another document in \`research/\`,
+\`[[/topic/name]]\` for a document of another type. Where it leans on a
+concept nobody has written yet — a technology, a method, a library, an
+organisation it keeps returning to — link it anyway as \`[[/{type}/{name}]]\`
+(kebab-case, for example \`[[/tool/sqlite-fts5]]\` or \`[[/method/reciprocal-rank-fusion]]\`)
+and leave it unresolved: an unresolved link is the graph's record that the
+knowledge is wanted. The document's own subject is its hub, cited in
+\`sources\`, so do not wikilink the subject itself under another type; link
+the things the document says about it. Links inside fenced code blocks are
+not edges. Do not put entities in frontmatter.`;
+
+const NAME_HUB = `No topic hub exists yet for this subject. After the document, as its very
+last line, name the subject it belongs under:
+
+hub: <Subject name> — <one sentence describing the subject>
+
+The subject is the thing the question is about (the tool, the method, the
+system), broad enough that other research will share it: for a question
+about how SQLite FTS5 ranks, the hub is \`SQLite FTS5\`, not the question.
+The command writes the hub document from this line.`;
 
 export function writePrompt(input: WritePromptInput): string {
 	const parts: string[] = [];
@@ -121,8 +146,11 @@ export function writePrompt(input: WritePromptInput): string {
 				? ""
 				: `\nCite the topic hub \`${input.hub}\`: that is how the document declares which subject it belongs to.`),
 	);
-	parts.push(TEMPLATE);
 	parts.push(LINKING);
+	parts.push(TEMPLATE);
+	if (input.hub === undefined) {
+		parts.push(NAME_HUB);
+	}
 	return parts.join("\n\n");
 }
 

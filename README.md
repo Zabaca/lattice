@@ -269,9 +269,12 @@ already indexed; nothing is written), `extend` (a research document it kept
 has most of the answer) or `new`. Unless answered, the loop runs again over
 the web on the same queries, a model (Sonnet by default) writes or extends the
 document from the kept passages, the command checks it — type, title,
-description, `sources` cut to what the run actually read — files it under
-`research/`, cites the topic hub and links back from the hub's `## Research`
-section, syncs, and reads the document's links back. `/research-jev` is the
+description, at least one wikilink, `sources` cut to what the run actually
+read — files it under `research/`, cites the topic hub and links back from the
+hub's `## Research` section, syncs, and reads the document's links back. The
+hub is the one the index run kept, else the one Jev places the topic under
+from the ten hubs the index ranks highest, else a new one the command writes
+from the subject the writer names. `/research-jev` is the
 skill built on it: run, then present.
 
 ```bash

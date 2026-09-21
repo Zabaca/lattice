@@ -23,7 +23,9 @@ import { RerankConfigurationError } from "../rerank/provider.js";
 import {
 	type Candidate,
 	COMPLETENESS_LEVELS,
+	type HubCandidate,
 	type Judge,
+	type Placement,
 	type Transition,
 	type Verdict,
 } from "./judge.js";
@@ -36,6 +38,13 @@ const KEEP_BAR = 0.5;
  * the pages above it are ranked and the runner reads the best few.
  */
 const READ_FLOOR = 0.3;
+/**
+ * Noul probability a hub needs before the research is filed under it. On
+ * the bundle's hubs a true subject scored 0.87–0.97 and a hub that merely
+ * shared the field (Exa for a question on rank fusion) 0.38–0.57, so the
+ * bar sits in the gap with room on both sides.
+ */
+const PLACE_BAR = 0.75;
 /** How much of a candidate Jev reads; a page's highlights fit, a page does not. */
 const TEXT_LIMIT = 1500;
 /** A page read in full arrives as a few ranked passages, which are worth more room. */
@@ -50,6 +59,12 @@ const WORTH_READING = {
 	true: "The page as a whole probably covers what the question asks, and the excerpt is just the wrong part of it.",
 	false:
 		"The page is off the topic, or the excerpt already shows what it has to say.",
+};
+
+const BELONGS = {
+	true: "The hub's subject is what the question is about, or the thing it is a question about; research on it would be listed under this hub.",
+	false:
+		"The hub is on a different subject, even one in the same field, using the same technique, or sharing a word with the question.",
 };
 
 const TRANSITIONS = {
@@ -194,6 +209,75 @@ export class JevJudge implements Judge {
 			inputTokens: result.usage.input_tokens,
 		};
 	}
+
+	place(question: string, hubs: HubCandidate[]): Promise<Placement> {
+		return placeWith(this.client, this.model, question, hubs);
+	}
+}
+
+/** One request over a shortlist of hubs: a Noul each, the best above the bar wins. */
+async function placeWith(
+	client: TypeSafeClient,
+	model: string,
+	question: string,
+	hubs: HubCandidate[],
+): Promise<Placement> {
+	if (hubs.length === 0) {
+		return { hub: null, probability: 0, model, inputTokens: 0 };
+	}
+	const ids = hubs.map((_, index) => `h${index + 1}`);
+	const questions: Record<string, ReturnType<typeof noul>> = {};
+	ids.forEach((id) => {
+		questions[id] = noul(
+			`Does the research question belong under hub ${id}?`,
+			BELONGS,
+		);
+	});
+	let result: Awaited<ReturnType<TypeSafeClient["systemOne"]>>;
+	try {
+		result = await client.systemOne({
+			state: {
+				researchQuestion: question,
+				hubs: hubs.map((hub, index) => ({
+					id: ids[index],
+					title: hub.title,
+					description: hub.description,
+				})),
+			},
+			questions,
+			model,
+		});
+	} catch (error) {
+		if (
+			error instanceof AuthenticationError ||
+			error instanceof PermissionDeniedError
+		) {
+			throw new RerankConfigurationError(
+				`TypeSafe rejected ${API_KEY_VAR} (${error.status}): ${error.message}`,
+			);
+		}
+		throw error;
+	}
+	const answers = result.answers as Record<
+		string,
+		{ type: "noul"; noul: number } | undefined
+	>;
+	let best: { path: string; probability: number } | undefined;
+	hubs.forEach((hub, index) => {
+		const answer = answers[ids[index]];
+		if (
+			answer?.type === "noul" &&
+			(best === undefined || answer.noul > best.probability)
+		) {
+			best = { path: hub.path, probability: answer.noul };
+		}
+	});
+	return {
+		hub: best !== undefined && best.probability >= PLACE_BAR ? best.path : null,
+		probability: best?.probability ?? 0,
+		model: result.model,
+		inputTokens: result.usage.input_tokens,
+	};
 }
 
 /** The Jev judge as the environment configures it; no key is an error. */

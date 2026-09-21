@@ -28,9 +28,19 @@ import {
 	parseConcept,
 	typeDirectory,
 } from "../sync/okf.js";
-import { type Decision, retryPrompt, writePrompt } from "../write/prompt.js";
+import {
+	type Decision,
+	HUB_TRAILER,
+	retryPrompt,
+	writePrompt,
+} from "../write/prompt.js";
 import type { Writer } from "../write/provider.js";
-import { type Candidate, COMPLETENESS_LEVELS, type Judge } from "./judge.js";
+import {
+	type Candidate,
+	COMPLETENESS_LEVELS,
+	type HubCandidate,
+	type Judge,
+} from "./judge.js";
 import {
 	canonicalUrl,
 	type Exit,
@@ -57,6 +67,8 @@ export interface DocumentRelations {
 
 export interface ResearchDeps {
 	searchIndex(query: string): Promise<Candidate[]>;
+	/** The few hubs the index ranks highest for the topic, for the judge to place it under. */
+	listHubs(topic: string): Promise<HubCandidate[]>;
 	/** Absent when no web searcher could be built; `options.webReason` says why. */
 	searchWeb?(query: string, round: number): Promise<WebSearch>;
 	readPage?(question: string, url: string): Promise<PageRead>;
@@ -104,6 +116,10 @@ export interface ResearchResult {
 		action: "written" | "extended";
 		title: string;
 		hub: string | null;
+		/** Where the hub came from: kept by the index run, placed by the judge, or written by this run from the writer's naming of the subject. */
+		hubFrom: "index" | "judge" | "created" | null;
+		/** The judge's probability for the best shortlisted hub, when it was asked; below the bar it is why the writer named one. */
+		hubProbability: number | null;
 		sources: string[];
 		/** Citations the writer invented, removed before the write. */
 		droppedSources: string[];
@@ -205,6 +221,26 @@ export async function researchLoop(
 		return result;
 	}
 
+	// hub: when the index run kept none, the judge places the question under
+	// one of the few hubs the index ranks highest, so a hub the queries never
+	// surfaced is still found and "none fits" is a verdict, not an absence.
+	let hub = assessment.hub;
+	let hubFrom: "index" | "judge" | "created" | null =
+		hub === null ? null : "index";
+	let hubProbability: number | null = null;
+	if (hub === null) {
+		const hubs = await deps.listHubs(topic);
+		if (hubs.length > 0) {
+			const placement = await deps.judge.place(topic, hubs);
+			cost.jevInputTokens += placement.inputTokens;
+			hubProbability = placement.probability;
+			if (placement.hub !== null) {
+				hub = placement.hub;
+				hubFrom = "judge";
+			}
+		}
+	}
+
 	// write: one call, with the kept passages and the rules; the check
 	// gives it one more if the document breaks them.
 	const existingPath = assessment.existing;
@@ -217,10 +253,7 @@ export async function researchLoop(
 	}
 	const existing =
 		existingRaw === undefined ? undefined : parseConcept(existingRaw);
-	const hubCitation =
-		assessment.hub === null
-			? undefined
-			: posix.relative(RESEARCH_DIR, assessment.hub);
+	const hubCitation = hub === null ? undefined : citationOf(hub);
 	const allowed = allowedSources(index.kept, web.kept, existingPath);
 	const prompt = writePrompt({
 		topic,
@@ -239,8 +272,7 @@ export async function researchLoop(
 		existingPath,
 		existing,
 		allowed,
-		hub: assessment.hub,
-		hubCitation,
+		hub,
 		exists: deps.bundle.exists,
 		now,
 	};
@@ -263,10 +295,26 @@ export async function researchLoop(
 	}
 
 	// link: the file under its type directory, and a line in the hub so the
-	// document has a backlink and the hub stays where a reader starts.
+	// document has a backlink and the hub stays where a reader starts. A hub
+	// the writer named is written first, from its name and one sentence.
 	deps.bundle.write(checked.path, checked.text);
-	if (assessment.hub !== null) {
-		const hubRaw = deps.bundle.read(assessment.hub);
+	if (checked.hub !== null) {
+		hub = checked.hub.path;
+		if (checked.hub.create !== undefined) {
+			hubFrom = "created";
+			deps.bundle.write(
+				hub,
+				hubDocument(
+					checked.hub.create.title,
+					checked.hub.create.description,
+					now,
+				),
+			);
+		} else if (hubFrom === null) {
+			// The writer named a hub that exists but the shortlist missed.
+			hubFrom = "judge";
+		}
+		const hubRaw = deps.bundle.read(hub);
 		if (hubRaw !== undefined) {
 			const linked = linkFromHub(
 				hubRaw,
@@ -274,7 +322,7 @@ export async function researchLoop(
 				checked.description,
 			);
 			if (linked !== hubRaw) {
-				deps.bundle.write(assessment.hub, linked);
+				deps.bundle.write(hub, linked);
 			}
 		}
 	}
@@ -285,8 +333,7 @@ export async function researchLoop(
 	// is already indexed.
 	const report = await deps.sync();
 	const problems = (report?.problems ?? []).filter(
-		(problem) =>
-			problem.path === checked.path || problem.path === assessment.hub,
+		(problem) => problem.path === checked.path || problem.path === hub,
 	);
 	if (problems.length > 0) {
 		throw new Error(
@@ -301,7 +348,9 @@ export async function researchLoop(
 		path: checked.path,
 		action: assessment.decision === "extend" ? "extended" : "written",
 		title: checked.title,
-		hub: assessment.hub,
+		hub,
+		hubFrom,
+		hubProbability,
 		sources: checked.sources,
 		droppedSources: checked.dropped,
 		...relations,
@@ -376,8 +425,8 @@ interface CheckInput {
 	existingPath?: string;
 	existing?: OkfConcept;
 	allowed: AllowedSources;
+	/** The hub found for the document, or null when the draft must name one. */
 	hub: string | null;
-	hubCitation?: string;
 	exists(path: string): boolean;
 	now: string;
 }
@@ -391,6 +440,11 @@ type Checked =
 			description: string;
 			sources: string[];
 			dropped: string[];
+			/** The hub cited, and what to write when it does not exist yet. */
+			hub: {
+				path: string;
+				create?: { title: string; description: string };
+			} | null;
 	  }
 	| { ok: false; problems: string[] };
 
@@ -402,10 +456,12 @@ type Checked =
  * promoted fields in a fixed order, the rest as the writer had them, the
  * sources filtered to what the run read, the hub cited, and provenance
  * that names this command. An extension keeps its path and its sources as
- * they were, and goes back to `draft` because its content changed.
+ * they were, and goes back to `draft` because its content changed. Without
+ * a hub the draft's last line must name one; the hub is then the existing
+ * document of that name, or a new one for the caller to write.
  */
 export function checkDraft(raw: string, input: CheckInput): Checked {
-	const text = unfence(raw);
+	const { text, trailer } = splitTrailer(unfence(raw));
 	const concept = parseConcept(text);
 	const title = concept.title?.trim() ?? "";
 	const path =
@@ -424,6 +480,29 @@ export function checkDraft(raw: string, input: CheckInput): Checked {
 	}
 	if (concept.body.trim() === "") {
 		problems.push("the body is empty");
+	} else if (!hasWikilink(concept.body)) {
+		problems.push(
+			"the body has no wikilink: link the concepts it leans on, as `[[/{type}/{name}]]` when unwritten",
+		);
+	}
+	let hub: NonNullable<Extract<Checked, { ok: true }>["hub"]> | null =
+		input.hub === null ? null : { path: input.hub };
+	if (input.hub === null) {
+		const named = trailer === undefined ? null : HUB_TRAILER.exec(trailer);
+		if (named === null) {
+			problems.push(
+				"no hub named: end with one line `hub: <Subject name> — <one sentence>`",
+			);
+		} else {
+			const hubTitle = named[1].trim();
+			const hubPath = `${TOPIC_DIR}/${slug(hubTitle) || "untitled"}.md`;
+			hub = input.exists(hubPath)
+				? { path: hubPath }
+				: {
+						path: hubPath,
+						create: { title: hubTitle, description: named[2].trim() },
+					};
+		}
 	}
 	if (problems.length > 0) {
 		return { ok: false, problems };
@@ -467,13 +546,9 @@ export function checkDraft(raw: string, input: CheckInput): Checked {
 	for (const entry of concept.sources) {
 		consider(entry, false);
 	}
-	if (
-		input.hub !== null &&
-		input.hubCitation !== undefined &&
-		!seen.has(input.hub)
-	) {
-		sources.unshift(input.hubCitation);
-		seen.add(input.hub);
+	if (hub !== null && !seen.has(hub.path)) {
+		sources.unshift(citationOf(hub.path));
+		seen.add(hub.path);
 	}
 
 	const rest = { ...input.existing?.rest, ...concept.rest };
@@ -493,7 +568,12 @@ export function checkDraft(raw: string, input: CheckInput): Checked {
 		sources,
 		generated: { by: GENERATED_BY, at: input.now },
 	};
-	const body = `${concept.body.startsWith("\n") ? "" : "\n"}${concept.body.replace(/\s*$/, "\n")}`;
+	// A wikilink to the subject itself under some other type — `[[/tool/x]]`
+	// for a document whose hub is `topic/x` — is the hub, so it resolves there
+	// rather than standing unresolved beside the citation.
+	const linked =
+		hub === null ? concept.body : subjectLinksToHub(concept.body, hub.path);
+	const body = `${linked.startsWith("\n") ? "" : "\n"}${linked.replace(/\s*$/, "\n")}`;
 	return {
 		ok: true,
 		path,
@@ -502,7 +582,75 @@ export function checkDraft(raw: string, input: CheckInput): Checked {
 		description,
 		sources: sources.map((entry) => citationTarget(entry) ?? ""),
 		dropped,
+		hub,
 	};
+}
+
+/** The draft without its last line when that line is a hub trailer, which is not part of the document. */
+function splitTrailer(text: string): { text: string; trailer?: string } {
+	const trimmed = text.replace(/\s*$/, "");
+	const cut = trimmed.lastIndexOf("\n");
+	const last = trimmed.slice(cut + 1);
+	if (!HUB_TRAILER.test(last)) {
+		return { text };
+	}
+	return { text: `${trimmed.slice(0, cut)}\n`, trailer: last };
+}
+
+/** Every wikilink whose name is the hub's, whatever type it was filed under, aimed at the hub. */
+function subjectLinksToHub(body: string, hubPath: string): string {
+	const name = slugOf(hubPath).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	return body.replace(
+		new RegExp(
+			`\\[\\[(?:/[^/\\]|]+/|\\.\\./[^/\\]|]+/)?${name}(?:\\.md)?(\\||#|\\]\\])`,
+			"g",
+		),
+		(_, tail) => `[[/${hubPath.replace(/\.md$/, "")}${tail}`,
+	);
+}
+
+/** Whether the body writes any wikilink outside a fenced block. */
+function hasWikilink(body: string): boolean {
+	let fenced = false;
+	for (const line of body.split("\n")) {
+		if (/^\s*```/.test(line)) {
+			fenced = !fenced;
+			continue;
+		}
+		if (!fenced && /\[\[[^\]]+\]\]/.test(line)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/** A hub as a research document cites it: relative to `research/`. */
+function citationOf(hubPath: string): string {
+	return posix.relative(RESEARCH_DIR, hubPath);
+}
+
+/**
+ * A new hub: a Topic document that says what the subject is and has a
+ * `## Research` section for the loop to link the document from. It is the
+ * skill's hub rule made mechanical, with the writer's sentence as the
+ * description.
+ */
+export function hubDocument(
+	title: string,
+	description: string,
+	now: string,
+): string {
+	return matter.stringify(
+		{ content: `\n# ${title}\n\n${description}\n\n${HUB_SECTION}\n` },
+		{
+			type: "Topic",
+			title,
+			description,
+			status: "draft",
+			tags: [slug(title)],
+			generated: { by: GENERATED_BY, at: now },
+		},
+	);
 }
 
 /** A model's document, without the code fence it may have wrapped it in and the blank lines before it. */
@@ -591,6 +739,8 @@ export function linkFromHub(
 	}
 	const inserted = [
 		...lines.slice(0, last + 1),
+		// The first entry of an empty section sits a blank line below the heading.
+		...(last === heading ? [""] : []),
 		line,
 		...(end < lines.length ? [""] : []),
 		...lines.slice(end),

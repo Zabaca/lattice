@@ -58,6 +58,22 @@ export const COMPLETENESS_LEVELS = [
 	"A complete answer",
 ] as const;
 
+/** A topic hub the research might belong under: its path, and what it says it is about. */
+export interface HubCandidate {
+	path: string;
+	title: string;
+	description: string;
+}
+
+export interface Placement {
+	/** The hub the question belongs under, or null when none of the candidates fits. */
+	hub: string | null;
+	/** How sure the judge was of that hub; 0 when none. */
+	probability: number;
+	model: string;
+	inputTokens: number;
+}
+
 export interface Judge {
 	readonly name: string;
 	judge(
@@ -65,6 +81,12 @@ export interface Judge {
 		tried: string[],
 		candidates: Candidate[],
 	): Promise<Verdict>;
+	/**
+	 * Which of a few hubs the question belongs under, if any. The caller
+	 * shortlists — the bundle's hubs grow, a request should not — and the
+	 * judge reads the shortlist against the question.
+	 */
+	place(question: string, hubs: HubCandidate[]): Promise<Placement>;
 }
 
 /**

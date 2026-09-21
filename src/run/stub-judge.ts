@@ -8,6 +8,10 @@
  * of `keep`, and a web candidate not kept is read in full when its ref
  * contains one of `read`.
  *
+ * `LATTICE_JUDGE_PLACE_STUB` is a substring: `place` answers with the first
+ * hub whose path contains it, and with none when it is unset or nothing
+ * matches.
+ *
  * It is named `stub` in the environment so it can never be selected by
  * accident.
  */
@@ -15,13 +19,16 @@
 import {
 	type Candidate,
 	COMPLETENESS_LEVELS,
+	type HubCandidate,
 	type Judge,
+	type Placement,
 	type Transition,
 	type Verdict,
 } from "./judge.js";
 
 export const STUB_JUDGE = "stub";
 export const STUB_VERDICTS_VAR = "LATTICE_JUDGE_STUB";
+export const STUB_PLACE_VAR = "LATTICE_JUDGE_PLACE_STUB";
 
 export interface StubVerdict {
 	keep: string[];
@@ -37,10 +44,26 @@ const TRANSITIONS: Transition[] = ["answer", "rewrite", "give_up"];
 export class StubJudge implements Judge {
 	readonly name = STUB_JUDGE;
 	private readonly verdicts: StubVerdict[];
+	private readonly placeNeedle?: string;
 	private calls = 0;
 
-	constructor(verdicts: StubVerdict[]) {
+	constructor(verdicts: StubVerdict[], placeNeedle?: string) {
 		this.verdicts = verdicts;
+		this.placeNeedle = placeNeedle;
+	}
+
+	async place(_question: string, hubs: HubCandidate[]): Promise<Placement> {
+		const needle = this.placeNeedle;
+		const hub =
+			needle === undefined
+				? undefined
+				: hubs.find((candidate) => candidate.path.includes(needle));
+		return {
+			hub: hub?.path ?? null,
+			probability: hub === undefined ? 0 : 0.9,
+			model: "stub",
+			inputTokens: 0,
+		};
 	}
 
 	async judge(
@@ -121,7 +144,7 @@ export function stubJudgeFromEnv(
 			`${STUB_VERDICTS_VAR} must be a non-empty JSON array of { keep, completeness, repeating, next, confidence }.`,
 		);
 	}
-	return new StubJudge(parsed);
+	return new StubJudge(parsed, env[STUB_PLACE_VAR]?.trim() || undefined);
 }
 
 function isVerdict(value: unknown): value is StubVerdict {

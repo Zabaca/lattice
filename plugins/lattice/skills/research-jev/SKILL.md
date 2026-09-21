@@ -46,7 +46,10 @@ Unless `answered`, it searches the web on the same queries — Exa first,
 Claude's own WebSearch added once a round has fallen short — and has a
 model write the document from the kept passages, with the hub cited, the
 sources filtered to what the run read, and a wikilink added to the hub's
-`## Research` section. Then it syncs and reads the relations back.
+`## Research` section. The hub is the one the index run kept, else the one
+Jev places the topic under from the hubs the index ranks highest, else a
+new `topic/` document the command writes from the subject the writer
+names. Then it syncs and reads the relations back.
 
 Read from the JSON:
 
@@ -55,8 +58,9 @@ Read from the JSON:
   the index run; `kept` is bundle paths.
 - `web` — the same for the web run, `kept` as `{ ref, leg?, read? }`, or
   `null` when the web was not searched.
-- `document` — `{ path, action, title, hub, sources, droppedSources,
-  outlinks, backlinks, unresolved }`, or `null` when nothing was written.
+- `document` — `{ path, action, title, hub, hubFrom, hubProbability,
+  sources, droppedSources, outlinks, backlinks, unresolved }`, or `null`
+  when nothing was written. `hubFrom` is `index`, `judge` or `created`.
 - `reason` — why nothing was written, when nothing was.
 - `cost` — `llmUsd`, `llmCalls`, `jevInputTokens`, `webUsd`, `writeUsd`,
   `writeCalls`.
@@ -91,7 +95,7 @@ Tell the user, from the JSON and nothing else:
 - The decision, and the index run's completeness label in the judge's
   words, with the kept paths.
 - When a document was written or extended: its path and title, the topic
-  hub it hangs off (or that there is none), what `outlinks` say it links
+  hub it hangs off and whether it was created for it (`hubFrom`), what `outlinks` say it links
   to, what `backlinks` say links to it, and anything in `unresolved` — an
   unresolved link names a document that has not been written yet, and is
   not a failure. Mention `droppedSources` when it is non-empty: those are
@@ -108,8 +112,8 @@ Do not restate the document's content: the user can open the path.
 
 - One document per concept, filed under its type. The subject is in the
   filename and the `Topic` hub, never in a directory.
-- The command never creates a hub. A document may name a missing one as
-  `[[/topic/<name>]]`, which stays unresolved until someone writes it.
+- Every document hangs off a hub: one the judge found, or one the command
+  wrote for the subject the writer named.
 - Every document the command writes has `type`, `title`, `description`,
   `tags`, `generated` (`by: agent:lattice/research`) and `sources` holding
   only what the run read.

@@ -3356,6 +3356,8 @@ describe("lattice research", () => {
 			action: "written",
 			title: "Zorblax tie handling",
 			hub: "topic/fixture.md",
+			hubFrom: "index",
+			hubProbability: null,
 			sources: ["../topic/fixture.md", "https://example.com/found"],
 			droppedSources: ["https://example.com/invented"],
 			outlinks: [
@@ -3452,7 +3454,7 @@ sources:
 
 ## Key findings
 
-Quuxfield behaves as expected, and zorblax shares a tie between the two.
+Quuxfield behaves as expected, and [[/tool/zorblax]] shares a tie between the two.
 
 ## Sources
 
@@ -3492,7 +3494,7 @@ Quuxfield behaves as expected, and zorblax shares a tie between the two.
 		expect(written).toContain("status: draft\n");
 		expect(written).toContain("  - 'https://example.com/original'\n");
 		expect(written).toContain("verified:\n  - by: 'human:james'\n");
-		expect(written).toContain("zorblax shares a tie");
+		expect(written).toContain("[[/tool/zorblax]] shares a tie");
 		expect(written).toContain("by: 'agent:lattice/research'");
 
 		const rendered = await invoke(
@@ -3541,7 +3543,10 @@ Body.
 		expect(refused.stderr).toContain("no `type`");
 		const refusedParsed = JSON.parse(refused.stdout);
 		expect(refusedParsed.document).toBeNull();
-		expect(refusedParsed.draft.problems).toEqual(["frontmatter has no `type`"]);
+		expect(refusedParsed.draft.problems).toEqual([
+			"frontmatter has no `type`",
+			"the body has no wikilink: link the concepts it leans on, as `[[/{type}/{name}]]` when unwritten",
+		]);
 		expect(refusedParsed.draft.text).toContain("title: No type here");
 		expect(refusedParsed.cost.writeCalls).toBe(2);
 		// The document the first run wrote is still the only new file.
@@ -3555,6 +3560,135 @@ Body.
 				{ path: "topic/fixture.md" },
 			])}\n`,
 		);
+	});
+
+	test("a hub the index run never kept is found by the judge over the index's shortlist", async () => {
+		const home = await researchHome();
+
+		const result = await invoke(
+			["research", "how zorblax handles ties", "--json"],
+			home,
+			researchEnv(
+				[RESEARCH_PLAN],
+				[{ ...INDEX_GIVE_UP, keep: [] }, WEB_ANSWER],
+				[RESEARCH_DRAFT],
+				{ LATTICE_JUDGE_PLACE_STUB: "topic/fixture" },
+			),
+		);
+
+		expect(result.code).toBe(0);
+		const parsed = JSON.parse(result.stdout);
+		expect(parsed.index.kept).toEqual([]);
+		expect(parsed.document).toMatchObject({
+			path: "research/zorblax-tie-handling.md",
+			hub: "topic/fixture.md",
+			hubFrom: "judge",
+			hubProbability: 0.9,
+			sources: ["../topic/fixture.md", "https://example.com/found"],
+			backlinks: ["topic/fixture.md"],
+		});
+		const hub = readFileSync(join(home, "docs", "topic", "fixture.md"), "utf8");
+		expect(hub).toContain(
+			"- [[/research/zorblax-tie-handling]] — How zorblax handles ties.\n",
+		);
+
+		const rendered = await invoke(
+			["research", "how zorblax handles ties"],
+			home,
+			researchEnv(
+				[RESEARCH_PLAN],
+				[{ ...INDEX_MOSTLY, keep: ["research/zorblax"] }, WEB_ANSWER],
+				[RESEARCH_DRAFT],
+				{ LATTICE_JUDGE_PLACE_STUB: "topic/fixture" },
+			),
+		);
+		expect(rendered.stdout).toContain(
+			"hub: topic/fixture.md (placed by the judge)",
+		);
+	});
+
+	test("when no hub fits, the writer names the subject and the command writes the hub", async () => {
+		const home = await researchHome();
+		const draft = `${RESEARCH_DRAFT.replace("  - ../topic/fixture.md\n", "")}
+hub: Zorblax — The zorblax tool and how it ranks things.
+`;
+
+		const result = await invoke(
+			["research", "how zorblax handles ties", "--json"],
+			home,
+			researchEnv(
+				[RESEARCH_PLAN],
+				[{ ...INDEX_GIVE_UP, keep: [] }, WEB_ANSWER],
+				[draft],
+			),
+		);
+
+		expect(result.code).toBe(0);
+		const parsed = JSON.parse(result.stdout);
+		expect(parsed.document).toMatchObject({
+			path: "research/zorblax-tie-handling.md",
+			hub: "topic/zorblax.md",
+			hubFrom: "created",
+			hubProbability: 0,
+			sources: ["../topic/zorblax.md", "https://example.com/found"],
+			backlinks: ["topic/zorblax.md"],
+			// `[[/tool/zorblax]]` names the subject, so it is the hub.
+			unresolved: [],
+		});
+		// The trailer is not part of the document.
+		const written = readFileSync(
+			join(home, "docs", "research", "zorblax-tie-handling.md"),
+			"utf8",
+		);
+		expect(written).not.toContain("hub: Zorblax");
+		expect(written).toContain("see\n[[/topic/zorblax]] for the tool itself");
+
+		const hub = readFileSync(join(home, "docs", "topic", "zorblax.md"), "utf8");
+		const at = /at: '([^']+)'/.exec(hub)?.[1] as string;
+		expect(hub.replace(at, "<now>")).toBe(`---
+type: Topic
+title: Zorblax
+description: The zorblax tool and how it ranks things.
+status: draft
+tags:
+  - zorblax
+generated:
+  by: 'agent:lattice/research'
+  at: '<now>'
+---
+
+# Zorblax
+
+The zorblax tool and how it ranks things.
+
+## Research
+
+- [[/research/zorblax-tie-handling]] — How zorblax handles ties.
+`);
+		const status = await invoke(["status"], home);
+		expect(status.stdout).toContain("Up to date.");
+		expect(status.stdout).not.toContain("problem");
+		const rels = await invoke(["rels", "topic/zorblax.md", "--json"], home);
+		expect(
+			JSON.parse(rels.stdout).outlinks.map(
+				(edge: { path: string }) => edge.path,
+			),
+		).toEqual(["research/zorblax-tie-handling.md"]);
+
+		// A draft that names no hub when none was found is sent back for one.
+		const unnamed = await invoke(
+			["research", "how zorblax handles ties", "--json"],
+			home,
+			researchEnv(
+				[RESEARCH_PLAN],
+				[{ ...INDEX_GIVE_UP, keep: [] }, WEB_ANSWER],
+				[RESEARCH_DRAFT],
+			),
+		);
+		expect(unnamed.code).toBe(1);
+		expect(JSON.parse(unnamed.stdout).draft.problems).toEqual([
+			"no hub named: end with one line `hub: <Subject name> — <one sentence>`",
+		]);
 	});
 
 	test("a web run that gives up, or no web searcher at all, writes nothing and says why", async () => {

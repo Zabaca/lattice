@@ -1,10 +1,17 @@
 ---
-name: research
-description: Research a topic - searches existing docs, asks before new research
+name: research-jev
+description: Research a topic with the judged loop (lattice run) - one run covers index and web, asks before new research
 ---
 
-Research the topic given in `args`: search what is already indexed, and only then
-write something new.
+Research the topic given in `args`: run the judged search loop once over the
+index and the web, present what is already indexed, and only then write
+something new.
+
+It differs from the `research` skill in one way: `lattice run` has already
+planned the queries, searched the index and Exa, and had Jev judge every hit,
+so the index search, the web search and the coverage report are one command,
+and the document's citations come from its output.
+
 
 ## Where documents live
 
@@ -23,16 +30,53 @@ kebab-cased, flat within that directory. There is no subject directory and no
 | `~/.lattice/docs/research/` | `type: Research` — findings on a specific question |
 | `~/.lattice/docs/topic/` | `type: Topic` — a hub that describes a subject and links out to its research |
 
+
 ## Process
 
-### Step 1 & 2: Search what is already indexed, and present it
+### Step 1: Run
 
-Run the `search` skill on `<topic>`. It searches `lattice search --json`,
-follows up on the strongest hits, and reports what's already indexed —
-coverage, gaps, staleness, and whether the search was degraded. Use its
-output as the basis for Step 3; do not re-run the search separately here.
+Run this once, exactly as written, and do not check the environment first:
 
-### Step 3: Ask before researching
+```bash
+lattice run "<topic>" --json
+```
+
+It plans queries, searches the index and Exa, has Jev judge every result and
+rewrites when the judge finds gaps. Read from the JSON:
+
+- `exit` — `answer`, `decide` or `give_up`.
+- `completeness` (0 to 3) and `completenessLabel` — the judge's rating of
+  the kept set as a whole.
+- `kept[]` — `{ source, title, ref, text }`. An `index` entry's `ref` is a
+  bundle path and `text` the full matching passages; a `web` entry's `ref`
+  is a URL and `text` the highlights Exa picked out.
+- `tried[]` — every query the runner searched.
+- `records[]` — one per judge visit, with `probabilities` over `answer`,
+  `rewrite` and `give_up`.
+- `webReason` — set when the web leg did not run.
+
+Do not run `lattice search`, the `search` skill, or read the files behind
+the index hits: the passages in `kept` are the coverage report.
+
+If it exits non-zero it prints why (no `TYPESAFE_API_KEY`, no
+`LATTICE_OAUTH_TOKEN` — Claude Code hides `CLAUDE_CODE_OAUTH_TOKEN` from
+commands, so the token has to be exported under that name — or no index).
+Say so in one line and fall back to the `research` skill's Steps 1 to 4:
+`lattice search "<topic>" --json` for the index, then `lattice web "<topic>"
+--json` for the web, and continue from Step 5 here.
+
+### Step 2: Present what is indexed
+
+From the `index` entries in `kept`, tell the user, with paths:
+
+- Which documents cover the topic, quoting the passage from `text` that does.
+- Staleness and trust, read from the path and the passage: a `research/`
+  document is findings on one question, a `topic/` document is a hub.
+- The completeness label, in the judge's words, and what the kept set does
+  *not* cover.
+- The queries in `tried`, in one line.
+
+### Step 3: Ask, driven by the exit
 
 Use AskUserQuestion:
 
@@ -41,40 +85,46 @@ Use AskUserQuestion:
   - Yes — research and extend an existing document
   - No — the existing research is enough
 
+Put the option the run points to first, marked "(Recommended)":
+
+| Run | Recommend |
+|-----|-----------|
+| `answer` with completeness "A complete answer" | No |
+| "Most of the answer" or a partial label, with index entries kept | Extend an existing document — name the kept document |
+| `give_up`, or no index entries kept | New document |
+
+On `decide`, show `records[-1].probabilities` in the question text and
+recommend by the label as above.
+
 If **No**, stop here.
 
-### Step 4: Research
+### Step 4: Research the gap
 
-Focus on the gap identified in step 2 rather than restating what is already
-indexed. Keep every URL you use — they become the document's `sources`.
+The gap is what the completeness label says is missing, not a guess. Focus
+on it rather than restating what is already indexed. Keep every URL you use
+— they become the document's `sources`.
 
-**If `EXA_API_KEY` is in the environment**, start with `lattice web`:
-
-```bash
-lattice web "<topic>" --json                     # Neural search; read the highlights
-lattice web "<topic>" --json --type fast         # A quicker, shallower pass
-lattice web "<topic>" --json --since 2026-01-01  # Anything time-sensitive
-lattice web "<topic>" --json --domain docs.example.com --text  # One site, with page text
-```
-
-Each result carries the page's `url`, `title`, `publishedDate` and
-`highlights` — the passages Exa judged to answer the query — so a result can be
-cited without fetching the page. The URLs go into `sources`.
+The `web` entries in `kept` are the Exa sources: cite their `ref` URLs, and
+quote from their `text`, without fetching the pages. Reuse `tried` as the
+WebSearch queries below rather than inventing new ones.
 
 Exa answers a described need well and a literal string badly. Send an error
 message, a package version or an exact identifier through WebSearch, not
-`lattice web`. **Always also run WebSearch**: Exa lags on new content and
+`lattice run`. **Always also run WebSearch**: Exa lags on new content and
 misses the long tail, so a topic with a fresh or obscure answer needs both.
 
-If the key is absent, or `lattice web` exits non-zero (no credits, a rejected
-key, a network failure — it prints why), say so once and continue with
-WebSearch alone. Do not retry, and do not let the run end without web sources
-because Exa was unavailable.
+If `webReason` is set, Exa did not run (no `EXA_API_KEY`, no credits, a
+rejected key, a network failure — the reason is in the field). Say so once
+and continue with WebSearch alone. Do not retry, and do not let the run end
+without web sources because Exa was unavailable.
 
-When working in the Lattice checkout, the key is in the repo's `secrets.yaml`:
+When working in the Lattice checkout, the keys are in the repo's
+`secrets.yaml`, and the OAuth token in `~/.claude/settings.json`:
 
 ```bash
 export EXA_API_KEY=$(sops -d --extract '["EXA_API_KEY"]' secrets.yaml)
+export TYPESAFE_API_KEY=$(sops -d --extract '["TYPESAFE_API_KEY"]' secrets.yaml)
+export LATTICE_OAUTH_TOKEN=...   # never CLAUDE_CODE_OAUTH_TOKEN: the harness hides that name
 ```
 
 ### Step 5: Choose the type and filename
@@ -99,7 +149,8 @@ or a name that only makes sense next to a directory name.
 A document with no in-bundle edges is a leaf nobody can reach except by
 search. Sharing a directory with another document is not an edge — only a
 link or a citation is. Before writing, decide what the new document links to,
-using the hits from Step 1 — do not run a new search for this.
+using the `index` entries in `kept` from Step 1 — they are the `sources:`
+citations and the wikilink targets; do not run a new search for this.
 
 **Cite what it builds on.** For each indexed document the new research
 extends, contradicts, or relies on, add it to `sources:` as a bundle-relative
@@ -209,7 +260,14 @@ Then verify, through the CLI rather than by assumption:
 lattice status                                   # frontmatter problems, if any
 lattice rels research/{filename}.md              # links, backlinks, unresolved
 lattice search "<topic>" --json                  # the new document should now be a hit
+lattice run "<topic>" --no-web --max-rewrites 0 --json   # the judge should keep it
 ```
+
+The last command is the run from Step 1 over the index alone. The new
+document should be in `kept`, and `completenessLabel` should not be lower
+than Step 1's. If the document is absent, the judge did not find it worth
+citing for the question it was written to answer — reread the passage it
+matched on against the question before deciding the run is wrong.
 
 If `lattice status` reports a frontmatter problem for the new file, fix the
 frontmatter and sync again. If it reports the file as filed outside its type's
@@ -226,7 +284,10 @@ almost always a wrong path — fix the link, not the target, and sync again.
 
 Tell the user:
 
-- What the search found before the research, and whether it was degraded
+- What the run found before the research: the kept documents, the
+  completeness label, and whether the web leg ran (`webReason`)
+- The post-sync run: whether the new document is in `kept`, and the
+  completeness label before and after
 - The document path, and the Topic hub it hangs off (written or updated)
 - What `lattice rels` reports the document is connected to, including anything
   still unresolved

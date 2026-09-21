@@ -230,7 +230,8 @@ web are searched, TypeSafe's Jev judges every candidate and the set as a whole,
 and code decides whether to answer, rewrite the queries (up to `--max-rewrites`,
 default 2), give up, or hand the decision back. The point is fewer agent turns
 for the `/search` and `/research` skills: one command returns the sources worth
-citing instead of a page of hits to read.
+citing instead of a page of hits to read. `/jev-search` and `/research-jev` are
+the skills built on it.
 
 ```bash
 lattice run "how do agentic search loops decide when to stop"           # exit line, kept sources, cost

@@ -199,7 +199,9 @@ reads `secrets.yaml`; the skill says how to export the key.
 (`src/run/runner.ts`): code drives, Jev judges, and a language model is called
 only in the two states that turn prose into queries. It exists so the
 `/search` and `/research` skills spend one command, not several agent turns,
-finding what to cite. All states run in one process:
+finding what to cite. The `/jev-search` and `/research-jev` skills are the two
+built on it, each the counterpart of a skill that searches by hand. All states
+run in one process:
 
 | State | Runs | Then |
 |---|---|---|

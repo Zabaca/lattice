@@ -259,11 +259,11 @@ Then verify, through the CLI rather than by assumption:
 ```bash
 lattice status                                   # frontmatter problems, if any
 lattice rels research/{filename}.md              # links, backlinks, unresolved
-lattice search "<topic>" --json                  # the new document should now be a hit
 lattice run "<topic>" --no-web --max-rewrites 0 --json   # the judge should keep it
 ```
 
-The last command is the run from Step 1 over the index alone. The new
+The last command is the run from Step 1 over the index alone, and it stands
+in for `lattice search` here: a document the judge keeps was indexed. The new
 document should be in `kept`, and `completenessLabel` should not be lower
 than Step 1's. If the document is absent, the judge did not find it worth
 citing for the question it was written to answer — reread the passage it

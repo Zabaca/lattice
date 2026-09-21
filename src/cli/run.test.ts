@@ -3120,3 +3120,514 @@ describe("lattice run", () => {
 		expect(unknown.stderr).toContain("claude, stub");
 	});
 });
+
+/**
+ * `lattice research` is the research skill as one command. The index and
+ * web runs are scripted as `lattice run`'s are, the writer stub says what
+ * document comes back, and the tests watch the decision, the file on disk,
+ * the hub, and what the index says the document is connected to.
+ */
+const RESEARCH_HUB = `---
+type: Topic
+title: Fixture
+description: The fixture subject, a hub.
+status: draft
+tags: [fixture]
+sources: []
+---
+
+# Fixture
+
+The fixture hub is about zorblax.
+
+## Research
+
+- [[/research/existing]] — what is known about quuxfield.
+`;
+
+const RESEARCH_EXISTING = `---
+type: Research
+title: Existing findings
+description: What is already known about quuxfield.
+status: stable
+tags: [fixture, quuxfield]
+sources:
+  - ../topic/fixture.md
+  - https://example.com/original
+verified:
+  - by: human:james
+    at: 2026-09-01T00:00:00Z
+---
+
+# Existing findings
+
+## Key findings
+
+Quuxfield behaves as expected.
+
+## Sources
+
+1. [Original](https://example.com/original)
+`;
+
+const RESEARCH_PAGES = [
+	{
+		title: "Zorblax ties explained",
+		url: "https://example.com/found",
+		highlights: ["Zorblax shares a tie between the two."],
+	},
+	{
+		title: "Unrelated",
+		url: "https://example.com/unrelated",
+		highlights: ["Nothing here."],
+	},
+];
+
+/** A valid document from the writer: it cites the hub, the kept page, and one page the run never saw. */
+const RESEARCH_DRAFT = `---
+type: Research
+title: Zorblax tie handling
+description: How zorblax handles ties.
+status: draft
+tags: [fixture, zorblax]
+sources:
+  - ../topic/fixture.md
+  - https://example.com/found
+  - https://example.com/invented
+---
+
+# Zorblax tie handling
+
+## Key findings
+
+Ties are shared, as [[/topic/fixture]] says and [[existing]] found; see
+[[/tool/zorblax]] for the tool itself.
+
+## Sources
+
+1. [Zorblax ties explained](https://example.com/found)
+`;
+
+/** What the check writes for RESEARCH_DRAFT, with the instant blanked. */
+const RESEARCH_WRITTEN_FRONTMATTER = `---
+type: Research
+title: Zorblax tie handling
+description: How zorblax handles ties.
+status: draft
+tags:
+  - fixture
+  - zorblax
+sources:
+  - ../topic/fixture.md
+  - 'https://example.com/found'
+generated:
+  by: 'agent:lattice/research'
+  at: '<now>'
+---
+`;
+
+/** An initialised home holding only the hub and the existing research document, synced, so status is clean. */
+async function researchHome(): Promise<string> {
+	const home = freshHome();
+	await invoke(["init"], home);
+	mkdirSync(join(home, "docs", "topic"), { recursive: true });
+	mkdirSync(join(home, "docs", "research"), { recursive: true });
+	writeFileSync(join(home, "docs", "topic", "fixture.md"), RESEARCH_HUB);
+	writeFileSync(
+		join(home, "docs", "research", "existing.md"),
+		RESEARCH_EXISTING,
+	);
+	const synced = await invoke(["sync"], home);
+	expect(synced.code).toBe(0);
+	return home;
+}
+
+function researchEnv(
+	queries: string[],
+	verdicts: Record<string, unknown>[],
+	docs: string[],
+	extra: Record<string, string | undefined> = {},
+) {
+	return runEnv(queries, verdicts, {
+		LATTICE_WRITE_PROVIDER: "stub",
+		LATTICE_WRITE_STUB: JSON.stringify(docs),
+		LATTICE_WEB_STUB: JSON.stringify(RESEARCH_PAGES),
+		...extra,
+	});
+}
+
+/** The planned queries: one finds the hub, one the existing document. */
+const RESEARCH_PLAN = '{"queries": ["zorblax", "quuxfield"]}';
+/** An index visit that keeps the hub and gives up: nothing written answers. */
+const INDEX_GIVE_UP = {
+	keep: ["topic/fixture"],
+	completeness: 0,
+	repeating: 0.1,
+	next: "give_up",
+	confidence: 0.9,
+};
+/** An index visit that keeps the existing document and the hub with minor gaps. */
+const INDEX_MOSTLY = {
+	keep: ["research/existing", "topic/fixture"],
+	completeness: 2,
+	repeating: 0.1,
+	next: "answer",
+	confidence: 0.9,
+};
+const INDEX_COMPLETE = { ...INDEX_MOSTLY, completeness: 3 };
+/** A web visit that keeps the one relevant page. */
+const WEB_ANSWER = {
+	keep: ["example.com/found"],
+	completeness: 3,
+	repeating: 0.1,
+	next: "answer",
+	confidence: 0.9,
+};
+const WEB_GIVE_UP = {
+	...WEB_ANSWER,
+	keep: [],
+	completeness: 0,
+	next: "give_up",
+};
+
+function frontmatterOf(text: string): string {
+	return text.slice(0, text.indexOf("---", 4) + 4);
+}
+
+describe("lattice research", () => {
+	test("a complete index answer is the decision, and nothing is written", async () => {
+		const home = await researchHome();
+
+		const result = await invoke(
+			["research", "how zorblax handles ties", "--json"],
+			home,
+			researchEnv([RESEARCH_PLAN], [INDEX_COMPLETE], [RESEARCH_DRAFT]),
+		);
+
+		expect(result.code).toBe(0);
+		const parsed = JSON.parse(result.stdout);
+		expect(parsed.decision).toBe("answered");
+		expect(parsed.index.exit).toBe("answer");
+		expect(parsed.index.completenessLabel).toBe("A complete answer");
+		expect(parsed.index.kept).toEqual([
+			"topic/fixture.md",
+			"research/existing.md",
+		]);
+		expect(parsed.web).toBeNull();
+		expect(parsed.document).toBeNull();
+		expect(parsed.reason).toContain("A complete answer");
+		expect(parsed.cost.writeCalls).toBe(0);
+		expect(
+			existsSync(join(home, "docs", "research", "zorblax-tie-handling.md")),
+		).toBe(false);
+
+		const rendered = await invoke(
+			["research", "how zorblax handles ties"],
+			home,
+			researchEnv([RESEARCH_PLAN], [INDEX_COMPLETE], [RESEARCH_DRAFT]),
+		);
+		expect(rendered.stdout).toContain("decision: answered");
+		expect(rendered.stdout).toContain("write $0.0000 over 0 calls");
+	});
+
+	test("with nothing indexed the web is researched and a new document written, cited, linked from the hub and synced", async () => {
+		const home = await researchHome();
+		const env = researchEnv(
+			[RESEARCH_PLAN],
+			[INDEX_GIVE_UP, WEB_ANSWER],
+			[RESEARCH_DRAFT],
+		);
+
+		const result = await invoke(
+			["research", "how zorblax handles ties", "--json"],
+			home,
+			env,
+		);
+
+		expect(result.code).toBe(0);
+		const parsed = JSON.parse(result.stdout);
+		expect(parsed.decision).toBe("new");
+		expect(parsed.index.exit).toBe("give_up");
+		expect(parsed.web.exit).toBe("answer");
+		expect(parsed.web.tried).toEqual(["zorblax", "quuxfield"]);
+		expect(parsed.web.kept).toEqual([{ ref: "https://example.com/found" }]);
+		expect(parsed.document).toEqual({
+			path: "research/zorblax-tie-handling.md",
+			action: "written",
+			title: "Zorblax tie handling",
+			hub: "topic/fixture.md",
+			sources: ["../topic/fixture.md", "https://example.com/found"],
+			droppedSources: ["https://example.com/invented"],
+			outlinks: [
+				"topic/fixture.md",
+				"topic/fixture.md",
+				"research/existing.md",
+			],
+			backlinks: ["topic/fixture.md"],
+			unresolved: ["tool/zorblax.md"],
+		});
+		expect(parsed.reason).toBeNull();
+		// One plan, no second plan for the web: it searched the same queries.
+		expect(parsed.cost.llmCalls).toBe(1);
+		expect(parsed.cost.writeCalls).toBe(1);
+
+		const written = readFileSync(
+			join(home, "docs", "research", "zorblax-tie-handling.md"),
+			"utf8",
+		);
+		const at = /at: '([^']+)'/.exec(written)?.[1];
+		expect(at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+		expect(frontmatterOf(written).replace(at as string, "<now>")).toBe(
+			RESEARCH_WRITTEN_FRONTMATTER,
+		);
+		expect(written).toContain("\n# Zorblax tie handling\n");
+
+		const hub = readFileSync(join(home, "docs", "topic", "fixture.md"), "utf8");
+		expect(
+			hub.endsWith(
+				"## Research\n\n- [[/research/existing]] — what is known about quuxfield.\n" +
+					"- [[/research/zorblax-tie-handling]] — How zorblax handles ties.\n",
+			),
+		).toBe(true);
+
+		const status = await invoke(["status"], home);
+		expect(status.stdout).toContain("Up to date.");
+		expect(status.stdout).not.toContain("problem");
+
+		const rels = await invoke(
+			["rels", "research/zorblax-tie-handling.md", "--json"],
+			home,
+		);
+		const relations = JSON.parse(rels.stdout);
+		expect(relations.outlinks).toContainEqual(
+			expect.objectContaining({ path: "topic/fixture.md", kind: "source" }),
+		);
+		expect(
+			relations.backlinks.map((edge: { path: string }) => edge.path),
+		).toEqual(["topic/fixture.md"]);
+
+		// A second run on the same topic finds the document and extends it;
+		// the hub is not linked twice.
+		const again = await invoke(
+			["research", "how zorblax handles ties", "--json"],
+			home,
+			researchEnv(
+				[RESEARCH_PLAN],
+				[
+					{ ...INDEX_MOSTLY, keep: ["research/zorblax", "topic/fixture"] },
+					WEB_ANSWER,
+				],
+				[RESEARCH_DRAFT],
+			),
+		);
+		expect(again.code).toBe(0);
+		expect(JSON.parse(again.stdout).decision).toBe("extend");
+		expect(JSON.parse(again.stdout).document.path).toBe(
+			"research/zorblax-tie-handling.md",
+		);
+		const hubAgain = readFileSync(
+			join(home, "docs", "topic", "fixture.md"),
+			"utf8",
+		);
+		expect(hubAgain.split("[[/research/zorblax-tie-handling]]")).toHaveLength(
+			2,
+		);
+		expect(await invoke(["status"], home)).toMatchObject({
+			stdout: expect.stringContaining("Up to date."),
+		});
+	});
+
+	test("a research document the judge kept with minor gaps is extended, keeping its sources and going back to draft", async () => {
+		const home = await researchHome();
+		const extended = `---
+type: Research
+title: Existing findings
+description: What is known about quuxfield, and how zorblax ties into it.
+tags: [fixture, quuxfield, zorblax]
+sources:
+  - https://example.com/found
+---
+
+# Existing findings
+
+## Key findings
+
+Quuxfield behaves as expected, and zorblax shares a tie between the two.
+
+## Sources
+
+1. [Original](https://example.com/original)
+2. [Zorblax ties explained](https://example.com/found)
+`;
+
+		const result = await invoke(
+			["research", "how zorblax ties into quuxfield", "--json"],
+			home,
+			researchEnv([RESEARCH_PLAN], [INDEX_MOSTLY, WEB_ANSWER], [extended]),
+		);
+
+		expect(result.code).toBe(0);
+		const parsed = JSON.parse(result.stdout);
+		expect(parsed.decision).toBe("extend");
+		expect(parsed.index.completenessLabel).toBe(
+			"Most of the answer, minor gaps",
+		);
+		expect(parsed.document).toMatchObject({
+			path: "research/existing.md",
+			action: "extended",
+			title: "Existing findings",
+			hub: "topic/fixture.md",
+			sources: [
+				"../topic/fixture.md",
+				"https://example.com/original",
+				"https://example.com/found",
+			],
+			droppedSources: [],
+		});
+
+		const written = readFileSync(
+			join(home, "docs", "research", "existing.md"),
+			"utf8",
+		);
+		expect(written).toContain("status: draft\n");
+		expect(written).toContain("  - 'https://example.com/original'\n");
+		expect(written).toContain("verified:\n  - by: 'human:james'\n");
+		expect(written).toContain("zorblax shares a tie");
+		expect(written).toContain("by: 'agent:lattice/research'");
+
+		const rendered = await invoke(
+			["research", "how zorblax ties into quuxfield"],
+			home,
+			researchEnv([RESEARCH_PLAN], [INDEX_MOSTLY, WEB_ANSWER], [extended]),
+		);
+		expect(rendered.stderr).toBe("");
+		expect(rendered.stdout).toContain("decision: extend");
+		expect(rendered.stdout).toContain("extended: research/existing.md");
+	});
+
+	test("a document that breaks the rules is sent back once; twice is an exit 1 with the draft and nothing written", async () => {
+		const home = await researchHome();
+		const fenced = `\`\`\`markdown
+---
+title: No type here
+description: A draft missing its type.
+---
+
+# No type here
+
+Body.
+\`\`\``;
+
+		const retried = await invoke(
+			["research", "how zorblax handles ties", "--json"],
+			home,
+			researchEnv(
+				[RESEARCH_PLAN],
+				[INDEX_GIVE_UP, WEB_ANSWER],
+				[fenced, RESEARCH_DRAFT],
+			),
+		);
+		expect(retried.code).toBe(0);
+		const parsed = JSON.parse(retried.stdout);
+		expect(parsed.document.action).toBe("written");
+		expect(parsed.cost.writeCalls).toBe(2);
+
+		const refused = await invoke(
+			["research", "how zorblax handles ties", "--json"],
+			home,
+			researchEnv([RESEARCH_PLAN], [INDEX_GIVE_UP, WEB_ANSWER], [fenced]),
+		);
+		expect(refused.code).toBe(1);
+		expect(refused.stderr).toContain("no `type`");
+		const refusedParsed = JSON.parse(refused.stdout);
+		expect(refusedParsed.document).toBeNull();
+		expect(refusedParsed.draft.problems).toEqual(["frontmatter has no `type`"]);
+		expect(refusedParsed.draft.text).toContain("title: No type here");
+		expect(refusedParsed.cost.writeCalls).toBe(2);
+		// The document the first run wrote is still the only new file.
+		expect(
+			(await invoke(["sql", "SELECT path FROM concepts ORDER BY path"], home))
+				.stdout,
+		).toBe(
+			`${JSON.stringify([
+				{ path: "research/existing.md" },
+				{ path: "research/zorblax-tie-handling.md" },
+				{ path: "topic/fixture.md" },
+			])}\n`,
+		);
+	});
+
+	test("a web run that gives up, or no web searcher at all, writes nothing and says why", async () => {
+		const home = await researchHome();
+
+		const gaveUp = await invoke(
+			["research", "how zorblax handles ties", "--json"],
+			home,
+			researchEnv(
+				[RESEARCH_PLAN],
+				[INDEX_GIVE_UP, WEB_GIVE_UP],
+				[RESEARCH_DRAFT],
+			),
+		);
+		expect(gaveUp.code).toBe(0);
+		const parsed = JSON.parse(gaveUp.stdout);
+		expect(parsed.decision).toBe("new");
+		expect(parsed.web.exit).toBe("give_up");
+		expect(parsed.document).toBeNull();
+		expect(parsed.reason).toContain("gave up");
+		expect(parsed.cost.writeCalls).toBe(0);
+
+		const noWeb = await invoke(
+			["research", "how zorblax handles ties", "--json"],
+			home,
+			researchEnv([RESEARCH_PLAN], [INDEX_GIVE_UP], [RESEARCH_DRAFT], {
+				LATTICE_WEB_PROVIDER: undefined,
+				LATTICE_WEB_STUB: undefined,
+				EXA_API_KEY: undefined,
+			}),
+		);
+		expect(noWeb.code).toBe(0);
+		const noWebParsed = JSON.parse(noWeb.stdout);
+		expect(noWebParsed.decision).toBe("new");
+		expect(noWebParsed.web).toBeNull();
+		expect(noWebParsed.document).toBeNull();
+		expect(noWebParsed.reason).toContain("EXA_API_KEY");
+		expect(noWebParsed.webReason).toContain("EXA_API_KEY");
+		expect(
+			existsSync(join(home, "docs", "research", "zorblax-tie-handling.md")),
+		).toBe(false);
+	});
+
+	test("an unknown writer and a malformed writer stub are exit 1 naming the variable", async () => {
+		const home = await researchHome();
+
+		const unknown = await invoke(
+			["research", "anything"],
+			home,
+			researchEnv([RESEARCH_PLAN], [INDEX_GIVE_UP], [RESEARCH_DRAFT], {
+				LATTICE_WRITE_PROVIDER: "gpt",
+			}),
+		);
+		expect(unknown.code).toBe(1);
+		expect(unknown.stderr).toContain("LATTICE_WRITE_PROVIDER");
+		expect(unknown.stderr).toContain("claude, stub");
+
+		const malformed = await invoke(
+			["research", "anything"],
+			home,
+			researchEnv([RESEARCH_PLAN], [INDEX_GIVE_UP], [RESEARCH_DRAFT], {
+				LATTICE_WRITE_STUB: "not json",
+			}),
+		);
+		expect(malformed.code).toBe(1);
+		expect(malformed.stderr).toContain("LATTICE_WRITE_STUB");
+
+		const uninitialised = await invoke(
+			["research", "anything"],
+			freshHome(),
+			researchEnv([RESEARCH_PLAN], [INDEX_GIVE_UP], [RESEARCH_DRAFT]),
+		);
+		expect(uninitialised.code).toBe(1);
+		expect(uninitialised.stderr).toContain("lattice init");
+	});
+});

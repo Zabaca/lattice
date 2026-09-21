@@ -160,7 +160,10 @@ function isExternal(raw: string): boolean {
  * identifier, so it gets the suffix back. A target that climbs out of the
  * bundle, or names a file that is not markdown, is not a document here.
  */
-function normalizeTarget(target: string, dir: string): string | undefined {
+export function normalizeTarget(
+	target: string,
+	dir: string,
+): string | undefined {
 	const decoded = decodeTarget(target);
 	if (decoded.includes("\\")) {
 		return undefined;

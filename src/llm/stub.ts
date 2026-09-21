@@ -35,26 +35,38 @@ export class StubTextProvider implements TextProvider {
 export function stubProviderFromEnv(
 	env: Record<string, string | undefined>,
 ): StubTextProvider {
-	const raw = env[STUB_TEXTS_VAR]?.trim();
-	if (!raw) {
+	return new StubTextProvider(
+		parseStubTexts(env[STUB_TEXTS_VAR], STUB_TEXTS_VAR),
+	);
+}
+
+/**
+ * The texts a stub variable scripts: a non-empty JSON array of strings.
+ * `varName` is what the message blames, so the writer's stub and the text
+ * provider's report their own variable in the same words.
+ */
+export function parseStubTexts(
+	raw: string | undefined,
+	varName: string,
+): string[] {
+	const trimmed = raw?.trim();
+	if (!trimmed) {
 		throw new Error(
-			`The ${STUB_PROVIDER} text provider needs ${STUB_TEXTS_VAR}: a JSON array of strings.`,
+			`The ${STUB_PROVIDER} provider needs ${varName}: a JSON array of strings.`,
 		);
 	}
 	let parsed: unknown;
 	try {
-		parsed = JSON.parse(raw);
+		parsed = JSON.parse(trimmed);
 	} catch {
-		throw new Error(`${STUB_TEXTS_VAR} is not valid JSON.`);
+		throw new Error(`${varName} is not valid JSON.`);
 	}
 	if (
 		!Array.isArray(parsed) ||
 		parsed.length === 0 ||
 		!parsed.every((text) => typeof text === "string")
 	) {
-		throw new Error(
-			`${STUB_TEXTS_VAR} must be a non-empty JSON array of strings.`,
-		);
+		throw new Error(`${varName} must be a non-empty JSON array of strings.`);
 	}
-	return new StubTextProvider(parsed);
+	return parsed;
 }

@@ -62,32 +62,8 @@ export function runRels(context: CommandContext): CommandOutput {
 			};
 		}
 
-		const outlinks = db
-			.query<EdgeRow, [number]>(
-				`SELECT ${EDGE_COLUMNS} FROM links l
-				JOIN concepts far ON far.id = l.target_concept_id
-				WHERE l.source_concept_id = ? ORDER BY l.id`,
-			)
-			.all(concept.id);
-
-		const backlinks = db
-			.query<EdgeRow, [number]>(
-				`SELECT ${EDGE_COLUMNS} FROM links l
-				JOIN concepts far ON far.id = l.source_concept_id
-				WHERE l.target_concept_id = ? ORDER BY far.path, l.id`,
-			)
-			.all(concept.id);
-
-		const unresolved = db
-			.query<UnresolvedRow, [number]>(
-				`SELECT l.target_path, l.raw_target, l.kind, l.link_text, l.anchor, l.context
-				FROM links l
-				WHERE l.source_concept_id = ? AND l.target_concept_id IS NULL
-				ORDER BY l.id`,
-			)
-			.all(concept.id);
-
-		const report = { concept, outlinks, backlinks, unresolved };
+		const relations = relationsFor(db, concept.id);
+		const report = { concept, ...relations };
 		if (context.flags.json) {
 			return { code: 0, stdout: `${JSON.stringify(report, null, 2)}\n` };
 		}
@@ -102,7 +78,7 @@ export function runRels(context: CommandContext): CommandOutput {
  * and `note/cooling.md` are the same document, and either is a reasonable
  * thing to have copied from somewhere else.
  */
-function findConcept(
+export function findConcept(
 	db: ReturnType<typeof openDatabase>,
 	wanted: string,
 ): ConceptRow | undefined {
@@ -114,11 +90,47 @@ function findConcept(
 	return row ?? undefined;
 }
 
-interface Report {
-	concept: ConceptRow;
+export interface Relations {
 	outlinks: EdgeRow[];
 	backlinks: EdgeRow[];
 	unresolved: UnresolvedRow[];
+}
+
+/** The three relations of one indexed concept, each in authoring order. */
+export function relationsFor(
+	db: ReturnType<typeof openDatabase>,
+	conceptId: number,
+): Relations {
+	const outlinks = db
+		.query<EdgeRow, [number]>(
+			`SELECT ${EDGE_COLUMNS} FROM links l
+			JOIN concepts far ON far.id = l.target_concept_id
+			WHERE l.source_concept_id = ? ORDER BY l.id`,
+		)
+		.all(conceptId);
+
+	const backlinks = db
+		.query<EdgeRow, [number]>(
+			`SELECT ${EDGE_COLUMNS} FROM links l
+			JOIN concepts far ON far.id = l.source_concept_id
+			WHERE l.target_concept_id = ? ORDER BY far.path, l.id`,
+		)
+		.all(conceptId);
+
+	const unresolved = db
+		.query<UnresolvedRow, [number]>(
+			`SELECT l.target_path, l.raw_target, l.kind, l.link_text, l.anchor, l.context
+			FROM links l
+			WHERE l.source_concept_id = ? AND l.target_concept_id IS NULL
+			ORDER BY l.id`,
+		)
+		.all(conceptId);
+
+	return { outlinks, backlinks, unresolved };
+}
+
+interface Report extends Relations {
+	concept: ConceptRow;
 }
 
 function reportText(report: Report): string {

@@ -1,11 +1,19 @@
 import { existsSync } from "node:fs";
 import { openDatabase } from "../../db/open.js";
-import { selectProvider } from "../../embed/provider.js";
-import { embedPending } from "../../embed/run.js";
+import {
+	type EmbeddingProvider,
+	selectProvider,
+} from "../../embed/provider.js";
+import { type EmbedReport, embedPending } from "../../embed/run.js";
 import { checkActiveSpace } from "../../embed/state.js";
-import { applySync, planSync, type SyncReport } from "../../sync/index.js";
+import {
+	applySync,
+	planSync,
+	type SyncPlan,
+	type SyncReport,
+} from "../../sync/index.js";
 import { acquireLock, LockHeldError } from "../../sync/lock.js";
-import { resolvePaths } from "../../utils/paths.js";
+import { type LatticePaths, resolvePaths } from "../../utils/paths.js";
 import type { CommandContext, CommandOutput } from "../run.js";
 import { embedReportText } from "./embed.js";
 
@@ -31,16 +39,43 @@ export async function runSync(context: CommandContext): Promise<CommandOutput> {
 	// lock file behind.
 	const provider = selectProvider(context.env, context.report);
 
-	let lock: ReturnType<typeof acquireLock>;
+	let outcome: SyncOutcome;
 	try {
-		lock = acquireLock(paths.syncLock);
+		outcome = await syncBundle(paths, provider);
 	} catch (error) {
-		if (error instanceof LockHeldError) {
+		if (error instanceof LockHeldError || error instanceof SpaceMismatchError) {
 			return { code: 1, stderr: error.message };
 		}
 		throw error;
 	}
+	const indexed =
+		outcome.report === null
+			? `Nothing to sync. ${outcome.plan.unchanged} concept${outcome.plan.unchanged === 1 ? "" : "s"} already indexed.\n`
+			: reportText(outcome.report);
+	return { code: 0, stdout: `${indexed}${embedReportText(outcome.embedded)}` };
+}
 
+/** The index and the configuration name different vector spaces; the message says which and what to do. */
+export class SpaceMismatchError extends Error {}
+
+export interface SyncOutcome {
+	plan: SyncPlan;
+	/** What was done, or null when the plan was a no-op and nothing was. */
+	report: SyncReport | null;
+	embedded: EmbedReport;
+}
+
+/**
+ * One sync, under the lock: refuse a space mismatch before a single
+ * document is read, plan, apply, embed the backlog. `lattice sync` and
+ * `lattice research` both run this; only what they say about it differs.
+ * A held lock and a mismatch are typed so a caller can map them to an exit.
+ */
+export async function syncBundle(
+	paths: LatticePaths,
+	provider: EmbeddingProvider,
+): Promise<SyncOutcome> {
+	const lock = acquireLock(paths.syncLock);
 	// Everything past the lock runs inside this try, so a failure anywhere
 	// releases it rather than blocking every later sync.
 	try {
@@ -54,15 +89,13 @@ export async function runSync(context: CommandContext): Promise<CommandOutput> {
 				provider.source,
 			);
 			if (mismatch !== undefined) {
-				return { code: 1, stderr: mismatch };
+				throw new SpaceMismatchError(mismatch);
 			}
 
 			const plan = planSync(db, paths.docs);
-			const indexed = isNoOp(plan)
-				? `Nothing to sync. ${plan.unchanged} concept${plan.unchanged === 1 ? "" : "s"} already indexed.\n`
-				: reportText(applySync(db, plan));
-			const embedded = embedReportText(await embedPending(db, provider));
-			return { code: 0, stdout: `${indexed}${embedded}` };
+			const report = isNoOp(plan) ? null : applySync(db, plan);
+			const embedded = await embedPending(db, provider);
+			return { plan, report, embedded };
 		} finally {
 			db.close();
 		}
@@ -71,7 +104,7 @@ export async function runSync(context: CommandContext): Promise<CommandOutput> {
 	}
 }
 
-function isNoOp(plan: ReturnType<typeof planSync>): boolean {
+function isNoOp(plan: SyncPlan): boolean {
 	return (
 		plan.added.length === 0 &&
 		plan.changed.length === 0 &&

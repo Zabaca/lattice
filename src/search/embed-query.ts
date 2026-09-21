@@ -8,7 +8,7 @@
  * it so the two embed a question the same way.
  */
 
-import { selectProvider } from "../embed/provider.js";
+import { type EmbeddingProvider, selectProvider } from "../embed/provider.js";
 import type { VectorSpace } from "../embed/state.js";
 import type { SemanticInput } from "./vector.js";
 
@@ -26,17 +26,28 @@ export async function embedQuery(
 	env: Record<string, string | undefined>,
 	report: (line: string) => void,
 ): Promise<EmbeddedQuery> {
+	return embedQueryWith(query, () => selectProvider(env, report));
+}
+
+/**
+ * The same, over a provider the caller supplies. `provider` is a thunk so
+ * that selecting one can fail into the reason like embedding can.
+ */
+export async function embedQueryWith(
+	query: string,
+	provider: () => EmbeddingProvider,
+): Promise<EmbeddedQuery> {
 	try {
-		const provider = selectProvider(env, report);
-		const space = { model: provider.model, dim: provider.dim };
+		const embedder = provider();
+		const space = { model: embedder.model, dim: embedder.dim };
 		// `embedQuery`, not `embed`: an asymmetric model is trained to be told
 		// that this is a question rather than a passage, and a query embedded
 		// as a passage lands in the wrong part of the space.
-		const [vector] = await provider.embedQuery([query]);
+		const [vector] = await embedder.embedQuery([query]);
 		return {
-			semantic: { vector, model: provider.model, dim: provider.dim },
+			semantic: { vector, model: embedder.model, dim: embedder.dim },
 			space,
-			source: provider.source,
+			source: embedder.source,
 		};
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);

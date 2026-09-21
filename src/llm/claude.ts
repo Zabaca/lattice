@@ -35,15 +35,19 @@ export class ClaudeProvider implements TextProvider {
 	readonly model: string;
 	private readonly env: Record<string, string>;
 	private readonly executable?: string;
+	private readonly maxBudgetUsd?: number;
 
 	constructor(options: {
 		model: string;
 		env: Record<string, string>;
 		executable?: string;
+		/** Stop the call once it has spent this much; a completion has no business running up a bill. */
+		maxBudgetUsd?: number;
 	}) {
 		this.model = options.model;
 		this.env = options.env;
 		this.executable = options.executable;
+		this.maxBudgetUsd = options.maxBudgetUsd;
 	}
 
 	async complete(prompt: string): Promise<Completion> {
@@ -51,7 +55,12 @@ export class ClaudeProvider implements TextProvider {
 		let costUsd = 0;
 		const turn = query({
 			prompt,
-			options: minimalOptions(this.model, this.env, this.executable),
+			options: {
+				...minimalOptions(this.model, this.env, this.executable),
+				...(this.maxBudgetUsd === undefined
+					? {}
+					: { maxBudgetUsd: this.maxBudgetUsd }),
+			},
 		});
 		for await (const message of turn) {
 			if (message.type === "assistant") {

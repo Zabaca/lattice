@@ -11,6 +11,7 @@ import { parseArgs } from "./args.js";
 import { runEmbed } from "./commands/embed.js";
 import { runInit } from "./commands/init.js";
 import { runRels } from "./commands/rels.js";
+import { runResearch } from "./commands/research.js";
 import { runRun } from "./commands/run.js";
 import { runSearch } from "./commands/search.js";
 import { runSql } from "./commands/sql.js";
@@ -119,6 +120,13 @@ const COMMANDS: Record<string, CommandSpec> = {
 		summary: "Run a judged search loop: plan, search, judge, rewrite",
 		requiredArgs: ["question"],
 		run: runRun,
+	},
+	research: {
+		usage: "lattice research <topic> [--json] [--max-rewrites n]",
+		summary:
+			"Research a topic: judge the index, research the web, write and link a document",
+		requiredArgs: ["topic"],
+		run: runResearch,
 	},
 	web: {
 		usage:

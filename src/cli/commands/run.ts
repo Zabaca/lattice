@@ -1,21 +1,15 @@
 import { existsSync } from "node:fs";
 import { openDatabase } from "../../db/open.js";
 import { selectProvider } from "../../embed/provider.js";
-import { checkActiveSpace } from "../../embed/state.js";
 import { selectTextProvider, type TextProvider } from "../../llm/provider.js";
 import { RerankConfigurationError } from "../../rerank/provider.js";
-import { type Candidate, type Judge, selectJudge } from "../../run/judge.js";
-import { type PassageEmbedder, passagesFor } from "../../run/read.js";
+import { type Judge, selectJudge } from "../../run/judge.js";
 import {
 	DEFAULT_MAX_REWRITES,
-	type RunnerDeps,
 	type RunResult,
 	runLoop,
 } from "../../run/runner.js";
-import { embedQuery } from "../../search/embed-query.js";
-import { search } from "../../search/search.js";
 import { resolvePaths } from "../../utils/paths.js";
-import { MultiSearcher } from "../../web/multi.js";
 import {
 	selectWebSearcher,
 	WebConfigurationError,
@@ -23,21 +17,13 @@ import {
 } from "../../web/provider.js";
 import { count, text } from "../flags.js";
 import type { CommandContext, CommandOutput } from "../run.js";
-
-/** Concepts one query pulls from the index. */
-const INDEX_LIMIT = 5;
-/** Passages read per concept. */
-const CHUNKS_PER_CONCEPT = 2;
-/** Pages one query pulls from the web. */
-const WEB_LIMIT = 5;
-/** The web leg every round searches when the environment names none. */
-const DEFAULT_WEB_LEGS = "exa";
-/**
- * The legs added from the first rewrite on, when the environment names
- * none: Claude's own WebSearch, fifteen seconds and a few cents a query,
- * paid for only once Exa has failed to satisfy the judge.
- */
-const DEFAULT_WEB_ESCALATION = "claude";
+import {
+	DEFAULT_WEB_ESCALATION,
+	DEFAULT_WEB_LEGS,
+	memoised,
+	searchDeps,
+	webReasons,
+} from "./run-deps.js";
 
 /**
  * Run the judged search loop over the index and the web, or over either
@@ -100,20 +86,6 @@ export async function runRun(context: CommandContext): Promise<CommandOutput> {
 	}
 
 	const question = context.positionals[0];
-	// The model that ranks a read page's passages is the same one the index
-	// uses, when it can be had; without it the keyword leg ranks alone, as a
-	// search without its semantic leg does.
-	let passageEmbedder: PassageEmbedder | undefined | null = null;
-	const embedder = (): PassageEmbedder | undefined => {
-		if (passageEmbedder === null) {
-			try {
-				passageEmbedder = selectProvider(context.env, context.report);
-			} catch {
-				passageEmbedder = undefined;
-			}
-		}
-		return passageEmbedder;
-	};
 	const tried = text(context.flags.tried)
 		?.split(",")
 		.map((query) => query.trim())
@@ -121,94 +93,13 @@ export async function runRun(context: CommandContext): Promise<CommandOutput> {
 
 	const db = openDatabase(paths.database);
 	try {
-		const passageText = db.prepare<{ content: string }, [string, number]>(
-			`SELECT ch.content FROM chunks ch
-			 JOIN concepts c ON c.id = ch.concept_id
-			 WHERE c.path = ? AND ch.ordinal = ?`,
-		);
-		const deps: RunnerDeps = {
-			searchIndex: noIndex
-				? undefined
-				: async (query) => {
-						const embedded = await embedQuery(
-							query,
-							context.env,
-							context.report,
-						);
-						if (embedded.space !== undefined) {
-							const mismatch = checkActiveSpace(
-								db,
-								embedded.space,
-								embedded.source ?? "",
-							);
-							if (mismatch !== undefined) {
-								throw new Error(mismatch);
-							}
-						}
-						const result = await search(db, {
-							query,
-							limit: INDEX_LIMIT,
-							chunksPerConcept: CHUNKS_PER_CONCEPT,
-							asOf: Date.now(),
-							expand: 0,
-							candidates: INDEX_LIMIT,
-							semantic: embedded.semantic,
-							semanticUnavailable: embedded.reason,
-						});
-						// The judge and the skill read the passage itself, not the
-						// 180-character window `search` shows: a snippet cut mid-sentence
-						// reads as a gap that the document does not have.
-						return result.hits.map(
-							(hit): Candidate => ({
-								source: "index",
-								title: hit.title ?? hit.path,
-								ref: hit.path,
-								text: hit.chunks
-									.map(
-										(chunk) =>
-											passageText.get(hit.path, chunk.ordinal)?.content ??
-											chunk.snippet,
-									)
-									.join("\n\n"),
-							}),
-						);
-					},
-			searchWeb:
-				web === undefined
-					? undefined
-					: async (query, round) => {
-							if (round > 0 && web instanceof MultiSearcher) {
-								web.escalate();
-							}
-							const response = await web.search({
-								query,
-								type: "fast",
-								limit: WEB_LIMIT,
-								text: false,
-							});
-							return {
-								candidates: response.results.map(
-									(page): Candidate => ({
-										source: "web",
-										title: page.title ?? page.url,
-										ref: page.url,
-										text: page.highlights.join("\n"),
-										...(page.leg === undefined ? {} : { leg: page.leg }),
-									}),
-								),
-								costUsd: response.cost,
-							};
-						},
-			readPage:
-				web === undefined
-					? undefined
-					: async (question, url) => {
-							const page = await web.read(url);
-							return {
-								passages: await passagesFor(question, page.text, embedder()),
-								costUsd: page.cost,
-							};
-						},
+		const deps = {
+			...searchDeps({
+				db,
+				provider: memoised(() => selectProvider(context.env, context.report)),
+				web,
+				index: !noIndex,
+			}),
 			judge,
 			llm,
 		};
@@ -222,16 +113,7 @@ export async function runRun(context: CommandContext): Promise<CommandOutput> {
 			}
 			throw error;
 		}
-		// A leg that never built, or was dropped mid-run, is named beside the
-		// runner's own reason, so a run over Exa alone because Claude failed
-		// says so, and vice versa.
-		const reasons = [
-			...(result.webReason === null ? [] : [result.webReason]),
-			...(webReason === undefined ? [] : [webReason]),
-			...(web instanceof MultiSearcher ? web.reasons() : []),
-		];
-		result.webReason =
-			reasons.length === 0 ? null : [...new Set(reasons)].join("; ");
+		result.webReason = webReasons(result, webReason, web);
 
 		if (context.flags.json !== undefined) {
 			return { code: 0, stdout: `${JSON.stringify(result)}\n` };

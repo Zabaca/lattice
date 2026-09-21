@@ -104,17 +104,18 @@ The gap is what the completeness label says is missing, not a guess. Focus
 on it rather than restating what is already indexed. Keep every URL you use
 — they become the document's `sources`.
 
-Run the loop again, this time with the web:
+Run the loop again, this time over the web alone:
 
 ```bash
-lattice run "<topic>" --json
+lattice run "<topic>" --no-index --json
 ```
 
-The judge now reads the index and Exa together, so `completenessLabel` is
-about the whole set. The `web` entries in `kept` are the Exa sources: their
-`ref` is a URL and `text` the highlights Exa picked out; cite the URLs and
-quote from the highlights without fetching the pages. Reuse this run's
-`tried` as the WebSearch queries below rather than inventing new ones.
+The index was searched in Step 1 and is not searched again; the judge reads
+Exa's pages, so `completenessLabel` is about what the web adds. The entries
+in `kept` are the Exa sources: their `ref` is a URL and `text` the
+highlights Exa picked out; cite the URLs and quote from the highlights
+without fetching the pages. Reuse this run's `tried` as the WebSearch
+queries below rather than inventing new ones.
 
 Exa answers a described need well and a literal string badly. Send an error
 message, a package version or an exact identifier through WebSearch, not
@@ -123,7 +124,7 @@ misses the long tail, so a topic with a fresh or obscure answer needs both.
 
 If `webReason` is set, Exa did not run (no `EXA_API_KEY`, no credits, a
 rejected key, a network failure — the reason is in the field). Say so once
-and continue with WebSearch alone; the index entries are the same as Step 1's. Do not retry, and do not let the run end
+and continue with WebSearch alone. Do not retry, and do not let the run end
 without web sources because Exa was unavailable.
 
 When working in the Lattice checkout, the keys are in the repo's

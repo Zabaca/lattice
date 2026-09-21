@@ -35,7 +35,8 @@ export interface WebSearch {
 }
 
 export interface RunnerDeps {
-	searchIndex(query: string): Promise<Candidate[]>;
+	/** Absent when the caller asked for the web alone. */
+	searchIndex?(query: string): Promise<Candidate[]>;
 	/** Absent when the caller asked for the index alone. Throwing is not fatal to the run. */
 	searchWeb?(query: string): Promise<WebSearch>;
 	judge: Judge;
@@ -118,7 +119,8 @@ export async function runLoop(
 		const fresh: Candidate[] = [];
 		for (const query of queries) {
 			tried.push(query);
-			const found = await deps.searchIndex(query);
+			const found =
+				deps.searchIndex === undefined ? [] : await deps.searchIndex(query);
 			if (searchWeb !== undefined) {
 				try {
 					const web = await searchWeb(query);

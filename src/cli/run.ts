@@ -114,7 +114,7 @@ const COMMANDS: Record<string, CommandSpec> = {
 	},
 	run: {
 		usage:
-			"lattice run <question> [--json] [--no-web] [--max-rewrites n]\n" +
+			"lattice run <question> [--json] [--no-web] [--no-index] [--max-rewrites n]\n" +
 			"       [--tried q]...",
 		summary: "Run a judged search loop: plan, search, judge, rewrite",
 		requiredArgs: ["question"],

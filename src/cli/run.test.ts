@@ -2771,6 +2771,41 @@ describe("lattice run", () => {
 		expect(JSON.parse(noKey.stdout).webReason).toContain("EXA_API_KEY");
 	});
 
+	test("--no-index searches the web alone, and with --no-web there is nothing to run", async () => {
+		const home = await bundledHome();
+		await invoke(["sync"], home);
+		// The verdict keeps the one web page; "users table" would have found
+		// the users document had the index been searched.
+		const env = runEnv(
+			['{"queries": ["users table"]}'],
+			[{ ...ANSWER, keep: ["exa-limits"] }],
+		);
+
+		const result = await invoke(
+			["run", "what tables exist", "--json", "--no-index"],
+			home,
+			env,
+		);
+		expect(result.code).toBe(0);
+		const parsed = JSON.parse(result.stdout);
+		expect(parsed.exit).toBe("answer");
+		expect(parsed.webReason).toBeNull();
+		expect(
+			parsed.kept.map((c: { source: string; ref: string }) => [
+				c.source,
+				c.ref,
+			]),
+		).toEqual([["web", "https://example.com/exa-limits"]]);
+
+		const neither = await invoke(
+			["run", "what tables exist", "--json", "--no-index", "--no-web"],
+			home,
+			env,
+		);
+		expect(neither.code).toBe(1);
+		expect(neither.stderr).toContain("nothing to search");
+	});
+
 	test("web pages are merged with the index and the same page under two spellings is one candidate", async () => {
 		const home = await bundledHome();
 		await invoke(["sync"], home);

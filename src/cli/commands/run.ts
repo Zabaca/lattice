@@ -25,7 +25,9 @@ const CHUNKS_PER_CONCEPT = 2;
 const WEB_LIMIT = 5;
 
 /**
- * Run the judged search loop over the index and, unless told not to, the web.
+ * Run the judged search loop over the index and the web, or over either
+ * alone (`--no-web`, `--no-index`). The index must exist even for a web-only
+ * run: the command is a view over one Lattice home.
  *
  * The loop is `src/run/runner.ts`; this reads the flags, builds the three
  * providers, wires the index and web searches to it, and renders where it
@@ -33,6 +35,13 @@ const WEB_LIMIT = 5;
  */
 export async function runRun(context: CommandContext): Promise<CommandOutput> {
 	const paths = resolvePaths(context.env);
+	const noIndex = context.flags["no-index"] !== undefined;
+	if (noIndex && context.flags["no-web"] !== undefined) {
+		return {
+			code: 1,
+			stderr: "--no-index and --no-web together leave nothing to search.",
+		};
+	}
 	if (!existsSync(paths.database)) {
 		return {
 			code: 1,
@@ -83,46 +92,52 @@ export async function runRun(context: CommandContext): Promise<CommandOutput> {
 			 WHERE c.path = ? AND ch.ordinal = ?`,
 		);
 		const deps: RunnerDeps = {
-			searchIndex: async (query) => {
-				const embedded = await embedQuery(query, context.env, context.report);
-				if (embedded.space !== undefined) {
-					const mismatch = checkActiveSpace(
-						db,
-						embedded.space,
-						embedded.source ?? "",
-					);
-					if (mismatch !== undefined) {
-						throw new Error(mismatch);
-					}
-				}
-				const result = await search(db, {
-					query,
-					limit: INDEX_LIMIT,
-					chunksPerConcept: CHUNKS_PER_CONCEPT,
-					asOf: Date.now(),
-					expand: 0,
-					candidates: INDEX_LIMIT,
-					semantic: embedded.semantic,
-					semanticUnavailable: embedded.reason,
-				});
-				// The judge and the skill read the passage itself, not the
-				// 180-character window `search` shows: a snippet cut mid-sentence
-				// reads as a gap that the document does not have.
-				return result.hits.map(
-					(hit): Candidate => ({
-						source: "index",
-						title: hit.title ?? hit.path,
-						ref: hit.path,
-						text: hit.chunks
-							.map(
-								(chunk) =>
-									passageText.get(hit.path, chunk.ordinal)?.content ??
-									chunk.snippet,
-							)
-							.join("\n\n"),
-					}),
-				);
-			},
+			searchIndex: noIndex
+				? undefined
+				: async (query) => {
+						const embedded = await embedQuery(
+							query,
+							context.env,
+							context.report,
+						);
+						if (embedded.space !== undefined) {
+							const mismatch = checkActiveSpace(
+								db,
+								embedded.space,
+								embedded.source ?? "",
+							);
+							if (mismatch !== undefined) {
+								throw new Error(mismatch);
+							}
+						}
+						const result = await search(db, {
+							query,
+							limit: INDEX_LIMIT,
+							chunksPerConcept: CHUNKS_PER_CONCEPT,
+							asOf: Date.now(),
+							expand: 0,
+							candidates: INDEX_LIMIT,
+							semantic: embedded.semantic,
+							semanticUnavailable: embedded.reason,
+						});
+						// The judge and the skill read the passage itself, not the
+						// 180-character window `search` shows: a snippet cut mid-sentence
+						// reads as a gap that the document does not have.
+						return result.hits.map(
+							(hit): Candidate => ({
+								source: "index",
+								title: hit.title ?? hit.path,
+								ref: hit.path,
+								text: hit.chunks
+									.map(
+										(chunk) =>
+											passageText.get(hit.path, chunk.ordinal)?.content ??
+											chunk.snippet,
+									)
+									.join("\n\n"),
+							}),
+						);
+					},
 			searchWeb:
 				web === undefined
 					? undefined

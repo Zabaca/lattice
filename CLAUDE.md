@@ -206,7 +206,7 @@ run in one process:
 | State | Runs | Then |
 |---|---|---|
 | `plan` | the LLM writes two queries; skipped when `--tried` gives them | `search` |
-| `search` | each query over `search()` (limit 5, no expand) and, unless `--no-web`, the web searcher (limit 5, type `fast`); merged, first occurrence kept | `judge` |
+| `search` | each query over `search()` (limit 5, no expand) unless `--no-index`, and the web searcher (limit 5, type `fast`) unless `--no-web`; merged, first occurrence kept. Both flags together is exit 1 | `judge` |
 | `judge` | one Jev request: a Noul per candidate, a four-level completeness Score, a repeating Noul, a Choice `answer\|rewrite\|give_up` | the policy |
 | `rewrite` | the LLM writes two new queries from the tried list and the reason | `search` |
 

@@ -237,6 +237,7 @@ the skills built on it.
 lattice run "how do agentic search loops decide when to stop"           # exit line, kept sources, cost
 lattice run "question" --json                                            # { question, exit, tried, completeness, kept, records, cost, webReason }
 lattice run "question" --no-web                                          # The index alone
+lattice run "question" --no-index                                        # The web alone, judged
 lattice run "question" --max-rewrites 0                                  # Plan, search, judge, stop
 lattice run "question" --tried "first query" --tried "second query"      # Skip the plan; search these
 ```

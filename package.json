@@ -44,6 +44,7 @@
 		"url": "https://github.com/Zabaca/lattice.git"
 	},
 	"dependencies": {
+		"@anthropic-ai/claude-agent-sdk": "^0.3.220",
 		"@huggingface/transformers": "^4.3.0",
 		"@typesafe-ai/sdk": "^0.6.0",
 		"gray-matter": "^4.0.3",

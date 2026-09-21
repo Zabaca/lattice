@@ -2424,3 +2424,429 @@ describe("lattice web", () => {
 		expect(result.stderr).toContain('injected failure on "break"');
 	});
 });
+
+/**
+ * `lattice run` is the search loop with the judge and the model scripted:
+ * the LLM stub says what gets planned and rewritten, the judge stub says
+ * what each visit to `judge` decides, and the tests watch where the machine
+ * exits and what it kept — without a key, a model or a network.
+ */
+function runEnv(
+	llm: string[],
+	verdicts: Record<string, unknown>[],
+	extra: Record<string, string | undefined> = {},
+) {
+	return {
+		LATTICE_LLM_PROVIDER: "stub",
+		LATTICE_LLM_STUB: JSON.stringify(llm),
+		LATTICE_JUDGE_PROVIDER: "stub",
+		LATTICE_JUDGE_STUB: JSON.stringify(verdicts),
+		...webEnv(),
+		...extra,
+	};
+}
+
+/** A verdict that keeps every candidate whose ref mentions `users` and is happy. */
+const ANSWER = {
+	keep: ["users"],
+	completeness: 3,
+	repeating: 0.1,
+	next: "answer",
+	confidence: 0.9,
+};
+const REWRITE = {
+	keep: ["users"],
+	completeness: 1,
+	repeating: 0.1,
+	next: "rewrite",
+	confidence: 0.9,
+};
+
+describe("lattice run", () => {
+	test("searches the planned queries, keeps what the judge kept, and exits answer", async () => {
+		const home = await bundledHome();
+		await invoke(["sync"], home);
+
+		const result = await invoke(
+			["run", "what tables exist", "--json", "--no-web"],
+			home,
+			runEnv(['{"queries": ["users table", "chunking guide"]}'], [ANSWER]),
+		);
+
+		expect(result.code).toBe(0);
+		const parsed = JSON.parse(result.stdout);
+		expect(parsed.question).toBe("what tables exist");
+		expect(parsed.exit).toBe("answer");
+		expect(parsed.tried).toEqual(["users table", "chunking guide"]);
+		expect(parsed.completeness).toBe(3);
+		expect(parsed.completenessLabel).toBe("A complete answer");
+		expect(parsed.kept).toEqual([
+			{
+				source: "index",
+				title: "Users table",
+				ref: "bigquery-table/users.md",
+				text: expect.any(String),
+			},
+		]);
+		expect(parsed.records).toHaveLength(1);
+		const [record] = parsed.records;
+		expect(record.queries).toEqual(["users table", "chunking guide"]);
+		expect(record.candidates).toBeGreaterThan(1);
+		expect(record.kept).toEqual(["bigquery-table/users.md"]);
+		expect(record.dropped).toBe(record.candidates - 1);
+		expect(record.next).toBe("answer");
+		expect(record.confidence).toBe(0.9);
+		expect(record.probabilities.answer).toBe(0.9);
+		expect(record.model).toBe("stub");
+		expect(parsed.cost).toEqual({
+			llmUsd: 0,
+			llmCalls: 1,
+			jevInputTokens: 0,
+			webUsd: 0,
+		});
+		expect(parsed.webReason).toBeNull();
+	});
+
+	test("rewrites when the judge says so, then answers with the second plan's queries tried", async () => {
+		const home = await bundledHome();
+		await invoke(["sync"], home);
+
+		const result = await invoke(
+			["run", "what tables exist", "--json", "--no-web"],
+			home,
+			runEnv(
+				[
+					'{"queries": ["first a", "first b"]}',
+					'{"queries": ["users table", "second b"]}',
+				],
+				// The second verdict keeps nothing new; what the first kept stays.
+				[REWRITE, { ...ANSWER, keep: [] }],
+			),
+		);
+
+		expect(result.code).toBe(0);
+		const parsed = JSON.parse(result.stdout);
+		expect(parsed.exit).toBe("answer");
+		expect(parsed.kept.map((c: { ref: string }) => c.ref)).toEqual([
+			"bigquery-table/users.md",
+		]);
+		expect(parsed.tried).toEqual([
+			"first a",
+			"first b",
+			"users table",
+			"second b",
+		]);
+		expect(parsed.records).toHaveLength(2);
+		expect(parsed.records[1].queries).toEqual(["users table", "second b"]);
+		expect(parsed.cost.llmCalls).toBe(2);
+	});
+
+	test("an answer the judge itself rates incomplete is sent round again", async () => {
+		const home = await bundledHome();
+		await invoke(["sync"], home);
+
+		const result = await invoke(
+			["run", "what tables exist", "--json", "--no-web"],
+			home,
+			runEnv(
+				['{"queries": ["users table"]}'],
+				[{ ...ANSWER, completeness: 1 }, ANSWER],
+			),
+		);
+
+		expect(result.code).toBe(0);
+		const parsed = JSON.parse(result.stdout);
+		expect(parsed.exit).toBe("answer");
+		expect(parsed.records).toHaveLength(2);
+		expect(parsed.records[0].next).toBe("answer");
+		expect(parsed.cost.llmCalls).toBe(2);
+
+		// The override is code's, so the judge's confidence in the choice it
+		// overrode does not turn it into a decision for the caller.
+		const unsure = await invoke(
+			["run", "what tables exist", "--json", "--no-web"],
+			home,
+			runEnv(
+				['{"queries": ["users table"]}'],
+				[{ ...ANSWER, completeness: 1, confidence: 0.4 }, ANSWER],
+			),
+		);
+		expect(unsure.code).toBe(0);
+		expect(JSON.parse(unsure.stdout).records).toHaveLength(2);
+	});
+
+	test("an unsure judge hands the decision to the caller with the distribution", async () => {
+		const home = await bundledHome();
+		await invoke(["sync"], home);
+
+		const result = await invoke(
+			["run", "what tables exist", "--json", "--no-web"],
+			home,
+			runEnv(
+				['{"queries": ["users table"]}'],
+				[{ ...ANSWER, confidence: 0.4 }],
+			),
+		);
+
+		expect(result.code).toBe(0);
+		const parsed = JSON.parse(result.stdout);
+		expect(parsed.exit).toBe("decide");
+		expect(parsed.records).toHaveLength(1);
+		expect(parsed.records[0].probabilities).toEqual({
+			answer: 0.4,
+			rewrite: 0.3,
+			give_up: 0.3,
+		});
+		expect(parsed.kept).toHaveLength(1);
+
+		const human = await invoke(
+			["run", "what tables exist", "--no-web"],
+			home,
+			runEnv(
+				['{"queries": ["users table"]}'],
+				[{ ...ANSWER, confidence: 0.4 }],
+			),
+		);
+		expect(human.stdout).toContain("decide  completeness 3.00");
+		expect(human.stdout).toContain("judge unsure: answer 0.40");
+		expect(human.stdout).toContain(
+			"1. [index] Users table — bigquery-table/users.md",
+		);
+	});
+
+	test("queries going round in circles stop the rewriting, once a rewrite has happened", async () => {
+		const home = await bundledHome();
+		await invoke(["sync"], home);
+
+		// Stuck with nothing kept is give_up; stuck holding sources is answer,
+		// the same as running out of rewrites.
+		const stuck = await invoke(
+			["run", "what tables exist", "--json", "--no-web"],
+			home,
+			runEnv(
+				['{"queries": ["users table"]}'],
+				[
+					{ ...REWRITE, keep: [] },
+					{ ...REWRITE, keep: [], repeating: 0.8 },
+				],
+			),
+		);
+		expect(stuck.code).toBe(0);
+		const stuckParsed = JSON.parse(stuck.stdout);
+		expect(stuckParsed.exit).toBe("give_up");
+		expect(stuckParsed.records).toHaveLength(2);
+		expect(stuckParsed.cost.llmCalls).toBe(2);
+
+		const holding = await invoke(
+			["run", "what tables exist", "--json", "--no-web"],
+			home,
+			runEnv(
+				['{"queries": ["users table"]}'],
+				[REWRITE, { ...REWRITE, repeating: 0.8 }],
+			),
+		);
+		expect(holding.code).toBe(0);
+		const holdingParsed = JSON.parse(holding.stdout);
+		expect(holdingParsed.exit).toBe("answer");
+		expect(holdingParsed.records).toHaveLength(2);
+
+		// Before any rewrite the planned queries are all there is to compare,
+		// so the same verdict rewrites instead.
+		const first = await invoke(
+			["run", "what tables exist", "--json", "--no-web"],
+			home,
+			runEnv(
+				['{"queries": ["users table"]}'],
+				[{ ...REWRITE, repeating: 0.8 }, ANSWER],
+			),
+		);
+		expect(first.code).toBe(0);
+		expect(JSON.parse(first.stdout).exit).toBe("answer");
+
+		// Two planned queries on one topic always look alike to the judge.
+		const answered = await invoke(
+			["run", "what tables exist", "--json", "--no-web"],
+			home,
+			runEnv(['{"queries": ["users table"]}'], [{ ...ANSWER, repeating: 0.8 }]),
+		);
+		expect(answered.code).toBe(0);
+		expect(JSON.parse(answered.stdout).exit).toBe("answer");
+	});
+
+	test("out of rewrites is answer when something was kept, give_up when nothing was", async () => {
+		const home = await bundledHome();
+		await invoke(["sync"], home);
+
+		const kept = await invoke(
+			["run", "what tables exist", "--json", "--no-web", "--max-rewrites", "1"],
+			home,
+			runEnv(['{"queries": ["users table"]}'], [REWRITE]),
+		);
+		expect(kept.code).toBe(0);
+		const keptParsed = JSON.parse(kept.stdout);
+		expect(keptParsed.exit).toBe("answer");
+		expect(keptParsed.records).toHaveLength(2);
+		expect(keptParsed.kept.map((c: { ref: string }) => c.ref)).toEqual([
+			"bigquery-table/users.md",
+		]);
+
+		const empty = await invoke(
+			["run", "what tables exist", "--json", "--no-web", "--max-rewrites", "0"],
+			home,
+			runEnv(['{"queries": ["users table"]}'], [{ ...REWRITE, keep: [] }]),
+		);
+		expect(empty.code).toBe(0);
+		const emptyParsed = JSON.parse(empty.stdout);
+		expect(emptyParsed.exit).toBe("give_up");
+		expect(emptyParsed.records).toHaveLength(1);
+		expect(emptyParsed.kept).toEqual([]);
+	});
+
+	test("--tried skips the plan and searches those queries", async () => {
+		const home = await bundledHome();
+		await invoke(["sync"], home);
+
+		const result = await invoke(
+			[
+				"run",
+				"q",
+				"--json",
+				"--no-web",
+				"--tried",
+				"users table",
+				"--tried",
+				"orders",
+			],
+			home,
+			runEnv(["not called"], [ANSWER]),
+		);
+
+		expect(result.code).toBe(0);
+		const parsed = JSON.parse(result.stdout);
+		expect(parsed.tried).toEqual(["users table", "orders"]);
+		expect(parsed.cost.llmCalls).toBe(0);
+	});
+
+	test("--no-web never asks the web; without it a failing web leg is a reason, not an exit", async () => {
+		const home = await bundledHome();
+		await invoke(["sync"], home);
+		// Every planned query contains "table", so a searcher told to fail on
+		// it fails on every call it gets.
+		const env = runEnv(['{"queries": ["users table"]}'], [ANSWER], {
+			LATTICE_WEB_FAIL: "table",
+		});
+
+		const quiet = await invoke(
+			["run", "what tables exist", "--json", "--no-web"],
+			home,
+			env,
+		);
+		expect(quiet.code).toBe(0);
+		expect(JSON.parse(quiet.stdout).webReason).toBeNull();
+
+		const loud = await invoke(
+			["run", "what tables exist", "--json"],
+			home,
+			env,
+		);
+		expect(loud.code).toBe(0);
+		const parsed = JSON.parse(loud.stdout);
+		expect(parsed.exit).toBe("answer");
+		expect(parsed.webReason).toContain('injected failure on "table"');
+		expect(parsed.kept.map((c: { source: string }) => c.source)).toEqual([
+			"index",
+		]);
+
+		const rendered = await invoke(["run", "what tables exist"], home, env);
+		expect(rendered.stdout).toContain('web: injected failure on "table"');
+
+		// A searcher that cannot even be built is the same kind of reason.
+		const noKey = await invoke(["run", "what tables exist", "--json"], home, {
+			...env,
+			LATTICE_WEB_PROVIDER: undefined,
+			LATTICE_WEB_STUB: undefined,
+			EXA_API_KEY: undefined,
+		});
+		expect(noKey.code).toBe(0);
+		expect(JSON.parse(noKey.stdout).webReason).toContain("EXA_API_KEY");
+	});
+
+	test("web pages are merged with the index and the same page under two spellings is one candidate", async () => {
+		const home = await bundledHome();
+		await invoke(["sync"], home);
+
+		const result = await invoke(
+			["run", "nothing indexed", "--json"],
+			home,
+			runEnv(
+				['{"queries": ["zzz", "qqq"]}'],
+				[{ ...ANSWER, keep: ["X.org"] }],
+				{
+					LATTICE_WEB_STUB: JSON.stringify([
+						{ title: "A", url: "https://www.X.org/a/", highlights: ["one"] },
+						{ title: "B", url: "http://x.org/a#top", highlights: ["two"] },
+					]),
+				},
+			),
+		);
+
+		expect(result.code).toBe(0);
+		const parsed = JSON.parse(result.stdout);
+		expect(parsed.records[0].candidates).toBe(1);
+		expect(parsed.kept).toEqual([
+			{ source: "web", title: "A", ref: "https://www.X.org/a/", text: "one" },
+		]);
+	});
+
+	test("no index, no judge key, no model credential and a malformed stub are each exit 1 naming the cause", async () => {
+		const uninitialised = await invoke(
+			["run", "anything", "--no-web"],
+			freshHome(),
+			runEnv(["x"], [ANSWER]),
+		);
+		expect(uninitialised.code).toBe(1);
+		expect(uninitialised.stderr).toContain("lattice init");
+
+		const home = await bundledHome();
+		const noJudge = await invoke(["run", "anything", "--no-web"], home, {
+			LATTICE_LLM_PROVIDER: "stub",
+			LATTICE_LLM_STUB: '["x"]',
+			TYPESAFE_API_KEY: undefined,
+		});
+		expect(noJudge.code).toBe(1);
+		expect(noJudge.stderr).toContain("TYPESAFE_API_KEY");
+
+		const noModel = await invoke(["run", "anything", "--no-web"], home, {
+			LATTICE_JUDGE_PROVIDER: "stub",
+			LATTICE_JUDGE_STUB: JSON.stringify([ANSWER]),
+			CLAUDE_CODE_OAUTH_TOKEN: undefined,
+			ANTHROPIC_API_KEY: undefined,
+		});
+		expect(noModel.code).toBe(1);
+		expect(noModel.stderr).toContain("CLAUDE_CODE_OAUTH_TOKEN");
+
+		const badLlm = await invoke(
+			["run", "anything", "--no-web"],
+			home,
+			runEnv(["x"], [ANSWER], { LATTICE_LLM_STUB: "not json" }),
+		);
+		expect(badLlm.code).toBe(1);
+		expect(badLlm.stderr).toContain("LATTICE_LLM_STUB");
+
+		const badJudge = await invoke(
+			["run", "anything", "--no-web"],
+			home,
+			runEnv(["x"], [ANSWER], { LATTICE_JUDGE_STUB: '[{"next": "maybe"}]' }),
+		);
+		expect(badJudge.code).toBe(1);
+		expect(badJudge.stderr).toContain("LATTICE_JUDGE_STUB");
+
+		const unknown = await invoke(
+			["run", "anything", "--no-web"],
+			home,
+			runEnv(["x"], [ANSWER], { LATTICE_LLM_PROVIDER: "gpt" }),
+		);
+		expect(unknown.code).toBe(1);
+		expect(unknown.stderr).toContain("claude, stub");
+	});
+});

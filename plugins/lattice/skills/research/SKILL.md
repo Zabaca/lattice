@@ -48,7 +48,25 @@ If **No**, stop here.
 Focus on the gap identified in step 2 rather than restating what is already
 indexed. Keep every URL you use — they become the document's `sources`.
 
-**If `EXA_API_KEY` is in the environment**, start with `lattice web`:
+**If `TYPESAFE_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN` are in the
+environment**, start with the judged loop over the index and the web:
+
+```bash
+lattice run "<topic>" --json
+```
+
+It plans queries, searches the index and Exa, has Jev judge every result and
+rewrites when the judge finds gaps. `kept` holds what is worth citing: a
+`source: "web"` entry's `ref` is a URL and goes into `sources`; an
+`index` entry's `ref` is a bundle path for Step 6. `tried` is the queries it
+searched — reuse them as the WebSearch queries below rather than inventing
+new ones. On `exit: decide`, read `records[-1].probabilities` and choose; on
+`give_up`, the web has to come from WebSearch alone. If `webReason` is set,
+Exa did not run (no `EXA_API_KEY`, no credits, a rejected key, a network
+failure) and only the index was searched.
+
+If the keys are absent, or `lattice run` exits non-zero (it prints why),
+say so once and run `lattice web` directly instead:
 
 ```bash
 lattice web "<topic>" --json                     # Neural search; read the highlights
@@ -63,18 +81,20 @@ cited without fetching the page. The URLs go into `sources`.
 
 Exa answers a described need well and a literal string badly. Send an error
 message, a package version or an exact identifier through WebSearch, not
-`lattice web`. **Always also run WebSearch**: Exa lags on new content and
-misses the long tail, so a topic with a fresh or obscure answer needs both.
+`lattice web` or `lattice run`. **Always also run WebSearch**: Exa lags on new
+content and misses the long tail, so a topic with a fresh or obscure answer
+needs both.
 
-If the key is absent, or `lattice web` exits non-zero (no credits, a rejected
-key, a network failure — it prints why), say so once and continue with
-WebSearch alone. Do not retry, and do not let the run end without web sources
-because Exa was unavailable.
+If `EXA_API_KEY` is absent, or `lattice web` exits non-zero (no credits, a
+rejected key, a network failure — it prints why), say so once and continue
+with WebSearch alone. Do not retry, and do not let the run end without web
+sources because Exa was unavailable.
 
-When working in the Lattice checkout, the key is in the repo's `secrets.yaml`:
+When working in the Lattice checkout, the keys are in the repo's `secrets.yaml`:
 
 ```bash
 export EXA_API_KEY=$(sops -d --extract '["EXA_API_KEY"]' secrets.yaml)
+export TYPESAFE_API_KEY=$(sops -d --extract '["TYPESAFE_API_KEY"]' secrets.yaml)
 ```
 
 ### Step 5: Choose the type and filename

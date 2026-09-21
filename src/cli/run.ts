@@ -11,6 +11,7 @@ import { parseArgs } from "./args.js";
 import { runEmbed } from "./commands/embed.js";
 import { runInit } from "./commands/init.js";
 import { runRels } from "./commands/rels.js";
+import { runRun } from "./commands/run.js";
 import { runSearch } from "./commands/search.js";
 import { runSql } from "./commands/sql.js";
 import { runStatus } from "./commands/status.js";
@@ -110,6 +111,14 @@ const COMMANDS: Record<string, CommandSpec> = {
 		summary: "Search the index by keyword and by meaning at once",
 		requiredArgs: ["query"],
 		run: runSearch,
+	},
+	run: {
+		usage:
+			"lattice run <question> [--json] [--no-web] [--max-rewrites n]\n" +
+			"       [--tried q]...",
+		summary: "Run a judged search loop: plan, search, judge, rewrite",
+		requiredArgs: ["question"],
+		run: runRun,
 	},
 	web: {
 		usage:

@@ -22,6 +22,7 @@ lattice search   # Hybrid search: keyword and meaning fused, then expanded one h
 lattice sql      # Raw SQL queries
 lattice rels     # Show a concept's links, backlinks and unresolved links
 lattice web      # Search the web through Exa, for the research skill
+lattice run      # A judged search loop: plan, search index and web, judge, rewrite
 ```
 
 `lattice rels <concept>` takes either an OKF identifier (`bigquery-table/users`)
@@ -191,6 +192,64 @@ reads `secrets.yaml`; the skill says how to export the key.
 | `LATTICE_WEB_PROVIDER` | Unset or `exa` (the real one) or `stub`. Anything else is an error. |
 | `LATTICE_WEB_STUB` | With `stub`, a JSON array of `{ title, url, highlights }` returned in that order. Malformed is an error. |
 | `LATTICE_WEB_FAIL` | With `stub`, a substring; a query containing it makes the request throw. |
+
+## Runner
+
+`lattice run <question>` is the search loop as a state machine
+(`src/run/runner.ts`): code drives, Jev judges, and a language model is called
+only in the two states that turn prose into queries. It exists so the
+`/search` and `/research` skills spend one command, not several agent turns,
+finding what to cite. All states run in one process:
+
+| State | Runs | Then |
+|---|---|---|
+| `plan` | the LLM writes two queries; skipped when `--tried` gives them | `search` |
+| `search` | each query over `search()` (limit 5, no expand) and, unless `--no-web`, the web searcher (limit 5, type `fast`); merged, first occurrence kept | `judge` |
+| `judge` | one Jev request: a Noul per candidate, a four-level completeness Score, a repeating Noul, a Choice `answer\|rewrite\|give_up` | the policy |
+| `rewrite` | the LLM writes two new queries from the tried list and the reason | `search` |
+
+The judge reads everything kept so far plus the round's new finds, so
+completeness is about the whole set; a candidate's own relevance is settled
+the first time it is read, because Jev's verdict on a page flips between
+reads. Index hits dedupe by path, web pages by canonical URL (scheme, `www.`,
+trailing slash and fragment dropped, host lowercased).
+
+The policy (`transition`), in order:
+
+1. Completeness below 2 with Choice `answer` is treated as `rewrite` — the
+   early-stop correction. This override is code's, so rule 2 does not apply to it.
+2. Choice confidence below 0.6 exits `decide`: the caller reads the distribution.
+3. `answer` and `give_up` exit as themselves.
+4. `rewrite` with no rewrites left, or after at least one rewrite with
+   repeating ≥ 0.7, stops rewriting: exit `answer` if the kept set is
+   non-empty, else `give_up`. The repeating check is skipped before the first
+   rewrite because two planned queries on one topic always look alike.
+5. Otherwise `rewrite`, up to `--max-rewrites` (default 2).
+
+A web leg that cannot be built or fails mid-run is `webReason`, and the run
+goes on over the index, as `search` does without its semantic leg. No index
+is exit 1; no judge or no model is exit 1 naming the variable; a TypeSafe
+key the service rejects is a hard error, as in the reranker. `--json` is
+`{ question, exit, tried, completeness, completenessLabel, kept: [{ source,
+title, ref, text }], records: [...], cost: { llmUsd, llmCalls,
+jevInputTokens, webUsd }, webReason }`, one record per judge visit.
+
+The `claude` text provider runs the Claude Agent SDK with the minimal option
+set from zbc's `@zabaca/agent` (`tools: []`, `settingSources: []`, thinking
+off, no MCP, no memory or connectors). `settingSources: []` stops the process
+reading the user's settings, which is where an OAuth login keeps its token,
+so `CLAUDE_CODE_OAUTH_TOKEN` is forwarded explicitly from the CLI's
+environment.
+
+| Variable | Meaning |
+|---|---|
+| `LATTICE_LLM_PROVIDER` | Unset or `claude` (the Agent SDK) or `stub`. Anything else is an error. |
+| `LATTICE_LLM_MODEL` | The model to plan and rewrite with; default `claude-haiku-4-5`, whose queries were as good as Opus's. |
+| `LATTICE_LLM_STUB` | With `stub`, a JSON array of completions returned in order; the last repeats. Malformed is an error. |
+| `LATTICE_CLAUDE_PATH` | `pathToClaudeCodeExecutable` for the SDK, when set. |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Required by `claude` unless `ANTHROPIC_API_KEY` is set; missing both is an error naming both. |
+| `LATTICE_JUDGE_PROVIDER` | Unset or `jev` (TypeSafe, needs `TYPESAFE_API_KEY`; model from `LATTICE_RERANK_MODEL`) or `stub`. Anything else is an error. |
+| `LATTICE_JUDGE_STUB` | With `stub`, a JSON array of `{ keep: [ref substrings], completeness, repeating, next, confidence }` consumed in order; the last repeats. Malformed is an error. |
 
 ## Links
 

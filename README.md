@@ -223,6 +223,35 @@ reason, and the `/research` skill falls back to its ordinary web search.
 `LATTICE_WEB_STUB` (a JSON array of `{ title, url, highlights }`) and
 `LATTICE_WEB_FAIL` (a substring that makes the request fail) exist for tests.
 
+### `lattice run`
+
+Run the search as a judged loop: a model plans two queries, the index and the
+web are searched, TypeSafe's Jev judges every candidate and the set as a whole,
+and code decides whether to answer, rewrite the queries (up to `--max-rewrites`,
+default 2), give up, or hand the decision back. The point is fewer agent turns
+for the `/search` and `/research` skills: one command returns the sources worth
+citing instead of a page of hits to read.
+
+```bash
+lattice run "how do agentic search loops decide when to stop"           # exit line, kept sources, cost
+lattice run "question" --json                                            # { question, exit, tried, completeness, kept, records, cost, webReason }
+lattice run "question" --no-web                                          # The index alone
+lattice run "question" --max-rewrites 0                                  # Plan, search, judge, stop
+lattice run "question" --tried "first query" --tried "second query"      # Skip the plan; search these
+```
+
+`exit` is `answer` (cite `kept`), `give_up` (nothing citable), or `decide`
+(the judge was unsure; `records[-1].probabilities` says how). The policy in
+code corrects the judge's known habits: an `answer` over a set it rated below
+"most of the answer" is sent round again, and running out of rewrites, or
+rewriting into the same queries, ends over what was kept rather than as a
+failure. It needs `TYPESAFE_API_KEY` for the judge and `CLAUDE_CODE_OAUTH_TOKEN`
+(or `ANTHROPIC_API_KEY`) for the model; `EXA_API_KEY` is optional, and a web
+leg that cannot run is reported as `webReason` while the run goes on over the
+index. `LATTICE_LLM_PROVIDER=stub` with `LATTICE_LLM_STUB` (a JSON array of
+completions) and `LATTICE_JUDGE_PROVIDER=stub` with `LATTICE_JUDGE_STUB` (a
+JSON array of verdicts) exist for tests.
+
 ### `lattice rels`
 
 Show what a document is connected to: the documents it links to, the documents
@@ -271,6 +300,12 @@ lattice sql "SELECT type, count(*) AS n FROM concepts GROUP BY type"
 | `EXA_API_KEY` | The key `lattice web` sends to Exa; the command refuses without it | unset |
 | `EXA_BASE_URL` | Where `lattice web` sends its request | `https://api.exa.ai` |
 | `LATTICE_WEB_PROVIDER` | `exa`, or `stub` for tests (with `LATTICE_WEB_STUB` and `LATTICE_WEB_FAIL`) | `exa` |
+| `TYPESAFE_API_KEY` | The key the `jev` reranker and the `lattice run` judge send to TypeSafe | unset |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Forwarded to the Claude Agent SDK by `lattice run`; `ANTHROPIC_API_KEY` is the alternative | unset |
+| `LATTICE_LLM_PROVIDER` | `claude`, or `stub` for tests (with `LATTICE_LLM_STUB`) | `claude` |
+| `LATTICE_LLM_MODEL` | The model `lattice run` plans and rewrites with | `claude-haiku-4-5` |
+| `LATTICE_CLAUDE_PATH` | A Claude Code executable for the SDK to run, when not the bundled one | unset |
+| `LATTICE_JUDGE_PROVIDER` | `jev`, or `stub` for tests (with `LATTICE_JUDGE_STUB`) | `jev` |
 
 Changing the model is safe: vectors from two models are not comparable, so a
 `sync` under a changed model refuses, naming both models and the number of

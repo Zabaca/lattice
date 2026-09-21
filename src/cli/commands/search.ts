@@ -1,15 +1,13 @@
 import { existsSync } from "node:fs";
 import { openDatabase } from "../../db/open.js";
-import { selectProvider } from "../../embed/provider.js";
-import type { VectorSpace } from "../../embed/state.js";
 import { checkActiveSpace } from "../../embed/state.js";
 import {
 	RerankConfigurationError,
 	type Reranker,
 	selectReranker,
 } from "../../rerank/provider.js";
+import { embedQuery } from "../../search/embed-query.js";
 import { type SearchHit, search, searchConcepts } from "../../search/search.js";
-import type { SemanticInput } from "../../search/vector.js";
 import { resolvePaths } from "../../utils/paths.js";
 import { count, text } from "../flags.js";
 import type { CommandContext, CommandOutput } from "../run.js";
@@ -77,7 +75,11 @@ export async function runSearch(
 		return { code: 1, stderr: (error as Error).message };
 	}
 
-	const embedded = await embedQuery(context.positionals[0], context);
+	const embedded = await embedQuery(
+		context.positionals[0],
+		context.env,
+		context.report,
+	);
 
 	const db = openDatabase(paths.database);
 	try {
@@ -177,43 +179,6 @@ export async function runSearch(
 		};
 	} finally {
 		db.close();
-	}
-}
-
-/**
- * The query as a vector, or the reason there is none.
- *
- * A search must still answer when no model will: a provider that cannot be
- * selected or cannot embed costs the semantic leg, not the command. The reason
- * travels with the result so the caller can say the answer is weaker than
- * usual rather than quietly returning a worse one.
- */
-async function embedQuery(
-	query: string,
-	context: CommandContext,
-): Promise<{
-	semantic?: SemanticInput;
-	reason?: string;
-	/** The space the query was embedded into, when there was one. */
-	space?: VectorSpace;
-	/** Where that model name came from, for the model-change message. */
-	source?: string;
-}> {
-	try {
-		const provider = selectProvider(context.env, context.report);
-		const space = { model: provider.model, dim: provider.dim };
-		// `embedQuery`, not `embed`: an asymmetric model is trained to be told
-		// that this is a question rather than a passage, and a query embedded
-		// as a passage lands in the wrong part of the space.
-		const [vector] = await provider.embedQuery([query]);
-		return {
-			semantic: { vector, model: provider.model, dim: provider.dim },
-			space,
-			source: provider.source,
-		};
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		return { reason: `the query could not be embedded: ${message}` };
 	}
 }
 

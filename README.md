@@ -305,6 +305,12 @@ bun run lattice -- status   # Run the CLI from source
 bun run build
 ```
 
+`bun run eval:scifact` measures search quality (hit@k, MRR@10) on a subsample of
+the SciFact benchmark, indexed with the real embedding model. The first run
+downloads about 5 MB into `eval-cache/` and embeds for a few minutes; later runs
+reuse the synced home and only re-run the queries. `--docs`, `--queries`,
+`--seed`, `--fresh` and `--json` are the knobs.
+
 </details>
 
 Contributions are welcome! Please feel free to submit a Pull Request.

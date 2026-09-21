@@ -26,6 +26,9 @@ npm-debug.log*
 # Test coverage
 coverage/
 
+# Search-quality eval dataset and homes (bun run eval:scifact)
+eval-cache/
+
 # Bun
 bun.lockb
 

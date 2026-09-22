@@ -96,6 +96,23 @@ $0.13 for a whole unseeded run, mostly on ten queries chasing a name. The
 blind planner and the seed wording were the cause and are fixed; whether the
 cost followed them down is unmeasured.
 
+## 11. A document can still characterise an undescribed subject
+
+While a hub is a placeholder, nothing but the writer's prompt stops a
+document from saying what the subject is. The prompt now says not to
+(`NOT_CHARACTERISED` in `src/write/prompt.ts`), but no code checks that a
+claim about the subject is sourced, and a document written this way keeps
+its picture after the hub is filled.
+
+**Evidence.** `research/git-2-56-3-0-…-agentic-git-workflows.md` was written
+under a hub whose description had been invented. It classed agentgit with
+merge-conflict tools and reasoned about "agentgit's own build story";
+correcting the hub later changed neither.
+
+**Fix.** A check that holds sentences naming the subject against the kept
+passages, or re-writing a hub's documents when the hub's description
+changes. Neither exists.
+
 ---
 
 Fixed since this file was written: a writer forced to describe a subject its
@@ -104,7 +121,11 @@ written without one says that no source describes the subject instead of
 guessing. Also a planner blind to the index, whose web
 loop reused the queries the index run planned before anything had been
 searched, and a seed instruction that sent the planner after what its source
-left out. Both are now the `PlanContext` the web loop plans with.
+left out. Both are now the `PlanContext` the web loop plans with. Then a
+placeholder hub that stayed a placeholder: it is now filled from the first
+sourced sentence a writer gives for it, and never overwritten after. And two
+report errors: empty `keyFindings` for a document that opens with a
+`## Summary`, and a judge-placed hub reported as an invented citation.
 
 Fixed in the round before, for context: documents that were leaves with no links,
 a topic whose web run gave up every time and wrote nothing, a result that

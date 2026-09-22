@@ -66,6 +66,9 @@ const HUB_SECTION = "## Research";
  * tell it from a sourced sentence.
  */
 export const UNDESCRIBED = "No source in this bundle describes this subject.";
+/** The body sentence a created hub carries in place of a description. */
+const UNDESCRIBED_BODY =
+	"No source behind the research filed here describes what this is. The description is not written yet.";
 /** How many kept documents the planner is shown. */
 const PLAN_DOCUMENTS = 5;
 /** How much of one document, or of one seeded page, the planner is shown. */
@@ -161,6 +164,8 @@ export interface ResearchResult {
 		hubFrom: "index" | "judge" | "created" | null;
 		/** The judge's probability for the best shortlisted hub, when it was asked; below the bar it is why the writer named one. */
 		hubProbability: number | null;
+		/** Whether this run filled an existing hub's placeholder description from the writer's sourced sentence. */
+		hubDescribed: boolean;
 		sources: string[];
 		/** Citations the writer invented, removed before the write. */
 		droppedSources: string[];
@@ -368,6 +373,8 @@ export async function researchLoop(
 	const existing =
 		existingRaw === undefined ? undefined : parseConcept(existingRaw);
 	const hubCitation = hub === null ? undefined : citationOf(hub);
+	const undescribed = (path: string): boolean =>
+		isUndescribed(deps.bundle.read(path));
 	const allowed = allowedSources(index.kept, web.kept, existingPath, hub);
 	const prompt = writePrompt({
 		topic,
@@ -377,6 +384,7 @@ export async function researchLoop(
 		index: index.kept,
 		allowedSources: [...allowed.paths.values(), ...allowed.urls.values()],
 		hub: hubCitation,
+		hubUndescribed: hub !== null && undescribed(hub),
 	});
 	const now = (deps.now?.() ?? new Date())
 		.toISOString()
@@ -388,6 +396,7 @@ export async function researchLoop(
 		allowed,
 		hub,
 		exists: deps.bundle.exists,
+		undescribed,
 		now,
 	};
 	let completion = await deps.writer.write(prompt);
@@ -412,6 +421,7 @@ export async function researchLoop(
 	// document has a backlink and the hub stays where a reader starts. A hub
 	// the writer named is written first, from its name and one sentence.
 	deps.bundle.write(checked.path, checked.text);
+	let hubDescribed = false;
 	if (checked.hub !== null) {
 		hub = checked.hub.path;
 		if (checked.hub.create !== undefined) {
@@ -430,8 +440,15 @@ export async function researchLoop(
 		}
 		const hubRaw = deps.bundle.read(hub);
 		if (hubRaw !== undefined) {
+			// A placeholder hub is filled once a run's writer says, from its
+			// sources, what the subject is; a real description never changes.
+			const described =
+				checked.hub.describe === undefined
+					? hubRaw
+					: describeHub(hubRaw, checked.hub.describe);
+			hubDescribed = described !== hubRaw;
 			const linked = linkFromHub(
-				hubRaw,
+				described,
 				slugOf(checked.path),
 				checked.description,
 			);
@@ -467,6 +484,7 @@ export async function researchLoop(
 		hub,
 		hubFrom,
 		hubProbability,
+		hubDescribed,
 		sources: checked.sources,
 		droppedSources: checked.dropped,
 		...relations,
@@ -612,6 +630,8 @@ interface CheckInput {
 	/** The hub found for the document, or null when the draft must name one. */
 	hub: string | null;
 	exists(path: string): boolean;
+	/** Whether the hub at this path carries the placeholder description. */
+	undescribed(path: string): boolean;
 	now: string;
 }
 
@@ -629,6 +649,8 @@ type Checked =
 				path: string;
 				/** `description` absent when no source the run read describes the subject. */
 				create?: { title: string; description?: string };
+				/** The writer's sentence for an existing hub whose description is the placeholder. */
+				describe?: string;
 			} | null;
 	  }
 	| { ok: false; problems: string[] };
@@ -672,7 +694,14 @@ export function checkDraft(raw: string, input: CheckInput): Checked {
 	}
 	let hub: NonNullable<Extract<Checked, { ok: true }>["hub"]> | null =
 		input.hub === null ? null : { path: input.hub };
-	if (input.hub === null) {
+	if (input.hub !== null) {
+		// The writer was asked for a trailer only when the hub is a
+		// placeholder and the material says what the subject is.
+		const sentence = trailerSentence(trailer);
+		if (sentence !== undefined && input.undescribed(input.hub)) {
+			hub = { path: input.hub, describe: sentence };
+		}
+	} else {
 		const named = trailer === undefined ? null : HUB_TRAILER.exec(trailer);
 		if (named === null) {
 			problems.push(
@@ -685,7 +714,12 @@ export function checkDraft(raw: string, input: CheckInput): Checked {
 			// says for itself rather than the writer filling the gap.
 			const described = named[2]?.trim();
 			hub = input.exists(hubPath)
-				? { path: hubPath }
+				? {
+						path: hubPath,
+						...(described && input.undescribed(hubPath)
+							? { describe: described }
+							: {}),
+					}
 				: {
 						path: hubPath,
 						create: {
@@ -786,6 +820,38 @@ function splitTrailer(text: string): { text: string; trailer?: string } {
 		return { text };
 	}
 	return { text: `${trimmed.slice(0, cut)}\n`, trailer: last };
+}
+
+/** The sentence a hub trailer carries, when there is a trailer and it has one. */
+function trailerSentence(trailer: string | undefined): string | undefined {
+	const sentence =
+		trailer === undefined ? undefined : HUB_TRAILER.exec(trailer)?.[2]?.trim();
+	return sentence || undefined;
+}
+
+/** Whether a hub's text carries the placeholder description rather than a sourced one. */
+export function isUndescribed(raw: string | undefined): boolean {
+	return (
+		raw !== undefined && parseConcept(raw).description?.trim() === UNDESCRIBED
+	);
+}
+
+/**
+ * The hub with its placeholder replaced by a sourced sentence, in the
+ * frontmatter and in the body where the placeholder line still stands. A hub
+ * whose description is anything but the placeholder — a sentence a run
+ * sourced, or one a person wrote — is returned as it was.
+ */
+export function describeHub(raw: string, sentence: string): string {
+	const said = sentence.trim();
+	if (said === "" || !isUndescribed(raw)) {
+		return raw;
+	}
+	const file = matter(raw);
+	return matter.stringify(
+		{ content: file.content.replace(UNDESCRIBED_BODY, said) },
+		{ ...file.data, description: said },
+	);
 }
 
 /** Every wikilink whose name is the hub's, whatever type it was filed under, aimed at the hub. */
@@ -901,9 +967,7 @@ export function hubDocument(
 	// run could not support enters the bundle — including the description the
 	// web planner later reads back as what the bundle knows.
 	const said = description?.trim();
-	const body = said
-		? said
-		: "No source behind the research filed here describes what this is. The description is not written yet.";
+	const body = said ? said : UNDESCRIBED_BODY;
 	return matter.stringify(
 		{ content: `\n# ${title}\n\n${body}\n\n${HUB_SECTION}\n` },
 		{

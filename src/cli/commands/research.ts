@@ -264,7 +264,7 @@ function render(result: ResearchResult): string {
 		lines.push(
 			doc.hub === null
 				? "hub: none"
-				: `hub: ${doc.hub}${doc.hubFrom === "created" ? " (created)" : doc.hubFrom === "judge" ? " (placed by the judge)" : ""}`,
+				: `hub: ${doc.hub}${doc.hubFrom === "created" ? " (created)" : doc.hubFrom === "judge" ? " (placed by the judge)" : ""}${doc.hubDescribed ? " (description filled)" : ""}`,
 		);
 		lines.push(
 			`sources: ${doc.sources.join(", ")}` +

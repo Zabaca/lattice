@@ -34,6 +34,12 @@ export interface WritePromptInput {
 	 * writes the hub.
 	 */
 	hub?: string;
+	/**
+	 * The hub exists but no source has said what its subject is: its
+	 * description is the placeholder. The writer is told not to supply one,
+	 * and to name the subject in a trailer when the material does say.
+	 */
+	hubUndescribed?: boolean;
 }
 
 /**
@@ -107,6 +113,16 @@ knowledge is wanted. The document's own subject is its hub, cited in
 the things the document says about it. Links inside fenced code blocks are
 not edges. Do not put entities in frontmatter.`;
 
+/**
+ * A document written under a subject nobody has described inherits whatever
+ * the writer guessed it to be, and the guess outlives a later correction of
+ * the hub. Only this instruction stands against that; nothing checks it.
+ */
+const NOT_CHARACTERISED = `In the document itself, too, do not say what the
+subject is, what kind of thing it is, or what it resembles unless the material
+says so. Write what the material says about it and leave the rest
+unsaid.`;
+
 const NAME_HUB = `No topic hub exists yet for this subject. After the document, as its very
 last line, name the subject it belongs under:
 
@@ -124,7 +140,18 @@ hub: <Subject name>
 
 Do not describe a subject your sources do not describe. A missing sentence
 is recorded as missing; a guess is indistinguishable from a fact once it is
-written.`;
+written. ${NOT_CHARACTERISED}`;
+
+const HUB_UNDESCRIBED = `No source in this bundle says what the hub's subject is: its description
+is a placeholder. ${NOT_CHARACTERISED}
+
+If the material does say what the subject is, then after the document, as
+its very last line, write:
+
+hub: <Subject name> — <one sentence describing the subject, from the material>
+
+The command fills the hub's description from it. If the material does not
+say, write no such line.`;
 
 export function writePrompt(input: WritePromptInput): string {
 	const parts: string[] = [];
@@ -164,6 +191,8 @@ export function writePrompt(input: WritePromptInput): string {
 	parts.push(TEMPLATE);
 	if (input.hub === undefined) {
 		parts.push(NAME_HUB);
+	} else if (input.hubUndescribed) {
+		parts.push(HUB_UNDESCRIBED);
 	}
 	return parts.join("\n\n");
 }

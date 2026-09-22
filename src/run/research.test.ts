@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { HUB_TRAILER } from "../write/prompt.js";
+import { HUB_TRAILER, writePrompt } from "../write/prompt.js";
 import type { Candidate } from "./judge.js";
 import {
 	hubDocument,
@@ -175,5 +175,39 @@ describe("a hub for a subject no source describes", () => {
 		expect(hubDocument("agentgit", "   ", NOW)).toContain(
 			`description: ${UNDESCRIBED}`,
 		);
+	});
+});
+
+describe("the writer under a hub nobody has described", () => {
+	const input = {
+		topic: "how agentgit could use git 3.0",
+		decision: "new" as const,
+		web: [],
+		index: [],
+		allowedSources: ["../topic/agentgit.md"],
+		hub: "../topic/agentgit.md",
+	};
+	const WARNING = "do not say what the\nsubject is";
+
+	test("is told not to characterise the subject, and how to fill the hub", () => {
+		const prompt = writePrompt({ ...input, hubUndescribed: true });
+
+		expect(prompt).toContain(WARNING);
+		expect(prompt).toContain("its description\nis a placeholder");
+		expect(prompt).toContain(
+			"hub: <Subject name> — <one sentence describing the subject, from the material>",
+		);
+	});
+
+	test("a described hub adds nothing", () => {
+		const prompt = writePrompt(input);
+
+		expect(prompt).not.toContain(WARNING);
+		expect(prompt).not.toContain("placeholder");
+		expect(prompt).not.toContain("hub: <Subject name>");
+	});
+
+	test("naming a hub carries the same warning", () => {
+		expect(writePrompt({ ...input, hub: undefined })).toContain(WARNING);
 	});
 });

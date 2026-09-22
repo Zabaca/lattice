@@ -3163,6 +3163,24 @@ The fixture hub is about zorblax.
 - [[/research/existing]] — what is known about quuxfield.
 `;
 
+/** The hub a run creates when no source described its subject, with a line the index can find. */
+const PLACEHOLDER_HUB = `---
+type: Topic
+title: Fixture
+description: No source in this bundle describes this subject.
+status: draft
+tags: [fixture]
+---
+
+# Fixture
+
+No source behind the research filed here describes what this is. The description is not written yet.
+
+It files research on zorblax.
+
+## Research
+`;
+
 const RESEARCH_EXISTING = `---
 type: Research
 title: Existing findings
@@ -3381,6 +3399,7 @@ describe("lattice research", () => {
 			hub: "topic/fixture.md",
 			hubFrom: "index",
 			hubProbability: null,
+			hubDescribed: false,
 			sources: ["../topic/fixture.md", "https://example.com/found"],
 			droppedSources: ["https://example.com/invented"],
 			outlinks: [
@@ -3755,6 +3774,152 @@ The zorblax tool and how it ranks things.
 		expect(JSON.parse(unnamed.stdout).draft.problems).toEqual([
 			"no hub named: end with one line `hub: <Subject name> — <one sentence>`",
 		]);
+	});
+
+	test("a placeholder hub is filled from the writer's sourced sentence, and a real one never is", async () => {
+		const draft = `${RESEARCH_DRAFT}
+hub: Fixture — The fixture subject, as the found page describes it.
+`;
+		const env = researchEnv(
+			[RESEARCH_PLAN],
+			[INDEX_GIVE_UP, WEB_ANSWER],
+			[draft],
+		);
+
+		const placeholder = await researchHome();
+		writeFileSync(
+			join(placeholder, "docs", "topic", "fixture.md"),
+			PLACEHOLDER_HUB,
+		);
+		expect((await invoke(["sync"], placeholder)).code).toBe(0);
+		const filled = await invoke(
+			["research", "how zorblax handles ties", "--json"],
+			placeholder,
+			env,
+		);
+		expect(filled.code).toBe(0);
+		expect(JSON.parse(filled.stdout).document).toMatchObject({
+			hub: "topic/fixture.md",
+			hubFrom: "index",
+			hubDescribed: true,
+		});
+		const hub = readFileSync(
+			join(placeholder, "docs", "topic", "fixture.md"),
+			"utf8",
+		);
+		expect(hub).toContain(
+			"description: 'The fixture subject, as the found page describes it.'",
+		);
+		expect(hub).toContain(
+			"# Fixture\n\nThe fixture subject, as the found page describes it.\n\nIt files research on zorblax.\n",
+		);
+		expect(hub).not.toContain("No source");
+		expect(hub).toContain(
+			"- [[/research/zorblax-tie-handling]] — How zorblax handles ties.\n",
+		);
+		// The trailer is not part of the document.
+		expect(
+			readFileSync(
+				join(placeholder, "docs", "research", "zorblax-tie-handling.md"),
+				"utf8",
+			),
+		).not.toContain("hub: Fixture");
+		expect((await invoke(["status"], placeholder)).stdout).toContain(
+			"Up to date.",
+		);
+
+		// A description someone wrote, or a run sourced, is never replaced.
+		const described = await researchHome();
+		const kept = await invoke(
+			["research", "how zorblax handles ties", "--json"],
+			described,
+			env,
+		);
+		expect(kept.code).toBe(0);
+		expect(JSON.parse(kept.stdout).document.hubDescribed).toBe(false);
+		const unchanged = readFileSync(
+			join(described, "docs", "topic", "fixture.md"),
+			"utf8",
+		);
+		expect(unchanged).toContain("description: The fixture subject, a hub.");
+		expect(unchanged).not.toContain("as the found page describes it");
+
+		// Without a sentence the placeholder stands, and the run still writes.
+		const bare = await researchHome();
+		writeFileSync(join(bare, "docs", "topic", "fixture.md"), PLACEHOLDER_HUB);
+		expect((await invoke(["sync"], bare)).code).toBe(0);
+		const unfilled = await invoke(
+			["research", "how zorblax handles ties", "--json"],
+			bare,
+			researchEnv(
+				[RESEARCH_PLAN],
+				[INDEX_GIVE_UP, WEB_ANSWER],
+				[RESEARCH_DRAFT],
+			),
+		);
+		expect(unfilled.code).toBe(0);
+		expect(JSON.parse(unfilled.stdout).document).toMatchObject({
+			path: "research/zorblax-tie-handling.md",
+			hubDescribed: false,
+		});
+		expect(
+			readFileSync(join(bare, "docs", "topic", "fixture.md"), "utf8"),
+		).toContain(
+			"description: No source in this bundle describes this subject.",
+		);
+	});
+
+	test("a placeholder hub the writer names is filled when the writer describes it", async () => {
+		const home = await researchHome();
+		writeFileSync(
+			join(home, "docs", "topic", "zorblax.md"),
+			PLACEHOLDER_HUB.replaceAll("Fixture", "Zorblax"),
+		);
+		expect((await invoke(["sync"], home)).code).toBe(0);
+		const draft = `${RESEARCH_DRAFT.replace("  - ../topic/fixture.md\n", "")}
+hub: Zorblax — The zorblax tool and how it ranks things.
+`;
+
+		const result = await invoke(
+			["research", "how zorblax handles ties", "--json"],
+			home,
+			researchEnv(
+				[RESEARCH_PLAN],
+				[{ ...INDEX_GIVE_UP, keep: [] }, WEB_ANSWER],
+				[draft],
+			),
+		);
+
+		expect(result.code).toBe(0);
+		expect(JSON.parse(result.stdout).document).toMatchObject({
+			hub: "topic/zorblax.md",
+			hubFrom: "judge",
+			hubDescribed: true,
+		});
+		const hub = readFileSync(join(home, "docs", "topic", "zorblax.md"), "utf8");
+		expect(hub).toContain(
+			"description: The zorblax tool and how it ranks things.",
+		);
+		expect(hub).not.toContain("No source");
+
+		const rendered = await invoke(
+			["research", "how zorblax handles ties"],
+			home,
+			researchEnv(
+				[RESEARCH_PLAN],
+				[{ ...INDEX_GIVE_UP, keep: [] }, WEB_ANSWER],
+				[
+					draft.replace(
+						"title: Zorblax tie handling",
+						"title: Zorblax ties again",
+					),
+				],
+			),
+		);
+		// Filled once; the second run finds a real description and leaves it.
+		expect(rendered.stdout).toContain(
+			"hub: topic/zorblax.md (placed by the judge)\n",
+		);
 	});
 
 	test("a web run that gives up, or no web searcher at all, writes nothing and says why", async () => {

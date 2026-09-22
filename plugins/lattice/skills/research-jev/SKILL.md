@@ -42,9 +42,8 @@ It plans queries, searches the index, has Jev judge every result and
 rewrites when the judge finds gaps; from what the judge kept it decides
 `answered` (the index holds a complete answer; nothing is written),
 `extend` (a research document it kept has most of the answer) or `new`.
-Unless `answered`, it searches the web on the same queries — Exa first,
-Claude's own WebSearch added once a round has fallen short — and has a
-model write the document from the kept passages, with the hub cited, the
+Unless `answered`, it searches the web on the same queries through Exa, and
+has a model write the document from the kept passages, with the hub cited, the
 sources filtered to what the run read, and a wikilink added to the hub's
 `## Research` section. The hub is the one the index run kept, else the one
 Jev places the topic under from the hubs the index ranks highest, else a

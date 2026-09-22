@@ -2864,8 +2864,9 @@ describe("lattice run", () => {
 		).toEqual([["https://example.com/exa-limits", "stub"]]);
 
 		// With the provider set and no escalation named, nothing is added:
-		// the environment said what to search. Unset, the default escalation
-		// is Claude, which without a credential is a reason after a rewrite.
+		// the environment said what to search. With nothing set at all, still
+		// nothing: a rewrite searches the legs it already had, and the run's
+		// only reason is the leg that actually failed.
 		const unset = await invoke(
 			["run", "what tables exist", "--json", "--no-index"],
 			home,
@@ -2881,10 +2882,27 @@ describe("lattice run", () => {
 			),
 		);
 		expect(unset.code).toBe(0);
-		expect(JSON.parse(unset.stdout).webReason).toContain("claude: ");
-		expect(JSON.parse(unset.stdout).webReason).toContain(
-			"CLAUDE_CODE_OAUTH_TOKEN",
+		const reason = JSON.parse(unset.stdout).webReason;
+		expect(reason).toContain("Could not reach Exa");
+		expect(reason).not.toContain("claude");
+
+		// It is still available to anyone who asks for it by name.
+		const asked = await invoke(
+			["run", "what tables exist", "--json", "--no-index"],
+			home,
+			runEnv(
+				['{"queries": ["users table"]}', '{"queries": ["users schema"]}'],
+				[REWRITE, ANSWER],
+				{
+					LATTICE_WEB_ESCALATE: "claude",
+					CLAUDE_CODE_OAUTH_TOKEN: undefined,
+					LATTICE_OAUTH_TOKEN: undefined,
+					ANTHROPIC_API_KEY: undefined,
+				},
+			),
 		);
+		expect(asked.code).toBe(0);
+		expect(JSON.parse(asked.stdout).webReason).toContain("claude: ");
 	});
 
 	test("--no-index searches the web alone, and with --no-web there is nothing to run", async () => {

@@ -28,11 +28,18 @@ const WEB_LIMIT = 5;
 /** The web leg every round searches when the environment names none. */
 export const DEFAULT_WEB_LEGS = "exa";
 /**
- * The legs added from the first rewrite on, when the environment names
- * none: Claude's own WebSearch, fifteen seconds and a few cents a query,
- * paid for only once Exa has failed to satisfy the judge.
+ * The legs added from the first rewrite on when the environment names none:
+ * none at all.
+ *
+ * Claude's own WebSearch was that default. Over four harness rounds it
+ * earned its place once: a single kept page on one topic, while every other
+ * escalated round returned Exa duplicates or pages the judge dropped. It
+ * costs about fifteen seconds and ten cents a round, cannot fetch a page —
+ * so anything it finds is read through Exa anyway — and on a question naming
+ * something unfindable it doubles down on the search that was already
+ * failing. `LATTICE_WEB_ESCALATE=claude` still turns it on.
  */
-export const DEFAULT_WEB_ESCALATION = "claude";
+export const DEFAULT_WEB_ESCALATION = "";
 
 export type SearchDeps = Pick<
 	RunnerDeps,

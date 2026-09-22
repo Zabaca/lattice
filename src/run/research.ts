@@ -8,7 +8,8 @@
  * write, writing, and following ten steps of OKF rules unevenly. Those
  * steps are these states. Code drives: the index loop is `runLoop` over the
  * index alone, the decision is a rule over what it kept, the web loop is
- * `runLoop` over the web alone on the same queries, one writer call turns
+ * `runLoop` over the web alone, planning its own queries with what the index
+ * kept in front of it, one writer call turns
  * the kept passages into a document, and code checks the document, files
  * it under its type, links it from its hub, syncs and reads the relations
  * back. The kept text goes to the writer and never to the caller.
@@ -58,6 +59,12 @@ export const TOPIC_DIR = "topic";
 export const GENERATED_BY = "agent:lattice/research";
 /** The hub section a new document is linked from. */
 const HUB_SECTION = "## Research";
+/** How many kept documents the planner is shown. */
+const PLAN_DOCUMENTS = 5;
+/** How much of one document, or of one seeded page, the planner is shown. */
+const PLAN_DOCUMENT_CHARS = 400;
+/** How much context in all: the planner is writing two queries, not reading a briefing. */
+const PLAN_TOTAL_CHARS = 2000;
 
 export interface DocumentRelations {
 	outlinks: string[];
@@ -229,16 +236,22 @@ export async function researchLoop(
 			});
 		}
 	}
-	const context =
+	const held =
 		seeded.length === 0
 			? undefined
-			: seeded.map((seed) => `${seed.ref}\n\n${seed.text}`).join("\n\n---\n\n");
+			: capped(
+					seeded.map((seed) => `${seed.ref}\n\n${trim(seed.text)}`),
+					"\n\n---\n\n",
+				);
 
 	// index: the question at this point is whether the bundle already has
-	// the answer, so the web is not searched.
+	// the answer, so the web is not searched. The planner gets the seed and
+	// nothing else: searching the bundle by a bare name is correct, since a
+	// private bundle has no namesakes, and it is what finds the hub whose
+	// description the web planner then searches by.
 	const index = await runLoop(
 		{ searchIndex: deps.searchIndex, judge: deps.judge, llm: deps.llm },
-		{ question, maxRewrites, context },
+		{ question, maxRewrites, context: { held } },
 	);
 	add(index);
 
@@ -268,8 +281,11 @@ export async function researchLoop(
 		return result;
 	}
 
-	// web: the same queries, so the plan state is skipped and no second
-	// planning call is paid; a rewrite re-plans if the round falls short.
+	// web: planned afresh, with what the index kept in front of the planner.
+	// The index run's queries were written before anything had been searched
+	// and carry only the subject's name; reusing them paid for a blind plan
+	// twice and sent the open web after a name the bundle could have
+	// described.
 	const web = await runLoop(
 		{
 			searchWeb: deps.searchWeb,
@@ -277,7 +293,15 @@ export async function researchLoop(
 			judge: deps.judge,
 			llm: deps.llm,
 		},
-		{ question, tried: index.tried, maxRewrites, seeded, context },
+		{
+			question,
+			maxRewrites,
+			seeded,
+			context: {
+				held,
+				known: knownContext(index.kept, (path) => deps.bundle.read(path)),
+			},
+		},
 	);
 	add(web);
 	const keptRefs = new Set(web.kept.map((candidate) => candidate.ref));
@@ -441,6 +465,66 @@ export async function researchLoop(
 		...relations,
 	};
 	return result;
+}
+
+/**
+ * What the bundle already holds on the subject, for the web planner: each
+ * kept document as its title, its description and the opening of the passage
+ * the judge kept, hubs first. The description is the point — chunks exclude
+ * frontmatter, so the one sentence saying what the subject *is* is usually
+ * absent from the passage — and it is lifted from the file rather than the
+ * index, which is why the reader is passed in. The bundle path is left out:
+ * these become web queries, and `topic/agentgit.md` is not a search term.
+ */
+export function knownContext(
+	kept: Candidate[],
+	read: (path: string) => string | undefined,
+): string | undefined {
+	const documents = kept.filter((candidate) => candidate.source === "index");
+	const hub = (candidate: Candidate): boolean =>
+		candidate.ref.startsWith(`${TOPIC_DIR}/`);
+	const ordered = [
+		...documents.filter(hub),
+		...documents.filter((candidate) => !hub(candidate)),
+	].slice(0, PLAN_DOCUMENTS);
+	return capped(
+		ordered.map((candidate) => {
+			const raw = read(candidate.ref);
+			const description =
+				raw === undefined ? undefined : parseConcept(raw).description?.trim();
+			const heading =
+				description === undefined || description === ""
+					? candidate.title
+					: `${candidate.title} — ${description}`;
+			return trim(`${heading}\n${candidate.text}`);
+		}),
+	);
+}
+
+/** One document's or one page's share of the prompt, cut at a word boundary. */
+function trim(text: string): string {
+	const clean = text.trim();
+	if (clean.length <= PLAN_DOCUMENT_CHARS) {
+		return clean;
+	}
+	const cut = clean.slice(0, PLAN_DOCUMENT_CHARS);
+	const space = cut.lastIndexOf(" ");
+	return `${(space === -1 ? cut : cut.slice(0, space)).replace(/\s*$/, "")}…`;
+}
+
+/** The entries that fit the whole-prompt budget; one that does not is dropped, not halved. */
+function capped(entries: string[], separator = "\n\n"): string | undefined {
+	const kept: string[] = [];
+	let length = 0;
+	for (const entry of entries) {
+		const cost = entry.length + (kept.length === 0 ? 0 : separator.length);
+		if (length + cost > PLAN_TOTAL_CHARS) {
+			continue;
+		}
+		kept.push(entry);
+		length += cost;
+	}
+	return kept.length === 0 ? undefined : kept.join(separator);
 }
 
 interface Assessment {

@@ -62,9 +62,26 @@ export interface RunnerDeps {
 	llm: TextProvider;
 }
 
+/**
+ * What the planner is shown before it writes its queries. Both are prose the
+ * caller composes; neither names a hub, a URL or a path, because the loop
+ * knows nothing about bundles. The instruction wrapped around each is the
+ * plan state's, since that wording is what moves the queries.
+ */
+export interface PlanContext {
+	/** A source the run already holds and will cite; its subject is the run's subject. */
+	held?: string;
+	/** What the bundle already holds on the subject: background saying what it is. */
+	known?: string;
+}
+
 export interface RunOptions {
 	question: string;
-	/** Queries to search instead of planning; the plan state is skipped when given. */
+	/**
+	 * Queries to search instead of planning; the plan state is skipped when
+	 * given. `lattice run --tried` is what passes them; research plans each
+	 * of its loops for itself.
+	 */
 	tried?: string[];
 	maxRewrites: number;
 	/**
@@ -74,12 +91,8 @@ export interface RunOptions {
 	 * for, so it never has to be searched up.
 	 */
 	seeded?: Candidate[];
-	/**
-	 * What the planner should know before it writes its queries. With a
-	 * seeded page this is that page, so the queries look for what it does
-	 * not already say instead of paraphrasing the question.
-	 */
-	context?: string;
+	/** What the planner and the rewriter should know before they write queries. */
+	context?: PlanContext;
 }
 
 export interface JudgeRecord {
@@ -282,6 +295,7 @@ export async function runLoop(
 				question,
 				tried,
 				`completeness "${verdict.completenessLabel}"; ${candidates.length - kept.length} of ${candidates.length} candidates judged irrelevant`,
+				options.context,
 			),
 		);
 	}
@@ -334,27 +348,68 @@ export function transition(
 	return "rewrite";
 }
 
-function planPrompt(question: string, context?: string): string {
-	const base = `Write two distinct search queries that together would find sources answering: "${question}". `;
-	// With a page already in hand, the queries worth spending are the ones
-	// that find what it does not cover; repeating it would return it.
-	const known =
-		context === undefined
-			? ""
-			: `This source is already held and will be cited, so do not write queries that would merely find it again — ` +
-				`write queries for what it leaves out, and for the things it names without explaining:\n\n${context}\n\n`;
-	return `${known}${base}Return JSON only: {"queries": ["...", "..."]}`;
+/**
+ * The context as the planner reads it. A held source fixes the subject: the
+ * queries worth spending are the ones that corroborate or extend it, not the
+ * ones that chase whatever the question mentions and the source does not —
+ * a probe showed "what it leaves out" sending the planner after a name no
+ * source could explain. What the bundle knows is vocabulary: searching in
+ * the words that describe a subject is what keeps a namesake out of the
+ * results, so the instruction asks for the name with its qualifiers rather
+ * than forbidding the name.
+ */
+function contextBlocks(context?: PlanContext): string {
+	const blocks: string[] = [];
+	if (context?.held !== undefined) {
+		blocks.push(
+			`This source is already held and will be cited, so its subject is the subject of the run. ` +
+				`Write queries that corroborate what it says, carry it further, or explain what it names in passing. ` +
+				`Do not write a query for something the question mentions that this source does not discuss:\n\n${context.held}\n\n`,
+		);
+	}
+	if (context?.known !== undefined) {
+		blocks.push(
+			`This is what the bundle already holds on the subject: background that says what the subject is, not the answer. ` +
+				`Search in the words that describe it — what kind of thing it is, what it does, what it is built on — ` +
+				`rather than its bare name, so that something else sharing the name is not what comes back:\n\n${context.known}\n\n`,
+		);
+	}
+	if (blocks.length === 2) {
+		blocks.push(
+			`Let one query follow from the held source and one from what the bundle knows. `,
+		);
+	}
+	return blocks.join("");
 }
 
-function rewritePrompt(
+export function planPrompt(question: string, context?: PlanContext): string {
+	const blocks = contextBlocks(context);
+	const base = `Write two distinct search queries that together would find sources answering: "${question}". `;
+	const anchor =
+		blocks === ""
+			? ""
+			: `The question is what the queries must answer; what is above is there to say what it is about. `;
+	return `${blocks}${base}${anchor}Return JSON only: {"queries": ["...", "..."]}`;
+}
+
+export function rewritePrompt(
 	question: string,
 	tried: string[],
 	reason: string,
+	context?: PlanContext,
 ): string {
+	const blocks = contextBlocks(context);
+	// The rewrite is the call that most needs the context: it fires exactly
+	// when the namesakes were judged irrelevant, and blind it hunts the same
+	// name in different words.
+	const instruction =
+		blocks === ""
+			? `Write two new, different queries. `
+			: `Write two new, different queries on the same subject: change how you ask, not what you are asking about. `;
 	return (
-		`The research question is: "${question}". These queries were tried: ${JSON.stringify(tried)}. ` +
+		`${blocks}The research question is: "${question}". These queries were tried: ${JSON.stringify(tried)}. ` +
 		`A judge said the results were insufficient because: ${reason}. ` +
-		`Write two new, different queries. Return JSON only: {"queries": ["...", "..."]}`
+		`${instruction}Return JSON only: {"queries": ["...", "..."]}`
 	);
 }
 

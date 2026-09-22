@@ -3392,8 +3392,9 @@ describe("lattice research", () => {
 			unresolved: ["tool/zorblax.md"],
 		});
 		expect(parsed.reason).toBeNull();
-		// One plan, no second plan for the web: it searched the same queries.
-		expect(parsed.cost.llmCalls).toBe(1);
+		// A plan for each loop: the web leg plans with what the index kept in
+		// front of it rather than reusing the index run's queries.
+		expect(parsed.cost.llmCalls).toBe(2);
 		expect(parsed.cost.writeCalls).toBe(1);
 
 		const written = readFileSync(
@@ -3460,6 +3461,26 @@ describe("lattice research", () => {
 		expect(await invoke(["status"], home)).toMatchObject({
 			stdout: expect.stringContaining("Up to date."),
 		});
+	});
+
+	test("the web leg plans its own queries rather than reusing the index run's", async () => {
+		const home = await researchHome();
+
+		const result = await invoke(
+			["research", "how zorblax handles ties", "--json"],
+			home,
+			researchEnv(
+				[RESEARCH_PLAN, '{"queries": ["tie-breaking rules", "rank fusion"]}'],
+				[INDEX_GIVE_UP, WEB_ANSWER],
+				[RESEARCH_DRAFT],
+			),
+		);
+
+		expect(result.code).toBe(0);
+		const parsed = JSON.parse(result.stdout);
+		expect(parsed.index.tried).toEqual(["zorblax", "quuxfield"]);
+		expect(parsed.web.tried).toEqual(["tie-breaking rules", "rank fusion"]);
+		expect(parsed.cost.llmCalls).toBe(2);
 	});
 
 	test("a research document the judge kept with minor gaps is extended, keeping its sources and going back to draft", async () => {

@@ -222,6 +222,16 @@ export async function runResearch(
 
 function render(result: ResearchResult): string {
 	const lines: string[] = [];
+	// The answer first: the report of how it was found is worth less than
+	// what was found.
+	if (result.document !== null) {
+		lines.push(
+			result.document.description,
+			"",
+			result.document.keyFindings,
+			"",
+		);
+	}
 	const loop = (
 		name: string,
 		run: NonNullable<ResearchResult["web"]> | ResearchResult["index"],

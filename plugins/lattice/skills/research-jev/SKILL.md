@@ -58,9 +58,11 @@ Read from the JSON:
   the index run; `kept` is bundle paths.
 - `web` — the same for the web run, `kept` as `{ ref, leg?, read? }`, or
   `null` when the web was not searched.
-- `document` — `{ path, action, title, hub, hubFrom, hubProbability,
-  sources, droppedSources, outlinks, backlinks, unresolved }`, or `null`
-  when nothing was written. `hubFrom` is `index`, `judge` or `created`.
+- `document` — `{ path, action, title, description, keyFindings, hub,
+  hubFrom, hubProbability, sources, droppedSources, outlinks, backlinks,
+  unresolved }`, or `null` when nothing was written. `keyFindings` is the
+  document's own `## Key findings` section: the answer itself. `hubFrom` is
+  `index`, `judge` or `created`.
 - `reason` — why nothing was written, when nothing was.
 - `cost` — `llmUsd`, `llmCalls`, `jevInputTokens`, `webUsd`, `writeUsd`,
   `writeCalls`.
@@ -90,10 +92,19 @@ is missing and stop. There is no by-hand fallback in this skill; the
 
 ### Step 2: Present
 
-Tell the user, from the JSON and nothing else:
+The user asked a question. Answer it first, then say where the answer came
+from. Tell them, from the JSON and nothing else:
 
+- **The answer.** Open with `document.description`, then give
+  `document.keyFindings` in your own structure — the findings, the numbers
+  in them, and what the document says is still uncertain or missing. This
+  is the substance of the reply and it comes first, before any of the
+  reporting below. The text is already in the JSON, so do not open the
+  document to write it, and do not water it down to a sentence when the
+  findings have several parts.
 - The decision, and the index run's completeness label in the judge's
-  words, with the kept paths.
+  words, with the kept paths. Where the label is below "Most of the
+  answer", say plainly that the answer is partial and what it is missing.
 - When a document was written or extended: its path and title, the topic
   hub it hangs off and whether it was created for it (`hubFrom`), what `outlinks` say it links
   to, what `backlinks` say links to it, and anything in `unresolved` — an
@@ -105,7 +116,8 @@ Tell the user, from the JSON and nothing else:
   retry.
 - When nothing was written, the `reason`.
 
-Do not restate the document's content: the user can open the path.
+The path is there for the user who wants the whole document. It is not a
+substitute for telling them what it says.
 
 
 ## Notes

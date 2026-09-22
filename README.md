@@ -278,7 +278,7 @@ from the subject the writer names. `/research-jev` is the
 skill built on it: run, then present.
 
 ```bash
-lattice research "reciprocal rank fusion tie handling"          # decision, what was written where, hub, rels, cost
+lattice research "reciprocal rank fusion tie handling"          # the findings, then what was written where, hub, rels, cost
 lattice research "what Exa's deep search type costs" --json     # { topic, decision, index, web, document, reason, cost, webReason }
 lattice research "topic" --max-rewrites 0                        # One round per loop
 ```

@@ -115,6 +115,14 @@ export interface ResearchResult {
 		path: string;
 		action: "written" | "extended";
 		title: string;
+		/** The document's own one-sentence statement of what it answers. */
+		description: string;
+		/**
+		 * The document's `## Key findings`, verbatim: the answer itself, so a
+		 * caller can report it without opening the file or paying a model to
+		 * read it back.
+		 */
+		keyFindings: string;
 		hub: string | null;
 		/** Where the hub came from: kept by the index run, placed by the judge, or written by this run from the writer's naming of the subject. */
 		hubFrom: "index" | "judge" | "created" | null;
@@ -348,6 +356,8 @@ export async function researchLoop(
 		path: checked.path,
 		action: assessment.decision === "extend" ? "extended" : "written",
 		title: checked.title,
+		description: checked.description,
+		keyFindings: keyFindingsOf(checked.text),
 		hub,
 		hubFrom,
 		hubProbability,
@@ -622,6 +632,30 @@ function hasWikilink(body: string): boolean {
 		}
 	}
 	return false;
+}
+
+/**
+ * The document's answer, as the template puts it: the `## Key findings`
+ * section, or the opening prose when the writer used another heading. The
+ * command returns it so the answer reaches the reader with the report, and
+ * a skill does not have to read the document back to say what it found.
+ */
+export function keyFindingsOf(document: string): string {
+	const body = parseConcept(document).body;
+	const findings = /^##\s+Key findings\s*$/im.exec(body);
+	if (findings !== null) {
+		const from = findings.index + findings[0].length;
+		const next = /^##\s+/m.exec(body.slice(from));
+		return body
+			.slice(from, next === null ? undefined : from + next.index)
+			.trim();
+	}
+	// No such heading: the prose between the title and whatever comes next.
+	const afterTitle = /^#\s+.*$/m.exec(body);
+	const from =
+		afterTitle === null ? 0 : afterTitle.index + afterTitle[0].length;
+	const next = /^#{1,2}\s+/m.exec(body.slice(from));
+	return body.slice(from, next === null ? undefined : from + next.index).trim();
 }
 
 /** A hub as a research document cites it: relative to `research/`. */

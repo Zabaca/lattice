@@ -3355,6 +3355,11 @@ describe("lattice research", () => {
 			path: "research/zorblax-tie-handling.md",
 			action: "written",
 			title: "Zorblax tie handling",
+			description: "How zorblax handles ties.",
+			// The answer itself travels with the report, so a caller never
+			// has to open the file to say what was found.
+			keyFindings:
+				"Ties are shared, as [[/topic/fixture]] says and [[existing]] found; see\n[[/tool/zorblax]] for the tool itself.",
 			hub: "topic/fixture.md",
 			hubFrom: "index",
 			hubProbability: null,

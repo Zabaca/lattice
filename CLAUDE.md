@@ -284,13 +284,14 @@ environment.
 | `check` | pure code, before anything touches disk: a wrapping fence stripped, the hub trailer split off; `parseConcept` + `conceptProblem` clean, `title`, `description` and a body with at least one wikilink outside a fence present; without a hub, the trailer present, naming `topic/<slug(name)>.md` — an existing document, or one to write; `sources` filtered to the allowed set by resolved bundle path (`normalizeTarget`) and `canonicalUrl`, the rest in `droppedSources`, the hub added if missing, an extension's sources kept as written; a wikilink to the hub's own name under any type (`[[/tool/x]]` when the hub is `topic/x`) re-aimed at the hub; frontmatter rewritten with gray-matter (`status: draft`, `generated: { by: agent:lattice/research, at }`, unknown fields such as `verified` kept); path `research/<slug(title)>.md` (`typeDirectory` on the title, `-2`, `-3` on collision) or the existing path. One retry with the problems appended; a second refusal is exit 1 with `draft` in the JSON and nothing written | `link` |
 | `link` | the file written; a named hub that does not exist written as a `type: Topic` document with the writer's sentence and an empty `## Research` section; the hub re-read and `- [[/research/<slug>]] — <description>` appended to its `## Research` section (created at the end if absent) unless a line already targets it | `sync` |
 | `sync` | the search connection closed, then `syncBundle` (the sync command's own code: lock, space check, plan, apply, embed) with the provider the command built; problems on the written path or the hub are an error | `verify` |
-| `verify` | a fresh connection and `relationsFor` on the document: outlinks, backlinks, unresolved as paths | exit 0 |
+| `verify` | a fresh connection and `relationsFor` on the document: outlinks, backlinks, unresolved as paths; the document's `## Key findings` returned verbatim as `keyFindings`, so the answer reaches the caller with the report and no model reads the document back | exit 0 |
 
 `--json` is `{ topic, decision, index: { exit, tried, completeness,
 completenessLabel, kept: [path] }, web: { …, kept: [{ ref, leg?, read? }] }
-| null, document: { path, action: written | extended, title, hub, hubFrom:
-index | judge | created | null, hubProbability, sources, droppedSources,
-outlinks, backlinks, unresolved } | null, reason, cost: {
+| null, document: { path, action: written | extended, title, description,
+keyFindings, hub, hubFrom: index | judge | created | null, hubProbability,
+sources, droppedSources, outlinks, backlinks, unresolved } | null, reason,
+cost: {
 llmUsd, llmCalls, jevInputTokens, webUsd, writeUsd, writeCalls },
 webReason, draft? }`. Exit 0 is the loop finishing, whatever it decided.
 The `/research-jev` skill is two steps: run this, present the JSON.

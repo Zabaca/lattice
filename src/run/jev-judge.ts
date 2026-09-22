@@ -55,6 +55,28 @@ const RELEVANCE = {
 	false: "It is only on a related topic or too vague to cite.",
 };
 
+/**
+ * Why the candidate question asks about relevance rather than about
+ * answering.
+ *
+ * Asked whether a candidate "contains information that answers" the
+ * question, Jev reads the question's own words as a specification the page
+ * must meet. A question whose premise is false then has no citable source
+ * at all: on "how does FTS5 rank with bm25 inside a window function" the
+ * FTS5 reference scored 0.23, even on the passage saying the rank column is
+ * NULL outside a MATCH query — the rule that settles it. Every page was
+ * dropped and the run gave up. Rewording the legend did not move it (0.24
+ * widened, 0.43 at its loosest, and the tangential window-functions page
+ * rose with it); dropping the two words from the question moved the same
+ * page to 0.95. So the fix is the stem, not the legend: asked what is
+ * relevant to answering, Jev scores the reference 0.61 and the
+ * window-functions page 0.22, a gap of 0.39 against 0.12. Over topics that
+ * already worked it changes no verdict at all, and a page on sourdough
+ * injected into each set stays at 0.01.
+ */
+const candidateQuestion = (id: string): string =>
+	`Is candidate ${id} relevant to answering the research question?`;
+
 const WORTH_READING = {
 	true: "The page as a whole probably covers what the question asks, and the excerpt is just the wrong part of it.",
 	false:
@@ -96,10 +118,7 @@ export class JevJudge implements Judge {
 		const ids = candidates.map((_, index) => `c${index + 1}`);
 		const perCandidate: Record<string, ReturnType<typeof noul>> = {};
 		ids.forEach((id, index) => {
-			perCandidate[id] = noul(
-				`Does candidate ${id} contain information that answers the research question?`,
-				RELEVANCE,
-			);
+			perCandidate[id] = noul(candidateQuestion(id), RELEVANCE);
 			const candidate = candidates[index];
 			if (candidate.source === "web" && candidate.read !== true) {
 				perCandidate[`${id}_read`] = noul(

@@ -8,29 +8,6 @@ should mean deleting its entry.
 The order is the order I would fix them in. The numbering is not stable:
 entries are deleted as they are fixed, and the rest keep their headings.
 
-## 3. A created hub invents what it cannot know
-
-When no existing hub fits, the writer is required to end its draft with
-`hub: <Subject> — <one sentence describing the subject>` (`NAME_HUB` in
-`src/write/prompt.ts`), and a draft without that line is rejected, costs the
-single retry, and on a second miss exits 1 with nothing written
-(`checkDraft` in `src/run/research.ts`). The same prompt also says "do not
-invent facts it does not support", but nothing enforces that. Faced with a
-subject no source describes, the writer has no way to say so and every
-reason to invent.
-
-**Evidence.** `topic/agentgit.md` in the live bundle describes agentgit as
-"in the lineage of LLMinus and Sashiko". Not one of the five sources behind
-the document that created it mentions agentgit; the lineage is inferred from
-the tools the article happened to discuss. The research document hedged with
-"presumed to"; the hub dropped the hedge. A later run then kept that hub as
-indexed context, so the guess is now feeding research as established fact.
-
-**Fix.** Let the trailer name a subject without describing it, and write a
-hub that says plainly that no source here describes this subject. That keeps
-the graph connected, which was the point, and fails loudly instead of
-quietly.
-
 ## 4. A name match reads as relevance
 
 The judge is asked whether a candidate is relevant to answering the question
@@ -121,7 +98,10 @@ cost followed them down is unmeasured.
 
 ---
 
-Fixed since this file was written: a planner blind to the index, whose web
+Fixed since this file was written: a writer forced to describe a subject its
+sources never mention — the hub trailer's sentence is now optional, and a hub
+written without one says that no source describes the subject instead of
+guessing. Also a planner blind to the index, whose web
 loop reused the queries the index run planned before anything had been
 searched, and a seed instruction that sent the planner after what its source
 left out. Both are now the `PlanContext` the web loop plans with.

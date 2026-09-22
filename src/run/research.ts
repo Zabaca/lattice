@@ -59,6 +59,13 @@ export const TOPIC_DIR = "topic";
 export const GENERATED_BY = "agent:lattice/research";
 /** The hub section a new document is linked from. */
 const HUB_SECTION = "## Research";
+/**
+ * The description a created hub carries when no source the run read says what
+ * the subject is. It states the gap rather than filling it, so a reader — and
+ * the planner, which reads descriptions back as what the bundle knows — can
+ * tell it from a sourced sentence.
+ */
+export const UNDESCRIBED = "No source in this bundle describes this subject.";
 /** How many kept documents the planner is shown. */
 const PLAN_DOCUMENTS = 5;
 /** How much of one document, or of one seeded page, the planner is shown. */
@@ -612,7 +619,8 @@ type Checked =
 			/** The hub cited, and what to write when it does not exist yet. */
 			hub: {
 				path: string;
-				create?: { title: string; description: string };
+				/** `description` absent when no source the run read describes the subject. */
+				create?: { title: string; description?: string };
 			} | null;
 	  }
 	| { ok: false; problems: string[] };
@@ -665,11 +673,17 @@ export function checkDraft(raw: string, input: CheckInput): Checked {
 		} else {
 			const hubTitle = named[1].trim();
 			const hubPath = `${TOPIC_DIR}/${slug(hubTitle) || "untitled"}.md`;
+			// No sentence means no source described the subject, which the hub
+			// says for itself rather than the writer filling the gap.
+			const described = named[2]?.trim();
 			hub = input.exists(hubPath)
 				? { path: hubPath }
 				: {
 						path: hubPath,
-						create: { title: hubTitle, description: named[2].trim() },
+						create: {
+							title: hubTitle,
+							...(described ? { description: described } : {}),
+						},
 					};
 		}
 	}
@@ -856,15 +870,23 @@ function citationOf(hubPath: string): string {
  */
 export function hubDocument(
 	title: string,
-	description: string,
+	description: string | undefined,
 	now: string,
 ): string {
+	// A subject no source describes gets a hub that says so. The graph still
+	// connects, which is the whole reason a hub is required, and nothing the
+	// run could not support enters the bundle — including the description the
+	// web planner later reads back as what the bundle knows.
+	const said = description?.trim();
+	const body = said
+		? said
+		: "No source behind the research filed here describes what this is. The description is not written yet.";
 	return matter.stringify(
-		{ content: `\n# ${title}\n\n${description}\n\n${HUB_SECTION}\n` },
+		{ content: `\n# ${title}\n\n${body}\n\n${HUB_SECTION}\n` },
 		{
 			type: "Topic",
 			title,
-			description,
+			description: said || UNDESCRIBED,
 			status: "draft",
 			tags: [slug(title)],
 			generated: { by: GENERATED_BY, at: now },

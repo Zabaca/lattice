@@ -36,8 +36,13 @@ export interface WritePromptInput {
 	hub?: string;
 }
 
-/** The line a draft ends with when it names its own hub: `hub: <Name> — <one sentence>`. */
-export const HUB_TRAILER = /^hub:\s*(.+?)\s+(?:—|--|-)\s+(.+?)\s*$/;
+/**
+ * The line a draft ends with when it names its own hub:
+ * `hub: <Name> — <one sentence>`, or `hub: <Name>` alone when no source the
+ * run read describes the subject. The sentence is optional because requiring
+ * it is what made a writer with nothing to go on invent one.
+ */
+export const HUB_TRAILER = /^hub:\s*(.+?)(?:\s+(?:—|--|-)\s+(.+?))?\s*$/;
 
 /** The skill's document template and field rules, verbatim. */
 const TEMPLATE = `\`~/.lattice/docs/research/{filename}.md\`:
@@ -110,7 +115,16 @@ hub: <Subject name> — <one sentence describing the subject>
 The subject is the thing the question is about (the tool, the method, the
 system), broad enough that other research will share it: for a question
 about how SQLite FTS5 ranks, the hub is \`SQLite FTS5\`, not the question.
-The command writes the hub document from this line.`;
+The command writes the hub document from this line.
+
+If none of the sources you were given says what the subject is, write the
+name alone:
+
+hub: <Subject name>
+
+Do not describe a subject your sources do not describe. A missing sentence
+is recorded as missing; a guess is indistinguishable from a fact once it is
+written.`;
 
 export function writePrompt(input: WritePromptInput): string {
 	const parts: string[] = [];

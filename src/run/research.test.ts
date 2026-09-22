@@ -1,6 +1,14 @@
 import { describe, expect, test } from "bun:test";
+import { HUB_TRAILER } from "../write/prompt.js";
 import type { Candidate } from "./judge.js";
-import { knownContext, slug, urlsIn, withoutUrls } from "./research.js";
+import {
+	hubDocument,
+	knownContext,
+	slug,
+	UNDESCRIBED,
+	urlsIn,
+	withoutUrls,
+} from "./research.js";
 
 describe("slug", () => {
 	test("a title becomes the kebab-case filename its type directory would", () => {
@@ -123,5 +131,49 @@ describe("what the bundle knows, for the web planner", () => {
 		expect(budgeted.length).toBeLessThanOrEqual(2000);
 		expect(budgeted).toContain("Big3");
 		expect(budgeted).not.toContain("Big4");
+	});
+});
+
+describe("a hub for a subject no source describes", () => {
+	const NOW = "2026-09-22T00:00:00Z";
+
+	test("the trailer may name the subject without describing it", () => {
+		expect(HUB_TRAILER.exec("hub: agentgit — An agentic git tool.")?.[2]).toBe(
+			"An agentic git tool.",
+		);
+		// The line that used to be rejected, costing the retry and then the run.
+		const bare = HUB_TRAILER.exec("hub: agentgit");
+		expect(bare?.[1]).toBe("agentgit");
+		expect(bare?.[2]).toBeUndefined();
+		// A hyphen inside a name is not a description separator.
+		expect(HUB_TRAILER.exec("hub: Auto-GPT")?.[1]).toBe("Auto-GPT");
+	});
+
+	test("the hub states the gap instead of filling it", () => {
+		const hub = hubDocument("agentgit", undefined, NOW);
+
+		expect(hub).toContain(
+			"description: No source in this bundle describes this subject.",
+		);
+		expect(hub).toContain("No source behind the research filed here describes");
+		// The graph still connects: a Topic document with a section to link from.
+		expect(hub).toContain("type: Topic");
+		expect(hub).toContain("## Research");
+		// And nothing the run could not support is asserted about the subject.
+		expect(hub).not.toContain("lineage");
+	});
+
+	test("a described subject is unchanged", () => {
+		const hub = hubDocument("agentgit", "An agentic git tool.", NOW);
+
+		expect(hub).toContain("description: An agentic git tool.");
+		expect(hub).toContain("\n# agentgit\n\nAn agentic git tool.\n");
+		expect(hub).not.toContain(UNDESCRIBED);
+	});
+
+	test("an empty sentence is the same as none, not an empty description", () => {
+		expect(hubDocument("agentgit", "   ", NOW)).toContain(
+			`description: ${UNDESCRIBED}`,
+		);
 	});
 });

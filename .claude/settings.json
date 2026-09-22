@@ -1,5 +1,6 @@
 {
   "enabledPlugins": {
-    "lattice@lattice": true
+    "lattice@lattice": true,
+    "typesafe@typesafe-ai": true
   }
 }

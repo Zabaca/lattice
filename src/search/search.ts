@@ -505,8 +505,12 @@ function fullTextCandidates(
 
 	return db
 		.query<CandidateRow, [string, ...string[], number, number]>(
-			// bm25() is only callable directly against the MATCH, so it is
-			// computed innermost and every layer above works on the value.
+			// Three layers, for one ordinary SQL reason: a window function's
+			// result cannot be used in `WHERE`, and the cap on passages per
+			// concept is exactly that. So the innermost query holds the MATCH
+			// and computes `bm` once, the middle numbers the rows, and the
+			// outer filters on that number. (`bm25()` itself is callable
+			// inside a window clause; what it refuses is an aggregate.)
 			`SELECT * FROM (
 				SELECT *, row_number() OVER (
 					PARTITION BY concept_id ORDER BY bm

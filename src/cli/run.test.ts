@@ -3629,6 +3629,9 @@ Body.
 			hubFrom: "judge",
 			hubProbability: 0.9,
 			sources: ["../topic/fixture.md", "https://example.com/found"],
+			// The judge's hub is an allowed citation, not an invented one,
+			// though the index run never kept it.
+			droppedSources: ["https://example.com/invented"],
 			backlinks: ["topic/fixture.md"],
 		});
 		const hub = readFileSync(join(home, "docs", "topic", "fixture.md"), "utf8");
@@ -3648,6 +3651,25 @@ Body.
 		);
 		expect(rendered.stdout).toContain(
 			"hub: topic/fixture.md (placed by the judge)",
+		);
+	});
+
+	test("a document that opens with a summary section reports that section as its findings", async () => {
+		const home = await researchHome();
+		const draft = RESEARCH_DRAFT.replace(
+			"## Key findings",
+			"## Summary",
+		).replace("## Sources", "## Detail\n\nMore on ties.\n\n## Sources");
+
+		const result = await invoke(
+			["research", "how zorblax handles ties", "--json"],
+			home,
+			researchEnv([RESEARCH_PLAN], [INDEX_GIVE_UP, WEB_ANSWER], [draft]),
+		);
+
+		expect(result.code).toBe(0);
+		expect(JSON.parse(result.stdout).document.keyFindings).toBe(
+			"Ties are shared, as [[/topic/fixture]] says and [[existing]] found; see\n[[/tool/zorblax]] for the tool itself.",
 		);
 	});
 

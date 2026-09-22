@@ -368,7 +368,7 @@ export async function researchLoop(
 	const existing =
 		existingRaw === undefined ? undefined : parseConcept(existingRaw);
 	const hubCitation = hub === null ? undefined : citationOf(hub);
-	const allowed = allowedSources(index.kept, web.kept, existingPath);
+	const allowed = allowedSources(index.kept, web.kept, existingPath, hub);
 	const prompt = writePrompt({
 		topic,
 		decision: assessment.decision,
@@ -575,13 +575,21 @@ interface AllowedSources {
 	urls: Map<string, string>;
 }
 
-/** What the document may cite: the kept documents, relative to `research/`, and the kept pages. A document does not cite itself. */
+/**
+ * What the document may cite: the kept documents, relative to `research/`,
+ * the hub however it was found, and the kept pages. A document does not cite
+ * itself.
+ */
 function allowedSources(
 	indexKept: Candidate[],
 	webKept: Candidate[],
 	self: string | undefined,
+	hub: string | null,
 ): AllowedSources {
 	const paths = new Map<string, string>();
+	if (hub !== null) {
+		paths.set(hub, citationOf(hub));
+	}
 	for (const candidate of indexKept) {
 		if (candidate.source === "index" && candidate.ref !== self) {
 			paths.set(candidate.ref, posix.relative(RESEARCH_DIR, candidate.ref));
@@ -809,7 +817,8 @@ function hasWikilink(body: string): boolean {
 
 /**
  * The document's answer, as the template puts it: the `## Key findings`
- * section, or the opening prose when the writer used another heading. The
+ * section, or the opening prose when the writer used another heading, or
+ * the first section when there is no opening prose. The
  * command returns it so the answer reaches the reader with the report, and
  * a skill does not have to read the document back to say what it found.
  */
@@ -828,7 +837,21 @@ export function keyFindingsOf(document: string): string {
 	const from =
 		afterTitle === null ? 0 : afterTitle.index + afterTitle[0].length;
 	const next = /^#{1,2}\s+/m.exec(body.slice(from));
-	return body.slice(from, next === null ? undefined : from + next.index).trim();
+	const opening = body
+		.slice(from, next === null ? undefined : from + next.index)
+		.trim();
+	if (opening !== "" || next === null) {
+		return opening;
+	}
+	// Nothing before the first heading, as when the writer opens with
+	// `## Summary`: that first section is the answer.
+	const section = /^##\s+.*$/m.exec(body.slice(from));
+	if (section === null) {
+		return "";
+	}
+	const start = from + section.index + section[0].length;
+	const end = /^#{1,2}\s+/m.exec(body.slice(start));
+	return body.slice(start, end === null ? undefined : start + end.index).trim();
 }
 
 /** Every http(s) URL written in the topic, in order, deduplicated. */

@@ -267,8 +267,10 @@ The research skill as one command. The judged loop runs over the index; from
 what the judge kept the command decides `answered` (a complete answer is
 already indexed; nothing is written), `extend` (a research document it kept
 has most of the answer) or `new`. Unless answered, the loop runs again over
-the web on the same queries, a model (Sonnet by default) writes or extends the
-document from the kept passages, the command checks it — type, title,
+the web, planning its own queries with what the index kept in front of the
+planner — each kept document's title, description and best passage — so it
+searches by what the subject is rather than by its name. A model (Sonnet by
+default) then writes or extends the document from the kept passages, the command checks it — type, title,
 description, at least one wikilink, `sources` cut to what the run actually
 read — files it under `research/`, cites the topic hub and links back from the
 hub's `## Research` section, syncs, and reads the document's links back. The
@@ -342,7 +344,7 @@ lattice sql "SELECT type, count(*) AS n FROM concepts GROUP BY type"
 | `CLAUDE_CODE_OAUTH_TOKEN` | Forwarded to the Claude Agent SDK by `lattice run`; `ANTHROPIC_API_KEY` is the alternative | unset |
 | `LATTICE_OAUTH_TOKEN` | The same token under a name a Claude Code session's Bash tool can see; skills need this one | unset |
 | `LATTICE_LLM_PROVIDER` | `claude`, or `stub` for tests (with `LATTICE_LLM_STUB`) | `claude` |
-| `LATTICE_LLM_MODEL` | The model `lattice run` plans and rewrites with | `claude-haiku-4-5` |
+| `LATTICE_LLM_MODEL` | The model `lattice run` plans and rewrites with | `claude-sonnet-5` |
 | `LATTICE_WRITE_PROVIDER` | `claude`, or `stub` for tests (with `LATTICE_WRITE_STUB`); the writer `lattice research` calls once | `claude` |
 | `LATTICE_WRITE_MODEL` | The model `lattice research` writes the document with | `claude-sonnet-5` |
 | `LATTICE_CLAUDE_PATH` | A Claude Code executable for the SDK to run, when not the bundled one | unset |

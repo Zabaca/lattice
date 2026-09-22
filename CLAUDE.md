@@ -208,11 +208,11 @@ run in one process:
 
 | State | Runs | Then |
 |---|---|---|
-| `plan` | the LLM writes two queries; skipped when `--tried` gives them | `search` |
+| `plan` | the LLM writes two queries; skipped when `--tried` gives them. `options.context` puts a `held` source (its subject is the run's, so corroborate and extend it) and what is already `known` about the subject (search in the words that describe it, not its bare name) in front of the planner, and the same goes to `rewrite` | `search` |
 | `search` | each query over `search()` (limit 5, no expand) unless `--no-index`, and the web searcher (limit 5, type `fast`) unless `--no-web`; merged, first occurrence kept. Both flags together is exit 1 | `judge` |
 | `judge` | one Jev request: a Noul per candidate, a second Noul per web page still known only by its excerpt (worth reading in full?), a four-level completeness Score, a repeating Noul, a Choice `answer\|rewrite\|give_up` | `read` if it named pages, else the policy |
 | `read` | up to 2 dropped pages the judge wanted in full: fetched through the web searcher's `read`, chunked at headings like an indexed document, the chunks ranked against the question (shared words, plus cosine when the embedding model is available, fused by rank), the top 3 passages replacing the excerpt | `judge`, once, over the kept set plus the read pages |
-| `rewrite` | the LLM writes two new queries from the tried list and the reason | `search` |
+| `rewrite` | the LLM writes two new queries from the tried list, the reason and the same context | `search` |
 
 The judge reads everything kept so far plus the round's new finds, so
 completeness is about the whole set; a candidate's own relevance is settled
@@ -261,7 +261,7 @@ environment.
 | Variable | Meaning |
 |---|---|
 | `LATTICE_LLM_PROVIDER` | Unset or `claude` (the Agent SDK) or `stub`. Anything else is an error. |
-| `LATTICE_LLM_MODEL` | The model to plan and rewrite with; default `claude-haiku-4-5`, whose queries were as good as Opus's. |
+| `LATTICE_LLM_MODEL` | The model to plan and rewrite with; default `claude-sonnet-5`. Haiku wrote queries as good as Opus's from the bare question, but a planner reading a description and searching in its vocabulary is synthesising: about $0.05 a run. The `claude` web searcher stays on Haiku unless this names a model. |
 | `LATTICE_LLM_STUB` | With `stub`, a JSON array of completions returned in order; the last repeats. Malformed is an error. |
 | `LATTICE_CLAUDE_PATH` | `pathToClaudeCodeExecutable` for the SDK, when set. |
 | `CLAUDE_CODE_OAUTH_TOKEN` | Required by `claude` unless `LATTICE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` is set; missing all three is an error naming them. |
@@ -277,9 +277,9 @@ environment.
 
 | State | Runs | Then |
 |---|---|---|
-| `index` | `runLoop` over the index alone | `assess` |
+| `index` | `runLoop` over the index alone, with any page the topic named as the planner's `held` source and never `known`: a bare name is a correct query inside a private bundle | `assess` |
 | `assess` | pure code over what the index run kept: label "A complete answer" → `answered`, stop; else the first kept `research/` document → `extend` it; else `new`. The hub is the first kept `topic/` document, when one was; a hub is never extended. A `decide` exit falls through on `kept` the same way | `web` unless `answered` |
-| `web` | `runLoop` over the web alone on the index run's `tried`, so no second plan is paid; escalation as in `run`. No searcher → `reason`; `give_up` or nothing kept → `reason`; `decide` with something kept writes | `hub` |
+| `web` | `runLoop` over the web alone, planning its own queries with the seed as `held` and what the index kept as `known` — each kept document's title, its description lifted from frontmatter and the opening of its kept passage, hubs first, 5 documents, 400 characters each, 2000 in all; escalation as in `run`. No searcher → `reason`; `give_up` or nothing kept → `reason`; `decide` with something kept writes | `hub` |
 | `hub` | when the index run kept no hub: the ten `topic/` documents the index ranks highest for the topic (`searchConcepts` with `type: Topic`, so the request does not grow with the bundle) go to the judge's `place` in one request, a Noul per hub; the best above 0.75 is the hub (a true subject scores 0.87–0.97, a hub sharing only the field 0.38–0.57). None, or no hubs at all, means the writer names one | `write` |
 | `write` | one writer call (`src/write/prompt.ts`): the topic, the decision, the existing document in full for `extend`, the kept web and index passages, the allowed `sources`, the linking rules, and the skill's document template and field rules verbatim; without a hub, the draft must end with `hub: <Subject name> — <one sentence>` | `check` |
 | `check` | pure code, before anything touches disk: a wrapping fence stripped, the hub trailer split off; `parseConcept` + `conceptProblem` clean, `title`, `description` and a body with at least one wikilink outside a fence present; without a hub, the trailer present, naming `topic/<slug(name)>.md` — an existing document, or one to write; `sources` filtered to the allowed set by resolved bundle path (`normalizeTarget`) and `canonicalUrl`, the rest in `droppedSources`, the hub added if missing, an extension's sources kept as written; a wikilink to the hub's own name under any type (`[[/tool/x]]` when the hub is `topic/x`) re-aimed at the hub; frontmatter rewritten with gray-matter (`status: draft`, `generated: { by: agent:lattice/research, at }`, unknown fields such as `verified` kept); path `research/<slug(title)>.md` (`typeDirectory` on the title, `-2`, `-3` on collision) or the existing path. One retry with the problems appended; a second refusal is exit 1 with `draft` in the JSON and nothing written | `link` |

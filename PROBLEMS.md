@@ -5,46 +5,8 @@ reading what it wrote rather than by reasoning about it. Each entry says what
 happens, the evidence, where the code is, and what would fix it. Fixing one
 should mean deleting its entry.
 
-The order is the order I would fix them in: the first two are cheap and
-account for most of what went wrong in the worst run observed, and the third
-stops the corpus taking on fiction.
-
-## 1. The planner is blind to the index
-
-`runLoop` plans its queries in the first state, before anything has been
-searched (`src/run/runner.ts`). So the queries are written from the question
-alone, and whatever the bundle already knows about the subject arrives too
-late to shape them. The web loop compounds it by reusing the index run's
-queries (`tried: index.tried` in `src/run/research.ts`), so a bad plan is
-paid for twice.
-
-**Evidence.** Researching "how new upcoming features can be helpful for
-agentgit" against a bundle that *did* hold `topic/agentgit.md`, the index run
-found and kept that hub — and the planner still wrote six queries hunting the
-bare name, because it ran first. The web leg then kept nineteen pages, of
-which eighteen were unrelated projects that happen to share the name.
-
-**Fix.** Re-plan the web queries from what the index kept instead of reusing
-its queries. One extra call to the planner model, about $0.001.
-
-## 2. Seed-then-plan over-corrects
-
-A URL in the topic is now fetched before planning and the planner is shown
-it. The instruction telling it what to do with that page says to write
-queries "for what it leaves out" (`planPrompt` in `src/run/runner.ts`), which
-sends it after whatever the source does not cover — including parts of the
-question no source can answer.
-
-**Evidence.** Seeded with an LWN article about Git 2.56, the planner
-correctly inferred that the article says nothing about agentgit and went
-looking for agentgit, which is a private tool with a dozen public namesakes.
-A probe over the same seed showed a wording that keeps the queries on the
-source's own subject produces "Git 2.56 new features improvements workflow
-efficiency" where the current one produces a name hunt.
-
-**Fix.** Reword to keep queries on the seed's subject: corroborate, extend,
-explain what it names in passing. Do not chase a name in the question the
-source does not discuss.
+The order is the order I would fix them in. The numbering is not stable:
+entries are deleted as they are fixed, and the rest keep their headings.
 
 ## 3. A created hub invents what it cannot know
 
@@ -85,6 +47,12 @@ unrelated projects, which the writer then turned into disambiguation nodes:
 giving the judge what the bundle knows the subject to be, or refusing to mint
 a node whose name only differs from the subject by a disambiguator.
 
+The web planner now searches in the words the bundle uses to describe the
+subject rather than its bare name, so fewer namesakes reach the judge. That
+is upstream of this and does not close it: the judge is still asked only
+whether a candidate answers the question, so a namesake that does reach it
+still reads as relevant.
+
 ## 5. Nothing acts on unresolved links
 
 An unresolved wikilink is the graph recording that a document is wanted, and
@@ -120,9 +88,10 @@ This is unresolved rather than decided. Loading the Agent SDK's project
 setting sources is the obvious lever and carries a real hazard: a settings
 file's `env` block overrides one passed programmatically, which is how this
 command forwards its own credential. Passing the text explicitly through the
-`context` option that seeds already use avoids that. And the evidence in
-problem 1 suggests much of what looked like missing project context was
-really the planner running too early.
+`context` option that seeds and the bundle's own knowledge already use
+avoids that. And the evidence behind the blind-planner problem, now fixed,
+suggests much of what looked like missing project context was really the
+planner running too early.
 
 ## 8. The harness measures links, not whether they point at anything
 
@@ -146,12 +115,18 @@ own.
 ## 10. Seeding is expensive
 
 The seeded run spent $0.21 on the web and $0.20 on the writer, against about
-$0.13 for a whole unseeded run, mostly on ten queries chasing a name.
-Problems 1 and 2 are the cause, so fixing those should fix this.
+$0.13 for a whole unseeded run, mostly on ten queries chasing a name. The
+blind planner and the seed wording were the cause and are fixed; whether the
+cost followed them down is unmeasured.
 
 ---
 
-Fixed in this round, for context: documents that were leaves with no links,
+Fixed since this file was written: a planner blind to the index, whose web
+loop reused the queries the index run planned before anything had been
+searched, and a seed instruction that sent the planner after what its source
+left out. Both are now the `PlanContext` the web loop plans with.
+
+Fixed in the round before, for context: documents that were leaves with no links,
 a topic whose web run gave up every time and wrote nothing, a result that
 reported process without ever stating the answer, and a note in this repo
 about `bm25()` and window functions that was wrong.

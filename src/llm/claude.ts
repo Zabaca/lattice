@@ -28,7 +28,14 @@ export const OAUTH_ALIAS_VAR = "LATTICE_OAUTH_TOKEN";
 export const API_KEY_VAR = "ANTHROPIC_API_KEY";
 export const LLM_MODEL_VAR = "LATTICE_LLM_MODEL";
 export const CLAUDE_PATH_VAR = "LATTICE_CLAUDE_PATH";
-export const DEFAULT_LLM_MODEL = "claude-haiku-4-5";
+/**
+ * The planner and rewriter. Haiku wrote queries as good as Opus's from the
+ * bare question, but the planner now reads a description and searches in its
+ * vocabulary, which is a synthesis step and the one that failed: about $0.05
+ * a run, against $0.20 for the writer. The `claude` web searcher does not
+ * follow it up — see `DEFAULT_SEARCH_MODEL`.
+ */
+export const DEFAULT_LLM_MODEL = "claude-sonnet-5";
 
 export class ClaudeProvider implements TextProvider {
 	readonly name = "claude";

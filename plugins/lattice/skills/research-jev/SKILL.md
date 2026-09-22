@@ -42,7 +42,8 @@ It plans queries, searches the index, has Jev judge every result and
 rewrites when the judge finds gaps; from what the judge kept it decides
 `answered` (the index holds a complete answer; nothing is written),
 `extend` (a research document it kept has most of the answer) or `new`.
-Unless `answered`, it searches the web on the same queries through Exa, and
+Unless `answered`, it plans fresh queries from what the index kept — the
+subject's description, not just its name — searches the web through Exa, and
 has a model write the document from the kept passages, with the hub cited, the
 sources filtered to what the run read, and a wikilink added to the hub's
 `## Research` section. The hub is the one the index run kept, else the one

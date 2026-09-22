@@ -20,6 +20,7 @@ import type { WebSearchOutput } from "@anthropic-ai/claude-agent-sdk/sdk-tools";
 import {
 	type ClaudeEnvironment,
 	claudeEnvironment,
+	LLM_MODEL_VAR,
 	minimalOptions,
 } from "../llm/claude.js";
 import type {
@@ -31,6 +32,13 @@ import type {
 } from "./provider.js";
 
 export const CLAUDE_SEARCHER = "claude";
+
+/**
+ * The model that searches, when nothing names one. It is not the planner's:
+ * this leg summarises tool results rather than synthesising anything, and it
+ * already costs about fifteen seconds and a cent or two a query.
+ */
+export const DEFAULT_SEARCH_MODEL = "claude-haiku-4-5";
 
 /** A search, a second search when the first was thin, and the answer. */
 const MAX_TURNS = 3;
@@ -186,5 +194,9 @@ function sameUrl(url: string): string {
 export function claudeSearcherFromEnv(
 	env: Record<string, string | undefined>,
 ): ClaudeSearcher {
-	return new ClaudeSearcher(claudeEnvironment(env, "The claude web searcher"));
+	const environment = claudeEnvironment(env, "The claude web searcher");
+	return new ClaudeSearcher({
+		...environment,
+		model: env[LLM_MODEL_VAR]?.trim() || DEFAULT_SEARCH_MODEL,
+	});
 }

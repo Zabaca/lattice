@@ -67,6 +67,11 @@ export interface DocumentRelations {
 
 export interface ResearchDeps {
 	searchIndex(query: string): Promise<Candidate[]>;
+	/**
+	 * A page the user named in the topic, as its best passages. Absent when
+	 * no searcher can read pages; throwing costs that seed, not the run.
+	 */
+	readSeed?(question: string, url: string): Promise<PageRead>;
 	/** The few hubs the index ranks highest for the topic, for the judge to place it under. */
 	listHubs(topic: string): Promise<HubCandidate[]>;
 	/** Absent when no web searcher could be built; `options.webReason` says why. */
@@ -95,6 +100,16 @@ export interface ResearchOptions {
 	webReason?: string;
 }
 
+/** A page the user named in the topic, and what became of it. */
+export interface Seed {
+	url: string;
+	/** False when it could not be fetched; `reason` says why and the run went on. */
+	read: boolean;
+	reason?: string;
+	/** Whether the judge kept it once it had read the page. */
+	kept?: boolean;
+}
+
 interface LoopSummary {
 	exit: Exit;
 	tried: string[];
@@ -104,6 +119,10 @@ interface LoopSummary {
 
 export interface ResearchResult {
 	topic: string;
+	/** The topic with any URLs removed: the question every state actually asks. */
+	question: string;
+	/** The pages named in the topic, in the order they were named. */
+	seeds: Seed[];
 	decision: Decision;
 	index: LoopSummary & { kept: string[] };
 	web:
@@ -155,6 +174,13 @@ export async function researchLoop(
 	options: ResearchOptions,
 ): Promise<ResearchResult> {
 	const { topic, maxRewrites } = options;
+	// A URL in the topic is a page the user is handing over, not words to
+	// search for. It comes out of the question — otherwise the planner
+	// paraphrases the URL string into queries, which is how a run ends up
+	// researching an article adjacent to the one it was given — and the page
+	// itself goes in as evidence the run already holds.
+	const urls = urlsIn(topic);
+	const question = withoutUrls(topic, urls);
 	const cost = {
 		llmUsd: 0,
 		llmCalls: 0,
@@ -170,18 +196,61 @@ export async function researchLoop(
 		cost.webUsd += run.cost.webUsd;
 	};
 
+	// seed: read what the user named, before anything is planned.
+	const seeds: Seed[] = [];
+	const seeded: Candidate[] = [];
+	for (const url of urls) {
+		if (deps.readSeed === undefined) {
+			seeds.push({
+				url,
+				read: false,
+				reason: "no web searcher can read pages",
+			});
+			continue;
+		}
+		try {
+			const page = await deps.readSeed(question, url);
+			cost.webUsd += page.costUsd ?? 0;
+			seeds.push({ url, read: true });
+			seeded.push({
+				source: "web",
+				title: url,
+				ref: url,
+				text: page.passages.join("\n\n"),
+				read: true,
+			});
+		} catch (error) {
+			// The page the user named is the one thing the run cannot search
+			// up again, so a failure to read it is reported rather than hidden.
+			seeds.push({
+				url,
+				read: false,
+				reason: error instanceof Error ? error.message : String(error),
+			});
+		}
+	}
+	const context =
+		seeded.length === 0
+			? undefined
+			: seeded.map((seed) => `${seed.ref}\n\n${seed.text}`).join("\n\n---\n\n");
+
 	// index: the question at this point is whether the bundle already has
 	// the answer, so the web is not searched.
 	const index = await runLoop(
 		{ searchIndex: deps.searchIndex, judge: deps.judge, llm: deps.llm },
-		{ question: topic, maxRewrites },
+		{ question, maxRewrites, context },
 	);
 	add(index);
 
 	// assess: a rule over what the judge kept, so no second judge request.
-	const assessment = assess(index);
+	// A seeded run is never `answered`: the user handed over a page the
+	// bundle has not read, so there is something to add whatever the index
+	// already holds.
+	const assessment = assess(index, seeded.length > 0);
 	const result: ResearchResult = {
 		topic,
+		question,
+		seeds,
 		decision: assessment.decision,
 		index: { ...summarise(index), kept: index.kept.map((c) => c.ref) },
 		web: null,
@@ -208,9 +277,15 @@ export async function researchLoop(
 			judge: deps.judge,
 			llm: deps.llm,
 		},
-		{ question: topic, tried: index.tried, maxRewrites },
+		{ question, tried: index.tried, maxRewrites, seeded, context },
 	);
 	add(web);
+	const keptRefs = new Set(web.kept.map((candidate) => candidate.ref));
+	for (const seed of seeds) {
+		if (seed.read) {
+			seed.kept = keptRefs.has(seed.url);
+		}
+	}
 	result.web = {
 		...summarise(web),
 		kept: web.kept.map((c) => ({
@@ -386,12 +461,12 @@ interface Assessment {
  * unresolved as the graph's record that it is wanted. A `decide` exit falls
  * through on `kept` the same way, as the runner's own override does.
  */
-export function assess(index: RunResult): Assessment {
+export function assess(index: RunResult, seeded = false): Assessment {
 	const hub =
 		index.kept.find(
 			(c) => c.source === "index" && c.ref.startsWith(`${TOPIC_DIR}/`),
 		)?.ref ?? null;
-	if (index.completenessLabel === COMPLETENESS_LEVELS[3]) {
+	if (!seeded && index.completenessLabel === COMPLETENESS_LEVELS[3]) {
 		return { decision: "answered", hub };
 	}
 	const existing = index.kept.find(
@@ -656,6 +731,32 @@ export function keyFindingsOf(document: string): string {
 		afterTitle === null ? 0 : afterTitle.index + afterTitle[0].length;
 	const next = /^#{1,2}\s+/m.exec(body.slice(from));
 	return body.slice(from, next === null ? undefined : from + next.index).trim();
+}
+
+/** Every http(s) URL written in the topic, in order, deduplicated. */
+export function urlsIn(topic: string): string[] {
+	const found = topic.match(/https?:\/\/[^\s<>"'\])]+/g) ?? [];
+	return [...new Set(found.map((url) => url.replace(/[.,;:]+$/, "")))];
+}
+
+/** The topic as a question: the URLs taken out and the joining words tidied away. */
+export function withoutUrls(topic: string, urls: string[]): string {
+	let text = topic;
+	for (const url of urls) {
+		text = text.split(url).join(" ");
+	}
+	return (
+		text
+			.replace(/\s+/g, " ")
+			// A URL is usually introduced or joined by words that now dangle,
+			// sometimes more than one: "see <url>, and how ..." leaves both.
+			.replace(
+				/^(?:\s*(?:and|also|about|from|see|read|per|re)\b[\s,:-]*)+/i,
+				"",
+			)
+			.replace(/[\s,:-]+$/, "")
+			.trim() || topic
+	);
 }
 
 /** A hub as a research document cites it: relative to `research/`. */

@@ -3737,6 +3737,151 @@ The zorblax tool and how it ranks things.
 		).toBe(false);
 	});
 
+	test("a URL in the topic is read before anything is planned, cited, and taken out of the question", async () => {
+		const home = await researchHome();
+		const seeded = `---
+type: Research
+title: Zorblax tie handling
+description: How zorblax handles ties.
+status: draft
+tags: [fixture, zorblax]
+sources:
+  - https://example.com/seeded
+---
+
+# Zorblax tie handling
+
+## Key findings
+
+The seeded page says ties are shared; see [[/tool/zorblax]].
+`;
+		const env = researchEnv(
+			[RESEARCH_PLAN],
+			// The judge is only ever shown the seed, and keeps it.
+			[INDEX_GIVE_UP, { ...WEB_ANSWER, keep: ["example.com/seeded"] }],
+			[seeded],
+			{
+				LATTICE_WEB_STUB: JSON.stringify([
+					...RESEARCH_PAGES,
+					{
+						title: "Seeded page",
+						url: "https://example.com/seeded",
+						highlights: ["An excerpt nobody reads."],
+						text: "# Seeded\n\nTies are shared between the two.",
+					},
+				]),
+			},
+		);
+
+		const result = await invoke(
+			[
+				"research",
+				"https://example.com/seeded and how zorblax handles ties",
+				"--json",
+			],
+			home,
+			env,
+		);
+
+		expect(result.code).toBe(0);
+		const parsed = JSON.parse(result.stdout);
+		// The URL is a page, not words to search for.
+		expect(parsed.question).toBe("how zorblax handles ties");
+		expect(parsed.seeds).toEqual([
+			{ url: "https://example.com/seeded", read: true, kept: true },
+		]);
+		// It was in the candidate set for the first verdict, without a search
+		// having had to find it, and it is what the document cites.
+		expect(parsed.web.kept).toEqual([
+			{ ref: "https://example.com/seeded", read: true },
+		]);
+		expect(parsed.document.sources).toContain("https://example.com/seeded");
+
+		const rendered = await invoke(
+			["research", "https://example.com/seeded and how zorblax handles ties"],
+			home,
+			env,
+		);
+		expect(rendered.stdout).toContain(
+			"seed: https://example.com/seeded read, kept",
+		);
+		expect(rendered.stdout).toContain("question: how zorblax handles ties");
+	});
+
+	test("a seeded run researches even when the index says the answer is complete", async () => {
+		const home = await researchHome();
+		const env = researchEnv(
+			[RESEARCH_PLAN],
+			[INDEX_COMPLETE, WEB_ANSWER],
+			[RESEARCH_DRAFT],
+			{
+				LATTICE_WEB_STUB: JSON.stringify([
+					...RESEARCH_PAGES,
+					{
+						title: "Seeded page",
+						url: "https://example.com/seeded",
+						highlights: ["x"],
+						text: "# Seeded\n\nSomething the bundle has not read.",
+					},
+				]),
+			},
+		);
+
+		// Without a seed the same verdict stops the run.
+		const answered = await invoke(
+			["research", "how zorblax handles ties", "--json"],
+			home,
+			env,
+		);
+		expect(JSON.parse(answered.stdout).decision).toBe("answered");
+
+		// With one, the page the user handed over is something to add.
+		const result = await invoke(
+			[
+				"research",
+				"https://example.com/seeded and how zorblax handles ties",
+				"--json",
+			],
+			home,
+			env,
+		);
+		expect(result.code).toBe(0);
+		const parsed = JSON.parse(result.stdout);
+		expect(parsed.decision).toBe("extend");
+		expect(parsed.document).not.toBeNull();
+	});
+
+	test("a seed that cannot be read is reported and the run goes on without it", async () => {
+		const home = await researchHome();
+
+		const result = await invoke(
+			[
+				"research",
+				"https://example.com/unreadable and how zorblax handles ties",
+				"--json",
+			],
+			home,
+			researchEnv(
+				[RESEARCH_PLAN],
+				[INDEX_GIVE_UP, WEB_ANSWER],
+				[RESEARCH_DRAFT],
+			),
+		);
+
+		expect(result.code).toBe(0);
+		const parsed = JSON.parse(result.stdout);
+		expect(parsed.seeds).toEqual([
+			{
+				url: "https://example.com/unreadable",
+				read: false,
+				reason: "stub has no text for https://example.com/unreadable",
+			},
+		]);
+		// The rest of the run is unaffected.
+		expect(parsed.document).not.toBeNull();
+		expect(parsed.web.kept).toEqual([{ ref: "https://example.com/found" }]);
+	});
+
 	test("an unknown writer and a malformed writer stub are exit 1 naming the variable", async () => {
 		const home = await researchHome();
 

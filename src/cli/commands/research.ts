@@ -149,6 +149,9 @@ export async function runResearch(
 			},
 			searchWeb: legs.searchWeb,
 			readPage: legs.readPage,
+			// The page the user named is read through the same fetch a judged
+			// page is read through; there is no second way to reach the web.
+			readSeed: legs.readPage,
 			judge,
 			llm,
 			writer,
@@ -238,6 +241,16 @@ function render(result: ResearchResult): string {
 	): string =>
 		`${name}: ${run.exit}, completeness ${run.completeness.toFixed(2)} (${run.completenessLabel})` +
 		` after ${run.tried.length} queries, ${run.kept.length} kept`;
+	for (const seed of result.seeds) {
+		lines.push(
+			seed.read
+				? `seed: ${seed.url} read, ${seed.kept === false ? "dropped by the judge" : "kept"}`
+				: `seed: ${seed.url} NOT read — ${seed.reason}`,
+		);
+	}
+	if (result.seeds.length > 0) {
+		lines.push(`question: ${result.question}`);
+	}
 	lines.push(loop("index", result.index));
 	lines.push(`decision: ${result.decision}`);
 	if (result.web !== null) {

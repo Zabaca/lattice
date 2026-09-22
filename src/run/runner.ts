@@ -67,6 +67,19 @@ export interface RunOptions {
 	/** Queries to search instead of planning; the plan state is skipped when given. */
 	tried?: string[];
 	maxRewrites: number;
+	/**
+	 * Candidates the caller already has, judged in the first visit alongside
+	 * whatever the first queries find. A page the user named is the case:
+	 * it is evidence the run was given rather than evidence it went looking
+	 * for, so it never has to be searched up.
+	 */
+	seeded?: Candidate[];
+	/**
+	 * What the planner should know before it writes its queries. With a
+	 * seeded page this is that page, so the queries look for what it does
+	 * not already say instead of paraphrasing the question.
+	 */
+	context?: string;
 }
 
 export interface JudgeRecord {
@@ -133,11 +146,22 @@ export async function runLoop(
 	let queries =
 		options.tried !== undefined && options.tried.length > 0
 			? options.tried
-			: await ask(planPrompt(question));
+			: await ask(planPrompt(question, options.context));
+
+	// Seeded candidates are in the set before the first query runs, so the
+	// first verdict is over them and whatever the search adds.
+	const seeded: Candidate[] = [];
+	for (const candidate of options.seeded ?? []) {
+		const key = candidateKey(candidate);
+		if (!seen.has(key)) {
+			seen.set(key, candidate);
+			seeded.push(candidate);
+		}
+	}
 
 	for (;;) {
 		// search: every query over both legs, merged, first occurrence kept.
-		const fresh: Candidate[] = [];
+		const fresh: Candidate[] = seeded.splice(0, seeded.length);
 		for (const query of queries) {
 			tried.push(query);
 			const found =
@@ -310,11 +334,16 @@ export function transition(
 	return "rewrite";
 }
 
-function planPrompt(question: string): string {
-	return (
-		`Write two distinct search queries that together would find sources answering: "${question}". ` +
-		`Return JSON only: {"queries": ["...", "..."]}`
-	);
+function planPrompt(question: string, context?: string): string {
+	const base = `Write two distinct search queries that together would find sources answering: "${question}". `;
+	// With a page already in hand, the queries worth spending are the ones
+	// that find what it does not cover; repeating it would return it.
+	const known =
+		context === undefined
+			? ""
+			: `This source is already held and will be cited, so do not write queries that would merely find it again — ` +
+				`write queries for what it leaves out, and for the things it names without explaining:\n\n${context}\n\n`;
+	return `${known}${base}Return JSON only: {"queries": ["...", "..."]}`;
 }
 
 function rewritePrompt(

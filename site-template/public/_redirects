@@ -1,0 +1,2 @@
+# Redirect directory URLs to their README page
+/*/  /:splat/readme  301

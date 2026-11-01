@@ -1,5 +1,4 @@
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import { selectProvider } from "../../embed/provider.js";
 import { importNotes } from "../../store/import.js";
 import { renderReport } from "../../store/verify.js";
@@ -26,15 +25,14 @@ export async function runImport(
 			: undefined);
 	const library =
 		text(context.flags.library) ??
-		(context.flags["no-library"] === undefined &&
-		existsSync(join(paths.archive, "v1"))
-			? join(paths.archive, "v1")
+		(context.flags["no-library"] === undefined && existsSync(paths.library)
+			? paths.library
 			: undefined);
 	if (docs === undefined && library === undefined) {
 		return {
 			code: 1,
 			stderr:
-				`Nothing to import: ${paths.docs} and ${join(paths.archive, "v1")} do not exist. ` +
+				`Nothing to import: ${paths.docs} and ${paths.library} do not exist. ` +
 				"Name a bundle with --docs <dir> or a library with --library <dir>.",
 		};
 	}

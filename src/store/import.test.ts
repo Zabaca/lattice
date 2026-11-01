@@ -1,3 +1,4 @@
+import type { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import {
 	existsSync,
@@ -8,6 +9,8 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { runCli } from "../cli/run.js";
+import { selectProvider } from "../embed/provider.js";
+import { importNotes } from "./import.js";
 import {
 	BUNDLE,
 	cli,
@@ -161,7 +164,7 @@ describe("lattice import: today's bundle", () => {
 		expect(readdirSync(home).sort()).toEqual(["docs", "store.db"]);
 	});
 
-	test("a file with frontmatter that cannot be read is imported as a plain note and reported", async () => {
+	test("a file whose frontmatter cannot be read stops the import: its fields would be lost", async () => {
 		const home = freshHome();
 		writeFiles(home, "docs", {
 			"note/broken.md":
@@ -169,15 +172,39 @@ describe("lattice import: today's bundle", () => {
 		});
 
 		const { code, report } = await importJson(home);
+		const plain = await cli(home, ["import"]);
 
-		expect(code).toBe(0);
+		expect(code).toBe(1);
+		expect(report.clean).toBe(false);
+		expect(report.unreadable).toEqual(["note/broken"]);
 		expect(report.problems).toEqual([
 			{
 				name: "note/broken",
 				problem: expect.stringContaining("frontmatter is not valid YAML"),
 			},
 		]);
-		expect(report.bundle.roundTrip.exact).toBe(1);
+		expect(plain.stdout).toContain(
+			"frontmatter lost (fix the YAML and import again): note/broken",
+		);
+		expect(plain.stdout).toContain("SOMETHING DIFFERS");
+	});
+
+	test("a file with no type, no frontmatter or an empty one loses nothing, so it is imported as a plain note", async () => {
+		const home = freshHome();
+		writeFiles(home, "docs", {
+			"note/untyped.md": "---\ntitle: Untyped\n---\n\n# Untyped\n\nBody.\n",
+			"note/bare.md": "# Bare\n\nNo frontmatter at all.\n",
+			"note/empty.md": "---\n---\n\n# Empty\n\nBody.\n",
+		});
+
+		const { code, report } = await importJson(home);
+
+		expect(code).toBe(0);
+		expect(report.unreadable).toEqual([]);
+		expect(report.problems.map((p: { name: string }) => p.name).sort()).toEqual(
+			["note/bare", "note/empty", "note/untyped"],
+		);
+		expect(report.bundle.fields).toMatchObject({ checked: 3, exact: 3 });
 	});
 
 	test("the plain report says what was checked and ends with a verdict", async () => {
@@ -192,6 +219,113 @@ describe("lattice import: today's bundle", () => {
 		expect(result.stdout).toContain("text joined back equals the file: 4 of 4");
 		expect(result.stdout).toContain("fields equal the frontmatter: 4 of 4");
 		expect(result.stdout).toEndWith("Nothing differs.\n");
+	});
+});
+
+describe("an import whose verification fails", () => {
+	const provider = () => selectProvider(HASH_ENV);
+
+	async function tampered(damage: (db: Database) => void) {
+		const home = bundleHome();
+		const report = await importNotes({
+			storePath: join(home, "store.db"),
+			docs: join(home, "docs"),
+			provider: provider(),
+			report: () => undefined,
+			beforeVerify: damage,
+		});
+		return { home, report };
+	}
+
+	test("text that does not join back to its file stops the store taking the live path", async () => {
+		const { home, report } = await tampered((db) =>
+			db
+				.query(
+					"UPDATE sections SET text = text || 'x' WHERE sid = 's2' AND concept_id = (SELECT id FROM concepts WHERE identifier = 'topic/jev')",
+				)
+				.run(),
+		);
+
+		expect(report.clean).toBe(false);
+		expect(report.bundle?.roundTrip.exact).toBe(3);
+		expect(report.bundle?.roundTrip.mismatches).toHaveLength(1);
+		expect(existsSync(join(home, "store.db"))).toBe(false);
+		expect(existsSync(join(home, "store.db.failed"))).toBe(true);
+		expect(report.failedAt).toBe(join(home, "store.db.failed"));
+		expect(readdirSync(home).sort()).toEqual(["docs", "store.db.failed"]);
+	});
+
+	test("fields that differ from the frontmatter do the same", async () => {
+		const { home, report } = await tampered((db) =>
+			db.query("UPDATE concepts SET title = 'Tampered' WHERE id = 1").run(),
+		);
+
+		expect(report.clean).toBe(false);
+		expect(report.bundle?.fields.exact).toBe(3);
+		expect(report.bundle?.fields.mismatches[0]).toContain(
+			'title is "Tampered"',
+		);
+		expect(existsSync(join(home, "store.db"))).toBe(false);
+	});
+
+	test("through the command: exit 1, the verdict, no store, and the kept copy named", async () => {
+		const home = bundleHome();
+		writeFiles(home, "docs", {
+			"note/broken.md": '---\ntitle: "x\ntags: [\n---\n\nBody.\n',
+		});
+
+		const result = await cli(home, ["import"]);
+
+		expect(result.code).toBe(1);
+		expect(result.stdout).toContain("SOMETHING DIFFERS: do not cut over.");
+		expect(result.stdout).toContain(
+			`The store was not installed. It is kept at ${join(home, "store.db.failed")} for inspection.`,
+		);
+		expect(existsSync(join(home, "store.db"))).toBe(false);
+	});
+
+	test("a rerun after fixing the file is not refused, and replaces the kept copy", async () => {
+		const home = bundleHome();
+		writeFiles(home, "docs", {
+			"note/broken.md": '---\ntitle: "x\ntags: [\n---\n\nBody.\n',
+		});
+		expect((await cli(home, ["import"])).code).toBe(1);
+
+		writeFiles(home, "docs", {
+			"note/broken.md": "---\ntype: Note\ntitle: Fixed\n---\n\nBody.\n",
+		});
+		const again = await cli(home, ["import"]);
+
+		expect(again.code).toBe(0);
+		expect(existsSync(join(home, "store.db"))).toBe(true);
+	});
+});
+
+describe("two imports at once", () => {
+	test("one installs its store, the other is refused and leaves nothing behind", async () => {
+		const home = bundleHome();
+		const run = () =>
+			importNotes({
+				storePath: join(home, "store.db"),
+				docs: join(home, "docs"),
+				provider: selectProvider(HASH_ENV),
+				report: () => undefined,
+			});
+
+		const settled = await Promise.allSettled([run(), run()]);
+
+		const failures = settled.filter((s) => s.status === "rejected");
+		expect(settled.filter((s) => s.status === "fulfilled")).toHaveLength(1);
+		expect(failures).toHaveLength(1);
+		expect(String((failures[0] as PromiseRejectedResult).reason)).toContain(
+			"A store appeared at",
+		);
+		expect(readdirSync(home).sort()).toEqual(["docs", "store.db"]);
+		const count = await rows<{ n: number }>(
+			home,
+			"SELECT count(*) AS n FROM concepts",
+		);
+		expect(count).toEqual([{ n: 4 }]);
 	});
 });
 
@@ -384,15 +518,15 @@ describe("lattice import: Lattice 1's library", () => {
 		});
 
 		const { report } = await importJson(home);
-		const [row] = await rows<{ title: string; status: string }>(
+		const [row] = await rows<{ title: string; status: string | null }>(
 			home,
 			"SELECT title, status FROM concepts WHERE identifier = 'v1/x/untitled'",
 		);
 
-		expect(row).toEqual({ title: "First heading", status: "archived" });
-		expect(report.additions).toMatchObject({
+		// A status the file lacked stays empty; "archived" would read as the flag.
+		expect(row).toEqual({ title: "First heading", status: null });
+		expect(report.additions).toEqual({
 			title: 1,
-			status: 1,
 			type: 1,
 			stale_after: 1,
 			"tag old": 1,
@@ -502,8 +636,17 @@ describe("lattice import: today's index", () => {
 		const { code, report } = await importJson(home);
 
 		expect(code).toBe(0);
-		expect(report.parity).toMatchObject({ queries: 7, matched: 7 });
-		expect(report.parityInStore.queries).toBe(7);
+		expect(report.parity).toMatchObject({
+			queries: 7,
+			matched: 7,
+			firstMatched: 7,
+			differing: [],
+		});
+		// In the full store near-ties may reorder, but the best note may not move.
+		expect(report.parityInStore).toMatchObject({
+			queries: 7,
+			firstMatched: 7,
+		});
 		expect(report.newerFirst).toEqual({ checked: 4, passed: 4, failed: [] });
 		expect(report.library.vectors).toBe(report.library.passages);
 		expect(report.embedding.passages).toBe(report.library.passages);

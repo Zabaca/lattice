@@ -10,6 +10,7 @@ export const STORE_SCHEMA: SchemaSpec = {
 	version: STORE_SCHEMA_VERSION,
 	sql: STORE_SCHEMA_SQL,
 	label: "note store",
+	kind: "note store",
 	remedy:
 		"restart the session so it runs the current Lattice, or run `lattice import` into a fresh home",
 };

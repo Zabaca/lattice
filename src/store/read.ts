@@ -178,7 +178,7 @@ export function readNote(
 				next: "Use history with the note's name to see its versions.",
 			};
 		}
-		state = rewind(db, found.id, state, current, options.version);
+		state = rewind(db, found.id, state, options.version);
 		version = options.version;
 	}
 
@@ -341,7 +341,6 @@ function rewind(
 	db: Database,
 	conceptId: number,
 	now: NoteState,
-	current: number,
 	target: number,
 ): NoteState {
 	const state: NoteState = {
@@ -379,7 +378,6 @@ function rewind(
 			setField(state, field.field, before);
 		}
 	}
-	void current;
 	return state;
 }
 

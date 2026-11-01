@@ -88,7 +88,7 @@ describe("the tools", () => {
 
 		expect(result.isError).toBe(true);
 		expect(result.body).toEqual({
-			refused: "The store is now in layout 7; this server knows layout 6.",
+			refused: "The store is now in layout 7; this server knows layout 1.",
 			next: "Restart your session so it runs the current Lattice.",
 		});
 	});
@@ -234,6 +234,37 @@ describe("recall", () => {
 		expect(at(stats.body, "search", "ok")).toBe(false);
 		expect(at(stats.body, "search", "failed")).toBe(1);
 		expect(at(stats.body, "search", "problem")).toBe("1 embeddings failed");
+	});
+
+	test("when a reranker is configured the passages follow its order, not the passage scores", async () => {
+		const home = await storeHome();
+		const plain = await session(home);
+		const first = (body: Record<string, unknown>) =>
+			(body.passages as Array<{ note: string }>).map((p) => p.note);
+
+		const before = first(
+			(await plain.call("recall", { question: "search" })).body,
+		);
+		// The reranker is told the reranker note answers and the exa note, first without it, does not.
+		const reranked = await session(home, {
+			env: {
+				LATTICE_RERANK_PROVIDER: "stub",
+				LATTICE_RERANK_STUB: JSON.stringify({
+					"exact quoted phrase": 0.01,
+					pipeline: 0.99,
+				}),
+			},
+		});
+		const after = await reranked.call("recall", { question: "search" });
+
+		expect(before[0]).toBe("research/exa-limits");
+		expect(before).toContain("research/exa-limits");
+		expect(before).toContain("research/jev-reranker");
+		expect(first(after.body)[0]).toBe("research/jev-reranker");
+		expect(first(after.body).indexOf("research/jev-reranker")).toBeLessThan(
+			first(after.body).indexOf("research/exa-limits"),
+		);
+		expect(after.body.reranked).toBe("stub");
 	});
 
 	test("an empty question is refused by the protocol, not answered", async () => {

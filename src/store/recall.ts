@@ -142,11 +142,17 @@ function passagesOf(
 	const direct = result.hits
 		.filter((hit) => hit.expanded !== true)
 		.flatMap((hit, rank) => hit.chunks.map((chunk) => ({ hit, chunk, rank })))
-		.sort(
-			(a, b) =>
-				b.chunk.score - a.chunk.score ||
-				a.rank - b.rank ||
-				a.chunk.ordinal - b.chunk.ordinal,
+		// A reranker has put the notes in the order it judged them, and a
+		// passage's own score knows nothing of that: follow the notes, then the
+		// passages within each. Without one, the best passages lead.
+		.sort((a, b) =>
+			result.reranked
+				? a.rank - b.rank ||
+					b.chunk.score - a.chunk.score ||
+					a.chunk.ordinal - b.chunk.ordinal
+				: b.chunk.score - a.chunk.score ||
+					a.rank - b.rank ||
+					a.chunk.ordinal - b.chunk.ordinal,
 		)
 		.slice(0, limit);
 	const neighbours = result.hits

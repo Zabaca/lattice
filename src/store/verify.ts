@@ -13,6 +13,7 @@ import { openDatabase } from "../db/open.js";
 import type { EmbeddingProvider } from "../embed/provider.js";
 import type { EmbedReport } from "../embed/run.js";
 import { search } from "../search/search.js";
+import { INVALID_YAML } from "../sync/okf.js";
 import type { Prepared } from "./import.js";
 
 /** What one source contributed, counted in the store. */
@@ -50,6 +51,8 @@ export interface SearchCheck {
 	queries: number;
 	/** Queries whose top five notes and their order matched. */
 	matched: number;
+	/** Queries whose best note matched, whatever came after it. */
+	firstMatched: number;
 	differing: Array<{ query: string; index: string[]; store: string[] }>;
 }
 
@@ -62,8 +65,15 @@ export interface ImportReport {
 	embedding: { passages: number; notes: number; failed: number };
 	/** Files whose frontmatter could not be read as OKF, with why. */
 	problems: Array<{ name: string; problem: string }>;
+	/**
+	 * Notes whose frontmatter is not valid YAML. The import cannot read their
+	 * fields, so they are lost; that stops the import until the file is fixed.
+	 */
+	unreadable: string[];
 	/** What the import added that the files did not say, by library note count. */
 	additions: Record<string, number>;
+	/** Where a store that did not verify was kept, when it did not. */
+	failedAt?: string;
 	/**
 	 * Today's index against a store of the bundle's notes alone: same passages,
 	 * same vectors, so the top five must match.
@@ -117,6 +127,9 @@ export async function verifyImport(input: VerifyInput): Promise<ImportReport> {
 		problems: prepared
 			.filter((note) => note.problem !== undefined)
 			.map((note) => ({ name: note.name, problem: note.problem ?? "" })),
+		unreadable: prepared
+			.filter((note) => note.problem?.startsWith(INVALID_YAML) === true)
+			.map((note) => note.name),
 		additions: additionCounts(library),
 		clean: true,
 	};
@@ -164,8 +177,13 @@ export async function verifyImport(input: VerifyInput): Promise<ImportReport> {
 				(set.roundTrip.exact === set.roundTrip.checked &&
 					set.fields.exact === set.fields.checked),
 		) &&
+		report.unreadable.length === 0 &&
 		(report.parity === undefined ||
 			report.parity.matched === report.parity.queries) &&
+		// With the library in, only the order of near-ties below the best note
+		// may move; the best note itself must be the same for every question.
+		(report.parityInStore === undefined ||
+			report.parityInStore.firstMatched === report.parityInStore.queries) &&
 		(report.newerFirst === undefined ||
 			report.newerFirst.passed === report.newerFirst.checked);
 	return report;
@@ -468,12 +486,16 @@ async function compareWithIndex(
 	const check: SearchCheck = {
 		queries: queries.length,
 		matched: 0,
+		firstMatched: 0,
 		differing: [],
 	};
 	try {
 		for (const query of queries) {
 			const index = await topNotes(old, provider, query, {}, 5);
 			const store = await topNotes(db, provider, query, { notes: names }, 5);
+			if (index[0] === store[0]) {
+				check.firstMatched++;
+			}
 			if (JSON.stringify(index) === JSON.stringify(store)) {
 				check.matched++;
 			} else if (check.differing.length < MISMATCHES_SHOWN) {
@@ -565,7 +587,7 @@ export function renderReport(report: ImportReport): string {
 	}
 	if (report.parityInStore) {
 		lines.push(
-			`  (in this store with old notes filtered out: ${report.parityInStore.matched} of ${report.parityInStore.queries}; the library changes keyword statistics, which reorders near-ties)`,
+			`  (in this store with old notes filtered out: the best note matches for ${report.parityInStore.firstMatched} of ${report.parityInStore.queries} queries, which must be all; the whole top five for ${report.parityInStore.matched}, because the library changes keyword statistics and reorders near-ties)`,
 		);
 	}
 	if (report.newerFirst) {
@@ -585,9 +607,17 @@ export function renderReport(report: ImportReport): string {
 			lines.push(`  and ${report.problems.length - 10} more`);
 		}
 	}
+	for (const name of report.unreadable) {
+		lines.push(`  frontmatter lost (fix the YAML and import again): ${name}`);
+	}
 	lines.push(
 		"",
 		report.clean ? "Nothing differs." : "SOMETHING DIFFERS: do not cut over.",
 	);
+	if (report.failedAt !== undefined) {
+		lines.push(
+			`The store was not installed. It is kept at ${report.failedAt} for inspection.`,
+		);
+	}
 	return `${lines.join("\n")}\n`;
 }

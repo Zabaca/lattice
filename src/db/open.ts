@@ -14,6 +14,8 @@ export interface SchemaSpec {
 	sql: string;
 	/** What the database is called in a refusal. */
 	label: string;
+	/** Stamped in `meta` on creation, so another kind of file is refused. The index has none. */
+	kind?: string;
 	/** What to do about a database in another version. */
 	remedy: string;
 }
@@ -21,7 +23,7 @@ export interface SchemaSpec {
 const INDEX_SCHEMA: SchemaSpec = {
 	version: SCHEMA_VERSION,
 	sql: SCHEMA_SQL,
-	label: "database",
+	label: "file index",
 	remedy: "remove the database and run `lattice init` again",
 };
 
@@ -84,7 +86,25 @@ function applySchema(db: Database, schema: SchemaSpec): void {
 		db.query("INSERT INTO meta (key, value) VALUES ('schema_version', ?)").run(
 			String(schema.version),
 		);
+		if (schema.kind !== undefined) {
+			db.query("INSERT INTO meta (key, value) VALUES ('kind', ?)").run(
+				schema.kind,
+			);
+		}
 		return;
+	}
+
+	// A store and an index each count their own versions, so the number alone
+	// cannot tell them apart; the kind can. An index predates it and has none.
+	const kind =
+		db
+			.query<{ value: string }, []>("SELECT value FROM meta WHERE key = 'kind'")
+			.get()?.value ?? undefined;
+	if (kind !== schema.kind) {
+		throw new Error(
+			`This file is ${kind === undefined ? "a file index" : `a ${kind}`}, not a ${schema.label}. ` +
+				"This build of Lattice cannot read it as one.",
+		);
 	}
 
 	if (existing !== schema.version) {

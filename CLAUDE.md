@@ -191,9 +191,10 @@ is built: the store, the import and the reading tools. The files stay the
 source until the cutover (slice 4), so everything above still describes the
 default behaviour.
 
-`store.db` (path `store` in `resolvePaths`) is a separate SQLite file in schema
-version 6 (`src/store/schema.ts`). It is the index's tables, unchanged, plus
-what files had held:
+`store.db` (path `store` in `resolvePaths`) is a separate SQLite file with its
+own schema version (1) and `meta.kind = 'note store'`, so an index is never
+mistaken for it (`src/store/schema.ts`). It is the index's tables, unchanged,
+plus what files had held (a test pins the layout):
 
 - `concepts` is the notes table. `path` is the note's name plus `.md`, an
   address that relative links resolve against and no file. `identifier` is the
@@ -222,11 +223,15 @@ and reopens the file if it was replaced. Search is `src/search` unchanged,
 reached through `recall` with these filters added: `notes` (within given notes)
 and `excludeArchived`.
 
-`lattice import` builds the store in `store.db.importing`, verifies it
+`lattice import` builds the store in a work file beside `store.db`, verifies it
 (`src/store/verify.ts`: text joined back equals each file's body, each note's
-fields equal its parsed frontmatter, search matches the file index) and copies it
-into place only when all of it has finished. It reads two sources and writes to
-neither:
+fields equal its parsed frontmatter, no file's YAML was unreadable, search
+matches the file index) and links it into place only when all of that is clean
+and no other store has appeared. A store that does not verify is kept as
+`store.db.failed`, never as `store.db`, and the command exits 1. Search parity is
+gated on a bundle-only build (adding the library reorders near-ties by changing
+keyword statistics); in the full store the best note must still match for every
+question. It reads two sources and writes to neither:
 
 - the bundle (`<home>/docs`): a note per file, named by its path, vectors copied
   from `lattice.db` wherever the passage or note text is identical;
@@ -237,8 +242,21 @@ neither:
   at the top archived. Embedding it takes minutes and several GB of memory, which
   is why it runs here, once, and never inside a session's server.
 
-Keep `store.db` out of reach of anything but `src/store/store.ts`: `lattice sql`
-opens it with `query_only`.
+Every session carries the tools' descriptions, so their size is watched: the six
+reading tools are 3,933 characters of JSON (about 1,000 tokens by characters over
+four; about 1,500 as Claude Code counts them, measured 2026-11-01 as the extra
+input tokens of loading them). The aim for all 17 is under 3,000, which the
+write tools in slice 3 will have to fit by trimming schemas and descriptions.
+
+Notes change only through `src/store/store.ts`, so every change is in the
+history; `lattice sql` opens the store with `query_only`. Three other writers
+exist, none of them a note: the import creating the store (through `createNote`,
+then copying vectors it already has, which are derived data), the embed phase
+writing vectors, and the server's `recall_log` row for each question
+(bookkeeping that feeds `stats` and never costs an answer). A fourth, outside
+the product, is the tests in `store.test.ts` and `server.test.ts` that open the
+store directly for what the write primitive cannot do yet: marking a section
+checked, planting a vector or an old name, and moving the schema version.
 
 ## Development Notes
 

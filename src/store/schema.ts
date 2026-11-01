@@ -16,8 +16,14 @@
 
 import { SCHEMA_SQL } from "../db/schema.js";
 
-/** A store is never an index (5), and an older or newer build refuses it. */
-export const STORE_SCHEMA_VERSION = 6;
+/**
+ * The store counts its own layouts, apart from the index's: its `meta.kind` says
+ * it is a store, so an index at the same number is not mistaken for one. An
+ * older or newer build refuses a version it does not know. The tables below are
+ * the index's as of schema 5; if the index's schema changes, the store's layout
+ * changes with it, and `store.test.ts` pins the layout so that shows up there.
+ */
+export const STORE_SCHEMA_VERSION = 1;
 
 export const STORE_SCHEMA_SQL = `${SCHEMA_SQL}
 

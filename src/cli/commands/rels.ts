@@ -1,4 +1,4 @@
-import type { openDatabase } from "../../db/open.js";
+import type { Database } from "bun:sqlite";
 import { resolvePaths } from "../../utils/paths.js";
 import { openTarget, targetProblem } from "../database.js";
 import type { CommandContext, CommandOutput } from "../run.js";
@@ -76,10 +76,7 @@ export function runRels(context: CommandContext): CommandOutput {
  * and `note/cooling.md` are the same document, and either is a reasonable
  * thing to have copied from somewhere else.
  */
-function findConcept(
-	db: ReturnType<typeof openDatabase>,
-	wanted: string,
-): ConceptRow | undefined {
+function findConcept(db: Database, wanted: string): ConceptRow | undefined {
 	const row = db
 		.query<ConceptRow, [string, string]>(
 			"SELECT id, path, identifier, title FROM concepts WHERE path = ? OR identifier = ?",
@@ -95,10 +92,7 @@ interface Relations {
 }
 
 /** The three relations of one indexed concept, each in authoring order. */
-function relationsFor(
-	db: ReturnType<typeof openDatabase>,
-	conceptId: number,
-): Relations {
+function relationsFor(db: Database, conceptId: number): Relations {
 	const outlinks = db
 		.query<EdgeRow, [number]>(
 			`SELECT ${EDGE_COLUMNS} FROM links l

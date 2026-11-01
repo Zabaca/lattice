@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
+import { openDatabase } from "../db/open.js";
 import { openStore } from "./open.js";
 import { isRefusal, readNote } from "./read.js";
 import { splitSections } from "./sections.js";
@@ -284,5 +285,150 @@ describe("changes to a note", () => {
 			refused: "topic/demo has no version 7; its versions run from 1 to 1.",
 			next: "Use history with the note's name to see its versions.",
 		});
+	});
+});
+
+describe("the store's file", () => {
+	test("its layout is pinned: a change to the index's schema that would change the store shows up here", () => {
+		const db = openStore(join(freshHome(), "store.db"), { create: true });
+		const columns = (table: string) =>
+			db
+				.query<{ name: string }, []>(
+					`SELECT name FROM pragma_table_info('${table}')`,
+				)
+				.all()
+				.map((row) => row.name);
+
+		expect(
+			db
+				.query<{ name: string }, []>(
+					"SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'chunks_fts_%' ORDER BY name",
+				)
+				.all()
+				.map((row) => row.name),
+		).toEqual([
+			"change_fields",
+			"change_sections",
+			"changes",
+			"chunk_embed_failures",
+			"chunk_embeddings",
+			"chunks",
+			"chunks_fts",
+			"concept_embed_failures",
+			"concept_embeddings",
+			"concepts",
+			"links",
+			"meta",
+			"note_names",
+			"recall_log",
+			"sections",
+			"tags",
+		]);
+		expect(columns("concepts")).toEqual([
+			"id",
+			"path",
+			"identifier",
+			"dir",
+			"title",
+			"type",
+			"description",
+			"status",
+			"stale_after",
+			"trust",
+			"frontmatter",
+			"frontmatter_error",
+			"content_hash",
+			"byte_size",
+			"mtime_ms",
+			"indexed_at",
+			"sources",
+			"version",
+			"archived",
+			"next_section",
+			"created_at",
+			"updated_at",
+		]);
+		expect(columns("chunks")).toEqual([
+			"id",
+			"concept_id",
+			"ordinal",
+			"heading",
+			"heading_path",
+			"depth",
+			"start_line",
+			"end_line",
+			"start_char",
+			"end_char",
+			"content",
+			"content_hash",
+			"token_estimate",
+			"section_id",
+		]);
+		expect(columns("sections")).toEqual([
+			"id",
+			"concept_id",
+			"sid",
+			"position",
+			"depth",
+			"heading",
+			"text",
+			"version",
+			"trust",
+			"checked_by",
+			"checked_at",
+		]);
+		expect(columns("changes")).toEqual([
+			"id",
+			"concept_id",
+			"version",
+			"at",
+			"kind",
+			"reason",
+			"client",
+			"project",
+			"by_name",
+			"undoes",
+		]);
+		expect(columns("change_sections")).toEqual([
+			"change_id",
+			"sid",
+			"op",
+			"before_text",
+			"after_text",
+			"before_heading",
+			"after_heading",
+			"before_depth",
+			"after_depth",
+			"before_prev",
+			"after_prev",
+			"before_trust",
+			"after_trust",
+		]);
+	});
+
+	test("a store says it is one, so a file index is refused as a store and a store as an index", () => {
+		const folder = freshHome();
+		const storePath = join(folder, "store.db");
+		const indexPath = join(folder, "lattice.db");
+		openStore(storePath, { create: true }).close();
+		openDatabase(indexPath, { create: true }).close();
+
+		expect(() => openStore(indexPath)).toThrow(
+			"This file is a file index, not a note store.",
+		);
+		expect(() => openDatabase(storePath)).toThrow(
+			"This file is a note store, not a file index.",
+		);
+	});
+
+	test("a store in another layout version is refused with what to do", () => {
+		const path = join(freshHome(), "store.db");
+		const db = openStore(path, { create: true });
+		db.query("UPDATE meta SET value = '2' WHERE key = 'schema_version'").run();
+		db.close();
+
+		expect(() => openStore(path)).toThrow(
+			/note store's schema version 2 does not match the expected version 1.*restart the session/,
+		);
 	});
 });

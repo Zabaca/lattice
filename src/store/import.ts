@@ -15,18 +15,19 @@
  *   lists at the top of the library are kept but archived, so they do not crowd
  *   answers.
  *
- * The store is built beside its final path and moved into place only when
- * everything, the embedding included, has finished, so a stopped import leaves
- * nothing behind.
+ * The store is built in a work file of its own beside its final path and linked
+ * into place only when everything, the embedding included, has finished and
+ * verified clean, so a stopped import leaves nothing behind and a store that
+ * did not verify is kept as `store.db.failed`, never as `store.db`.
  */
 
 import type { Database } from "bun:sqlite";
 import {
 	copyFileSync,
 	existsSync,
+	linkSync,
 	readdirSync,
 	readFileSync,
-	renameSync,
 	rmSync,
 } from "node:fs";
 import { join, posix, sep } from "node:path";
@@ -37,6 +38,7 @@ import { CONCEPTS, embedPending } from "../embed/run.js";
 import { readActiveSpace, writeActiveSpace } from "../embed/state.js";
 import { NO_TYPE, normalizeDates, parseConcept } from "../sync/okf.js";
 import { scanBundle } from "../sync/scan.js";
+import { workPath } from "../utils/paths.js";
 import { carryKey, resolveLinks, type StoredVector } from "./derive.js";
 import { openStore } from "./open.js";
 import { splitSections } from "./sections.js";
@@ -76,6 +78,11 @@ export interface ImportInput {
 	at?: string;
 	/** Questions to put to both searches besides the notes' titles and descriptions. */
 	questions?: string[];
+	/**
+	 * A seam for tests: called on the built store just before it is verified,
+	 * so a test can damage it and watch the verification refuse it.
+	 */
+	beforeVerify?: (db: Database) => void;
 }
 
 /** A source file read and prepared, before it is a note. */
@@ -127,8 +134,7 @@ export async function importNotes(input: ImportInput): Promise<ImportReport> {
 		input.oldIndex !== undefined &&
 		existsSync(input.oldIndex)
 	) {
-		const scratch = `${input.storePath}.parity`;
-		removeStore(scratch);
+		const scratch = workPath(input.storePath, "parity");
 		try {
 			scratchParity = (
 				await importNotes({
@@ -136,15 +142,16 @@ export async function importNotes(input: ImportInput): Promise<ImportReport> {
 					library: undefined,
 					storePath: scratch,
 					report: () => undefined,
+					beforeVerify: undefined,
 				})
 			).parity;
 		} finally {
 			removeStore(scratch);
+			removeStore(`${scratch}.failed`);
 		}
 	}
 
-	const building = `${input.storePath}.importing`;
-	removeStore(building);
+	const building = workPath(input.storePath, "importing");
 	const db = openStore(building, { create: true });
 	let report: ImportReport;
 	try {
@@ -188,6 +195,7 @@ export async function importNotes(input: ImportInput): Promise<ImportReport> {
 		input.report("Embedding what has no vector yet.");
 		const embedded = await embedPending(db, input.provider);
 
+		input.beforeVerify?.(db);
 		report = await verifyImport({
 			db,
 			prepared,
@@ -210,14 +218,37 @@ export async function importNotes(input: ImportInput): Promise<ImportReport> {
 	}
 	db.close();
 
+	// A store that did not verify never takes the live path: a rerun would
+	// refuse it, and nothing should read it. It is kept for inspection.
+	if (!report.clean) {
+		const failed = `${input.storePath}.failed`;
+		removeStore(failed);
+		copyFileSync(building, failed);
+		removeStore(building);
+		report.failedAt = failed;
+		return report;
+	}
+
 	// The checkpoint above left everything in the main file. It is copied, not
 	// renamed: the embed phase can leave this connection's handle open until
 	// the process lets go of it, and a file renamed under an open handle makes
-	// the next open of its new name fail in the same process.
-	const finished = `${input.storePath}.copying`;
+	// the next open of its new name fail in the same process. Linking it into
+	// place refuses if another import got there first.
+	const finished = workPath(input.storePath, "copying");
 	copyFileSync(building, finished);
-	renameSync(finished, input.storePath);
 	removeStore(building);
+	try {
+		linkSync(finished, input.storePath);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+			throw new Error(
+				`A store appeared at ${input.storePath} while this import ran, and was left alone. Move it aside and import again.`,
+			);
+		}
+		throw error;
+	} finally {
+		rmSync(finished, { force: true });
+	}
 	return report;
 }
 
@@ -300,11 +331,9 @@ function prepareOld(
 		title = firstHeading(concept.body) ?? posix.basename(path, ".md");
 		added.fields.push("title");
 	}
-	let status = concept.status ?? null;
-	if (status === null) {
-		status = "archived";
-		added.fields.push("status");
-	}
+	// A status the file did not have stays empty: "archived" would be confused
+	// with the flag that hides a note.
+	const status = concept.status ?? null;
 
 	return {
 		source: "lattice-1",
@@ -360,7 +389,7 @@ function walk(root: string, relative: string): string[] {
 /** The frontmatter of a file, parsed by the library alone, dates as ISO text. */
 function rawFrontmatter(raw: string): Record<string, unknown> {
 	try {
-		const data = matter(raw).data;
+		const data = matter(raw, {}).data;
 		return normalizeDates(data) as Record<string, unknown>;
 	} catch {
 		return {};

@@ -46,6 +46,9 @@ interface OkfConcept {
 	problem?: string;
 }
 
+/** What a file whose frontmatter cannot be parsed is reported with, before the reason. */
+export const INVALID_YAML = "frontmatter is not valid YAML";
+
 /** The problem a file with frontmatter but no `type` is reported with. */
 export const NO_TYPE = "frontmatter has no `type`";
 
@@ -80,12 +83,15 @@ export function parseConcept(raw: string): OkfConcept {
 
 	let data: Record<string, unknown>;
 	try {
-		data = normalizeDates(matter(raw).data) as Record<string, unknown>;
+		// The empty options keep gray-matter from caching by content: after a
+		// parse that threw, its cache hands the same text back as empty
+		// frontmatter, so a second read of a broken file would not be broken.
+		data = normalizeDates(matter(raw, {}).data) as Record<string, unknown>;
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		return {
 			...empty,
-			problem: `frontmatter is not valid YAML: ${firstLine(message)}`,
+			problem: `${INVALID_YAML}: ${firstLine(message)}`,
 		};
 	}
 

@@ -27,6 +27,8 @@ export interface LatticePaths {
 	store: string;
 	/** Folders of notes kept outside the bundle, such as `archive/v1`. */
 	archive: string;
+	/** Lattice 1's archived library: `docs/` and `lost/` under it. */
+	library: string;
 	/** The local configuration file. */
 	env: string;
 	/** Cached embedding model weights, one directory per hub repository. */
@@ -52,10 +54,19 @@ export function resolvePaths(
 		database: join(home, "lattice.db"),
 		store: join(home, "store.db"),
 		archive: join(home, "archive"),
+		library: join(home, "archive", "v1"),
 		env: join(home, ".env"),
 		models: env.LATTICE_MODEL_DIR?.trim() || join(home, "models"),
 		syncLock: join(home, ".sync.lock"),
 	};
+}
+
+/**
+ * A path beside `path` that only this process uses, for a file built before it
+ * is moved into place. Two imports running at once never share one.
+ */
+export function workPath(path: string, label: string): string {
+	return `${path}.${label}-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function resolveHome(env: Record<string, string | undefined>): string {

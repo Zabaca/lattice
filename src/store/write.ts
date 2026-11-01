@@ -14,35 +14,36 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { posix } from "node:path";
 import type { EmbeddingProvider } from "../embed/provider.js";
 import { toBlob } from "../embed/provider.js";
 import {
-	embedConceptVector,
+	conceptText,
 	passageText,
 	recordChunkFailure,
+	recordConceptFailure,
 } from "../embed/run.js";
 import { readActiveSpace, sameSpace } from "../embed/state.js";
 import { chunkDocument } from "../sync/chunk.js";
-import { typeDirectory } from "../sync/okf.js";
-import { carryFrom, carryKey, type VectorCarry } from "./derive.js";
-import { isRefusal, type Refusal, resolveNote } from "./read.js";
-import { moveSource, rewriteLinks, writeTarget } from "./relink.js";
+import {
+	carryFrom,
+	carryKey,
+	type StoredVector,
+	type VectorCarry,
+} from "./derive.js";
+import { isRefusal, type Refusal } from "./read.js";
 import { splitSections } from "./sections.js";
 import {
 	applySectionOps,
 	type ChangeSpec,
 	type ConceptRow,
 	changeNote,
-	createNote,
-	directoryOf,
 	fieldsOf,
 	type Held,
 	loadConcept,
 	loadHeld,
 	type NoteFields,
 	type SectionOp,
-	type Trust,
+	stripArchived,
 	type Who,
 } from "./store.js";
 
@@ -220,6 +221,34 @@ export class Planner {
 		return undefined;
 	}
 
+	/**
+	 * Close the plan: every section but the last must end in a newline, or the
+	 * next heading line would be glued onto its last line, so any that lacks one
+	 * gets it; then the joined text must split back into exactly these sections.
+	 * Run it last, after every change the plan makes.
+	 */
+	finish(): Refusal | undefined {
+		// Only the first section may open with blank lines (they sit above the
+		// first heading); a section moved or placed elsewhere would hand them to
+		// the section before it, so they are dropped.
+		for (const section of this.work.slice(1)) {
+			const blank = /^(?:[ \t]*\n)+/.exec(section.text);
+			if (section.heading !== null && blank !== null) {
+				this.run({
+					op: "update",
+					sid: section.sid,
+					text: section.text.slice(blank[0].length),
+				});
+			}
+		}
+		for (const section of this.work.slice(0, -1)) {
+			if (!section.text.endsWith("\n")) {
+				this.run({ op: "update", sid: section.sid, text: `${section.text}\n` });
+			}
+		}
+		return structureProblem(this.work);
+	}
+
 	/** New sections from `text` (more than one when it holds headings), after `after`. */
 	insertText(after: string | null, text: string): string[] {
 		const out: string[] = [];
@@ -238,6 +267,58 @@ export class Planner {
 		}
 		return out;
 	}
+}
+
+/**
+ * Whether sections joined and split again come back as the same sections. A
+ * heading line glued to the text before it, a code block left open that swallows
+ * the headings after it, or a section moved away from its heading all fail it,
+ * and a note that fails it would read back differently from how it was written.
+ */
+export function structureProblem(
+	sections: Array<{ heading: string | null; depth: number; text: string }>,
+): Refusal | undefined {
+	const parts = splitSections(sections.map((section) => section.text).join(""));
+	const same =
+		parts.length === sections.length &&
+		parts.every(
+			(part, i) =>
+				part.text === sections[i].text &&
+				part.heading === sections[i].heading &&
+				part.depth === sections[i].depth,
+		);
+	if (same) {
+		return undefined;
+	}
+	return refuse(
+		"That would change where the note's sections split: a heading would be joined onto the text before it, an open code block would swallow the headings after it, or a section would lose its heading.",
+		"Close any code block you open, keep a heading line first in each section, and read the note again before retrying.",
+	);
+}
+
+/** The plan's operations once it is closed, or the refusal closing it gave. */
+export function finished(
+	plan: Planner,
+	rest: Partial<Build> = {},
+): Build | Refusal {
+	const problem = plan.finish();
+	return problem ?? { ops: plan.ops, ...rest };
+}
+
+/** A section as the caller read it, which a write may name to be refused if it moved. */
+export function staleSection(
+	snap: Snapshot,
+	sid: string,
+	read: number,
+): Refusal | undefined {
+	const now = snap.sections.find((section) => section.sid === sid);
+	if (now === undefined || now.version === read) {
+		return undefined;
+	}
+	return refuse(
+		`${sid} is at version ${now.version}; you read version ${read}. It changed since you read it.`,
+		`Read it again (read_note with sections: ["${sid}"]) and redo the change.`,
+	);
 }
 
 export function noSection(name: string, sid: string, ids: string): Refusal {
@@ -260,6 +341,7 @@ export async function commit(
 ): Promise<Written | Refusal> {
 	const { db } = ctx;
 	const made: VectorCarry = new Map();
+	const madeNote = new Map<string, StoredVector[]>();
 	for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
 		const snap = snapshotOf(db, noteId);
 		const built = build(snap);
@@ -289,7 +371,40 @@ export async function commit(
 					.map((entry) => entry.sid),
 			),
 		].filter((sid) => preview.some((section) => section.sid === sid));
+		if (preview.length === 0 && snap.sections.length > 0) {
+			return refuse(
+				"That would leave the note with no text.",
+				"Archive the note with archive_note instead, or keep a section.",
+			);
+		}
+		const broken = structureProblem(preview);
+		if (broken !== undefined) {
+			return broken;
+		}
 		const body = preview.map((section) => section.text).join("");
+
+		// The note's own vector is made from its title, description and tags; a
+		// change to any of them needs the new one before the transaction opens.
+		const nextFields = { ...snap.fields, ...stripArchived(built.fields) };
+		const conceptChanged =
+			JSON.stringify([
+				nextFields.title,
+				nextFields.description,
+				nextFields.tags,
+			]) !==
+			JSON.stringify([
+				snap.fields.title,
+				snap.fields.description,
+				snap.fields.tags,
+			]);
+		const noteText = conceptChanged
+			? conceptText(nextFields.title, nextFields.description, nextFields.tags)
+			: "";
+		const noteVector =
+			noteText === ""
+				? undefined
+				: await conceptVector(ctx, noteText, madeNote);
+
 		// What an earlier attempt of this same write already embedded is kept, so
 		// working the write out again after losing a race costs no embedding
 		// unless the other session's change put new text in play.
@@ -312,6 +427,7 @@ export async function commit(
 			rename: built.rename,
 			undoes: built.undoes,
 			carry: made,
+			conceptVectors: noteVector?.vectors,
 		};
 		const result = db
 			.transaction(() => {
@@ -325,16 +441,12 @@ export async function commit(
 			continue;
 		}
 
-		const after = built.fields;
-		const conceptVector =
-			after !== undefined &&
-			("title" in after || "description" in after || "tags" in after);
 		const problems = await settle(
 			ctx,
 			noteId,
 			vectors.failed,
-			vectors.note,
-			conceptVector,
+			[vectors.note, noteVector?.note],
+			noteVector?.failed,
 		);
 		return {
 			note: built.rename ?? snap.name,
@@ -358,7 +470,7 @@ export async function commit(
 	);
 }
 
-function whoOf(ctx: WriteContext, by: string | undefined): Who {
+export function whoOf(ctx: WriteContext, by: string | undefined): Who {
 	return by === undefined || by === "" ? ctx.who : { ...ctx.who, by };
 }
 
@@ -408,25 +520,15 @@ export async function newVectors(
 		return { carry, failed };
 	}
 
-	const provider = ctx.provider();
-	if ("unavailable" in provider) {
+	const usable = usableProvider(ctx);
+	if ("why" in usable) {
 		return {
 			carry,
 			failed,
-			note: `${wanted.size} new passages are found by keyword only: ${provider.unavailable}`,
+			note: `${wanted.size} new passages are found by keyword only: ${usable.why}`,
 		};
 	}
-	const active = readActiveSpace(ctx.db);
-	if (active === undefined || !sameSpace(active, provider)) {
-		return {
-			carry,
-			failed,
-			note:
-				active === undefined
-					? `${wanted.size} new passages are found by keyword only: the store has no embedding model yet`
-					: `${wanted.size} new passages are found by keyword only: the store is embedded with ${active.model} and this server would use ${provider.model}`,
-		};
-	}
+	const { provider } = usable;
 
 	for (const [key, item] of wanted) {
 		try {
@@ -446,28 +548,83 @@ export async function newVectors(
 }
 
 /**
- * After a write has landed: record the passages that could not be embedded the
- * way a run of `embed` does, give the note its note-level vector when the write
- * changed what it is made from, and say in a sentence what is only searchable
- * by keyword.
+ * The provider to embed with, or a sentence saying why there is none: it may
+ * not load, and the store may be embedded with another model.
+ */
+function usableProvider(
+	ctx: WriteContext,
+): { provider: EmbeddingProvider } | { why: string } {
+	const provider = ctx.provider();
+	if ("unavailable" in provider) {
+		return { why: provider.unavailable };
+	}
+	const active = readActiveSpace(ctx.db);
+	if (active === undefined) {
+		return { why: "the store has no embedding model yet" };
+	}
+	if (!sameSpace(active, provider)) {
+		return {
+			why: `the store is embedded with ${active.model} and this server would use ${provider.model}`,
+		};
+	}
+	return { provider };
+}
+
+/**
+ * The note's own vector for `text`, made before the transaction opens. Kept by
+ * text across the attempts of one write. A failure never fails the write: the
+ * note is found without it and the failure is recorded once the write lands.
+ */
+export async function conceptVector(
+	ctx: WriteContext,
+	text: string,
+	cache: Map<string, StoredVector[]>,
+): Promise<{ vectors?: StoredVector[]; failed?: unknown; note?: string }> {
+	const cached = cache.get(text);
+	if (cached !== undefined) {
+		return { vectors: cached };
+	}
+	const usable = usableProvider(ctx);
+	if ("why" in usable) {
+		return { note: `the note's own vector was not made: ${usable.why}` };
+	}
+	try {
+		const [vector] = await usable.provider.embed([text]);
+		const vectors = [
+			{
+				model: usable.provider.model,
+				dim: usable.provider.dim,
+				vector: toBlob(vector),
+			},
+		];
+		cache.set(text, vectors);
+		return { vectors };
+	} catch (error) {
+		return { failed: error };
+	}
+}
+
+/**
+ * After a write has landed: record the passages (and the note's own vector)
+ * that could not be embedded the way a run of `embed` does, and say in a
+ * sentence what is only searchable by keyword.
  */
 export async function settle(
 	ctx: WriteContext,
 	noteId: number,
 	failed: Failed[],
-	note: string | undefined,
-	conceptVector: boolean,
+	notes: Array<string | undefined>,
+	conceptFailed?: unknown,
 ): Promise<string | undefined> {
 	const { db } = ctx;
-	const provider = ctx.provider();
-	const problems: string[] = [];
-	if (note !== undefined) {
-		problems.push(note);
-	}
+	const problems = notes.filter((note): note is string => note !== undefined);
+	const message = (error: unknown): string =>
+		error instanceof Error ? error.message : String(error);
 
-	if (!("unavailable" in provider)) {
+	const usable = usableProvider(ctx);
+	if ("provider" in usable) {
 		const active = readActiveSpace(db);
-		if (active !== undefined && sameSpace(active, provider)) {
+		if (active !== undefined) {
 			for (const item of failed) {
 				const ids = db
 					.query<{ id: number }, [number, string, string, string, number]>(
@@ -487,948 +644,17 @@ export async function settle(
 				}
 			}
 			if (failed.length > 0) {
-				const first = failed[0].error;
 				problems.push(
-					`${failed.length} new passages are found by keyword only: embedding failed (${first instanceof Error ? first.message : String(first)})`,
+					`${failed.length} new passages are found by keyword only: embedding failed (${message(failed[0].error)})`,
 				);
 			}
-			if (conceptVector) {
-				const result = await embedConceptVector(db, provider, noteId);
-				if (result !== undefined) {
-					const message =
-						result.failed instanceof Error
-							? result.failed.message
-							: String(result.failed);
-					problems.push(`the note's own vector failed (${message})`);
-				}
+			if (conceptFailed !== undefined) {
+				recordConceptFailure(db, noteId, active, conceptFailed);
+				problems.push(
+					`the note's own vector failed (${message(conceptFailed)})`,
+				);
 			}
 		}
 	}
 	return problems.length === 0 ? undefined : problems.join("; ");
-}
-
-// ---------------------------------------------------------------------------
-// create_note
-
-export interface CreateInput {
-	type: string;
-	title: string;
-	description?: string;
-	text?: string;
-	tags?: string[];
-	sources?: string[];
-	reason?: string;
-	by?: string;
-}
-
-/** The note that has `name` now or had it before a rename, if any. */
-function holderOf(
-	db: Database,
-	name: string,
-): { name: string; title: string | null } | null {
-	const now = db
-		.query<{ identifier: string; title: string | null }, [string]>(
-			"SELECT identifier, title FROM concepts WHERE identifier = ?",
-		)
-		.get(name);
-	if (now !== null) {
-		return { name: now.identifier, title: now.title };
-	}
-	const before = db
-		.query<{ identifier: string; title: string | null }, [string]>(
-			`SELECT c.identifier, c.title FROM note_names n
-			JOIN concepts c ON c.id = n.concept_id WHERE n.name = ?`,
-		)
-		.get(name);
-	return before === null
-		? null
-		: { name: before.identifier, title: before.title };
-}
-
-/** The name a type and a title make: the type's folder and the title as a slug. */
-export function nameOf(type: string, title: string): string | undefined {
-	const folder = typeDirectory(type);
-	const slug = typeDirectory(title);
-	return folder === "" || slug === "" ? undefined : `${folder}/${slug}`;
-}
-
-export async function createNewNote(
-	ctx: WriteContext,
-	input: CreateInput,
-): Promise<Written | Refusal> {
-	const { db } = ctx;
-	const type = input.type.trim();
-	const title = input.title.trim();
-	const name = nameOf(type, title);
-	if (name === undefined) {
-		return refuse(
-			"A note's name is made from its type and its title, and one of them has no letters or digits.",
-			"Give a type such as Research or Topic and a title in words.",
-		);
-	}
-	if (title.includes("\n")) {
-		return refuse(
-			"A title is one line.",
-			"Put the rest in the description or the text.",
-		);
-	}
-
-	const taken = holderOf(db, name);
-	if (taken !== null) {
-		return takenRefusal(name, taken);
-	}
-
-	const text = input.text?.trim() ?? "";
-	const body =
-		text === ""
-			? `# ${title}\n`
-			: /^#\s/.test(text)
-				? `${text}\n`
-				: `# ${title}\n\n${text}\n`;
-	const dir = directoryOf(`${name}.md`);
-	const fields: NoteFields = {
-		type,
-		title,
-		description: blankToNull(input.description),
-		status: "draft",
-		staleAfter: null,
-		tags: unique(input.tags ?? []),
-		sources: unique(
-			(input.sources ?? []).map((source) => sourceEntry(db, source, dir)),
-		),
-		extra: {},
-	};
-
-	// The vectors are made before the transaction opens; the name is checked
-	// inside it, so two sessions making the same note cannot both succeed.
-	const vectors = await newVectors(ctx, new Map(), body);
-	const made = db
-		.transaction(() => {
-			const holder = holderOf(db, name);
-			if (holder !== null) {
-				return holder;
-			}
-			return createNote(
-				db,
-				{ name, fields, sections: splitSections(body) },
-				{
-					kind: "create",
-					reason: input.reason,
-					who: whoOf(ctx, input.by),
-					at: ctx.now?.(),
-					carry: vectors.carry,
-				},
-			);
-		})
-		.immediate();
-	if (!("changeId" in made)) {
-		return takenRefusal(name, made);
-	}
-	const problems = await settle(
-		ctx,
-		made.conceptId,
-		vectors.failed,
-		vectors.note,
-		true,
-	);
-	return {
-		note: name,
-		version: made.version,
-		change: made.changeId,
-		sections: loadHeld(db, made.conceptId).map((section) => ({
-			id: section.sid,
-			version: section.version,
-		})),
-		...(problems === undefined ? {} : { search: problems }),
-	};
-}
-
-function takenRefusal(
-	name: string,
-	holder: { name: string; title: string | null },
-): Refusal {
-	return refuse(
-		holder.name === name
-			? `A note named ${name} already exists (${holder.title ?? "untitled"}).`
-			: `${name} is an old name of ${holder.name}.`,
-		`Extend it instead: read_note ${holder.name}, then edit or append. For a different note, use a different title.`,
-	);
-}
-
-function blankToNull(value: string | undefined | null): string | null {
-	if (value === undefined || value === null) {
-		return null;
-	}
-	return value.trim() === "" ? null : value.trim();
-}
-
-function unique<T>(values: T[]): T[] {
-	return [...new Set(values)];
-}
-
-/**
- * A citation as the note stores it: an outside page as it was given, a note by
- * its name written as the relative path other notes use for it.
- */
-export function sourceEntry(db: Database, source: string, dir: string): string {
-	const value = source.trim();
-	if (/^[a-z][a-z0-9+.-]*:/i.test(value) || value.startsWith("//")) {
-		return value;
-	}
-	const found = resolveNote(db, value);
-	if (isRefusal(found)) {
-		return value;
-	}
-	return posix.relative(dir === "" ? "." : dir, `${found.name}.md`);
-}
-
-// ---------------------------------------------------------------------------
-// edit
-
-export interface EditItem {
-	/** Look for `old` in this section only. */
-	section?: string;
-	/** The exact text to replace. */
-	old?: string;
-	/** What replaces it. */
-	new?: string;
-	/** A whole section's new text, with its heading line. */
-	text?: string;
-	/** The section version the caller read, for a whole-section replacement. */
-	version?: number;
-}
-
-export interface EditInput {
-	note: string;
-	edits: EditItem[];
-	reason?: string;
-	by?: string;
-}
-
-/** Every position `needle` starts at in `haystack`, overlapping ones included. */
-function occurrences(haystack: string, needle: string): number[] {
-	const at: number[] = [];
-	let from = haystack.indexOf(needle);
-	while (from !== -1) {
-		at.push(from);
-		from = haystack.indexOf(needle, from + 1);
-	}
-	return at;
-}
-
-function describeCount(count: number): string {
-	return count === 2 ? "twice" : `${count} times`;
-}
-
-export async function editNote(
-	ctx: WriteContext,
-	input: EditInput,
-): Promise<Written | Refusal> {
-	const found = resolveNote(ctx.db, input.note);
-	if (isRefusal(found)) {
-		return found;
-	}
-	if (input.edits.length === 0) {
-		return refuse("There are no edits.", "Give at least one edit.");
-	}
-
-	return commit(ctx, found.id, "edit", input, (snap) => {
-		const plan = new Planner(
-			snap.name,
-			snap.sections,
-			snap.concept.next_section,
-		);
-		for (const [index, item] of input.edits.entries()) {
-			const prefix = input.edits.length > 1 ? `Edit ${index + 1}: ` : "";
-			const problem = applyEdit(plan, snap, item);
-			if (problem !== undefined) {
-				return refuse(prefix + problem.refused, problem.next);
-			}
-		}
-		if (plan.ops.length === 0) {
-			return refuse(
-				"Nothing changed: the new text is the same as the old.",
-				"Check what you meant to change.",
-			);
-		}
-		return { ops: plan.ops };
-	});
-}
-
-function applyEdit(
-	plan: Planner,
-	snap: Snapshot,
-	item: EditItem,
-): Refusal | undefined {
-	if (item.old !== undefined) {
-		return replaceQuoted(plan, item);
-	}
-	if (item.text !== undefined) {
-		return replaceSection(plan, snap, item);
-	}
-	return refuse(
-		"An edit needs `old` and `new`, or `section`, `text` and `version`.",
-		"To change a passage, quote it exactly as `old` and give `new`. To replace a whole section, give its id, its new text and the version you read.",
-	);
-}
-
-function replaceQuoted(plan: Planner, item: EditItem): Refusal | undefined {
-	const old = item.old ?? "";
-	if (old === "") {
-		return refuse(
-			"`old` is empty.",
-			"Quote the exact passage to replace. To add text, use append or add_section.",
-		);
-	}
-	if (item.new === undefined) {
-		return refuse(
-			"`new` is missing.",
-			"Give the text that replaces the quoted passage (empty to delete it).",
-		);
-	}
-
-	if (item.section !== undefined) {
-		const section = plan.find(item.section);
-		if (section === undefined) {
-			return noSection(plan.name, item.section, plan.ids());
-		}
-		const at = occurrences(section.text, old);
-		if (at.length === 0) {
-			const elsewhere = plan.work
-				.filter((other) => other.text.includes(old))
-				.map((other) => other.sid);
-			return refuse(
-				`That passage is not in ${item.section}. It may have changed since you read it.`,
-				elsewhere.length > 0
-					? `It occurs in ${elsewhere.join(", ")}: name that section, or leave the section out. Otherwise read the section again.`
-					: `Read the section again (read_note with sections: ["${item.section}"]) and quote what it says now.`,
-			);
-		}
-		if (at.length > 1) {
-			return refuse(
-				`That passage occurs ${describeCount(at.length)} in ${item.section}.`,
-				"Quote more of the surrounding text so it occurs once.",
-			);
-		}
-		return plan.setText(
-			item.section,
-			section.text.slice(0, at[0]) +
-				item.new +
-				section.text.slice(at[0] + old.length),
-		);
-	}
-
-	const body = plan.body();
-	const at = occurrences(body, old);
-	if (at.length === 0) {
-		return refuse(
-			"That passage is not in the note. It may have changed since you read it.",
-			"Read the note again (read_note) and quote what it says now.",
-		);
-	}
-	if (at.length > 1) {
-		return refuse(
-			`That passage occurs ${describeCount(at.length)} in the note.`,
-			"Quote more of the surrounding text so it occurs once, or name the section to look in.",
-		);
-	}
-	let start = 0;
-	for (const section of plan.work) {
-		const end = start + section.text.length;
-		if (at[0] >= start && at[0] < end) {
-			if (at[0] + old.length > end) {
-				const next = plan.work[plan.index(section.sid) + 1];
-				return refuse(
-					`That passage runs across sections ${section.sid} and ${next?.sid ?? "the next"}.`,
-					"Quote within one section, or replace the sections you mean as whole sections.",
-				);
-			}
-			const local = at[0] - start;
-			return plan.setText(
-				section.sid,
-				section.text.slice(0, local) +
-					item.new +
-					section.text.slice(local + old.length),
-			);
-		}
-		start = end;
-	}
-	return refuse("That passage could not be placed.", "Try naming its section.");
-}
-
-function replaceSection(
-	plan: Planner,
-	snap: Snapshot,
-	item: EditItem,
-): Refusal | undefined {
-	if (item.section === undefined || item.version === undefined) {
-		return refuse(
-			"Replacing a whole section needs its id and the version you read.",
-			"Give `section` and `version` (read_note shows both), or quote a passage with `old` and `new`.",
-		);
-	}
-	const section = plan.find(item.section);
-	if (section === undefined) {
-		return noSection(plan.name, item.section, plan.ids());
-	}
-	if (!plan.made.has(item.section)) {
-		const read = snap.sections.find((other) => other.sid === item.section);
-		if (read !== undefined && read.version !== item.version) {
-			return refuse(
-				`${item.section} is at version ${read.version}; you read version ${item.version}. It changed since you read it.`,
-				`Read it again (read_note with sections: ["${item.section}"]) and redo the replacement, or quote a passage instead.`,
-			);
-		}
-	}
-	return plan.setText(item.section, item.text ?? "");
-}
-
-// ---------------------------------------------------------------------------
-// sections
-
-export interface AddSectionInput {
-	note: string;
-	heading: string;
-	text?: string;
-	/** A section id, "start" or "end" (the default). */
-	after?: string;
-	depth?: number;
-	reason?: string;
-	by?: string;
-}
-
-export async function addSection(
-	ctx: WriteContext,
-	input: AddSectionInput,
-): Promise<Written | Refusal> {
-	const found = resolveNote(ctx.db, input.note);
-	if (isRefusal(found)) {
-		return found;
-	}
-	const heading = input.heading.trim();
-	if (heading === "" || heading.includes("\n")) {
-		return refuse(
-			"A heading is one line of words.",
-			"Give the heading without the # marks.",
-		);
-	}
-	const depth = input.depth ?? 2;
-	if (!Number.isInteger(depth) || depth < 1 || depth > 6) {
-		return refuse(
-			"A heading's depth is 1 to 6.",
-			"Use depth 2 for a section, 3 for a subsection.",
-		);
-	}
-
-	return commit(ctx, found.id, "add_section", input, (snap) => {
-		const plan = new Planner(
-			snap.name,
-			snap.sections,
-			snap.concept.next_section,
-		);
-		const place = placeOf(plan, input.after ?? "end");
-		if (isRefusal(place)) {
-			return place;
-		}
-		const body = input.text?.trim() ?? "";
-		const last = place.after === (plan.work.at(-1)?.sid ?? null);
-		const text = `${"#".repeat(depth)} ${heading}\n${body === "" ? "" : `\n${body}\n`}${last ? "" : "\n"}`;
-		plan.insertText(place.after, text);
-		return { ops: plan.ops };
-	});
-}
-
-/** Where "start", "end" or a section id puts something. */
-function placeOf(
-	plan: Planner,
-	where: string,
-): { after: string | null } | Refusal {
-	if (where === "start") {
-		return { after: null };
-	}
-	if (where === "end") {
-		return { after: plan.work.at(-1)?.sid ?? null };
-	}
-	if (plan.find(where) === undefined) {
-		return noSection(plan.name, where, plan.ids());
-	}
-	return { after: where };
-}
-
-export interface RemoveSectionInput {
-	note: string;
-	section: string;
-	/** Take the sections nested under it too. */
-	with_subsections?: boolean;
-	reason?: string;
-	by?: string;
-}
-
-export async function removeSection(
-	ctx: WriteContext,
-	input: RemoveSectionInput,
-): Promise<Written | Refusal> {
-	const found = resolveNote(ctx.db, input.note);
-	if (isRefusal(found)) {
-		return found;
-	}
-	return commit(ctx, found.id, "remove_section", input, (snap) => {
-		const plan = new Planner(
-			snap.name,
-			snap.sections,
-			snap.concept.next_section,
-		);
-		if (plan.find(input.section) === undefined) {
-			return noSection(snap.name, input.section, plan.ids());
-		}
-		const doomed =
-			input.with_subsections === true
-				? plan.block(input.section)
-				: [input.section];
-		if (doomed.length >= plan.work.length) {
-			return refuse(
-				"That would leave the note with no text.",
-				"Archive the note with archive_note instead, or keep a section.",
-			);
-		}
-		const nested = plan.block(input.section).length - 1;
-		for (const sid of doomed) {
-			plan.run({ op: "remove", sid });
-		}
-		return {
-			ops: plan.ops,
-			info:
-				input.with_subsections !== true && nested > 0
-					? `${nested} nested sections stay; pass with_subsections to remove them too.`
-					: undefined,
-		};
-	});
-}
-
-export interface MoveSectionInput {
-	note: string;
-	section: string;
-	/** A section id or "start". */
-	after: string;
-	reason?: string;
-	by?: string;
-}
-
-export async function moveSection(
-	ctx: WriteContext,
-	input: MoveSectionInput,
-): Promise<Written | Refusal> {
-	const found = resolveNote(ctx.db, input.note);
-	if (isRefusal(found)) {
-		return found;
-	}
-	return commit(ctx, found.id, "move_section", input, (snap) => {
-		const plan = new Planner(
-			snap.name,
-			snap.sections,
-			snap.concept.next_section,
-		);
-		if (plan.find(input.section) === undefined) {
-			return noSection(snap.name, input.section, plan.ids());
-		}
-		const place = placeOf(plan, input.after);
-		if (isRefusal(place)) {
-			return place;
-		}
-		const block = plan.block(input.section);
-		if (place.after !== null && block.includes(place.after)) {
-			return refuse(
-				`${input.after} is inside the section being moved.`,
-				"Name a section outside it to move it after.",
-			);
-		}
-		const before = plan.work.map((section) => section.sid);
-		let previous = place.after;
-		for (const sid of block) {
-			plan.run({ op: "move", sid, after: previous });
-			previous = sid;
-		}
-		if (before.join() === plan.work.map((section) => section.sid).join()) {
-			return refuse(
-				`${input.section} is already there.`,
-				"Name a different place.",
-			);
-		}
-		return { ops: plan.ops };
-	});
-}
-
-// ---------------------------------------------------------------------------
-// append
-
-export interface AppendInput {
-	note: string;
-	text: string;
-	section?: string;
-	source?: string;
-	reason?: string;
-	by?: string;
-}
-
-export async function appendFinding(
-	ctx: WriteContext,
-	input: AppendInput,
-): Promise<Written | Refusal> {
-	const found = resolveNote(ctx.db, input.note);
-	if (isRefusal(found)) {
-		return found;
-	}
-	const finding = input.text.trim();
-	if (finding === "") {
-		return refuse("There is nothing to append.", "Give the finding as text.");
-	}
-
-	return commit(ctx, found.id, "append", input, (snap) => {
-		const plan = new Planner(
-			snap.name,
-			snap.sections,
-			snap.concept.next_section,
-		);
-		const sid = input.section ?? defaultSection(snap);
-		const section = plan.find(sid);
-		if (section === undefined) {
-			return noSection(snap.name, sid, plan.ids());
-		}
-
-		const trailing = /\s*$/.exec(section.text)?.[0] ?? "";
-		const kept = section.text.slice(0, section.text.length - trailing.length);
-		const lastLine = kept.split("\n").at(-1) ?? "";
-		const item = /^\s*([-*+]|\d+[.)])\s/;
-		const joined = item.test(finding) && item.test(lastLine) ? "\n" : "\n\n";
-		const problem = plan.setText(
-			sid,
-			`${kept}${joined}${finding}${trailing === "" ? "\n" : trailing}`,
-		);
-		if (problem !== undefined) {
-			return problem;
-		}
-
-		let fields: Build["fields"];
-		let info: string | undefined;
-		if (input.source !== undefined && input.source.trim() !== "") {
-			const entry = sourceEntry(
-				ctx.db,
-				input.source,
-				directoryOf(`${snap.name}.md`),
-			);
-			if (snap.fields.sources.includes(entry)) {
-				info = "That source was already listed.";
-			} else {
-				fields = { sources: [...snap.fields.sources, entry] };
-			}
-		}
-		return { ops: plan.ops, fields, info };
-	});
-}
-
-/** The section a finding goes in: a hub's research list, else key findings, else the last. */
-function defaultSection(snap: Snapshot): string {
-	const named = (heading: string): string | undefined =>
-		snap.sections.find(
-			(section) => section.heading?.trim().toLowerCase() === heading,
-		)?.sid;
-	const hub = snap.fields.type.toLowerCase() === "topic";
-	return (
-		(hub ? named("research") : undefined) ??
-		named("key findings") ??
-		snap.sections.at(-1)?.sid ??
-		"s1"
-	);
-}
-
-// ---------------------------------------------------------------------------
-// fields
-
-export interface SetFieldsInput {
-	note: string;
-	/** The note version the caller read; the change is refused if the note moved on. */
-	version?: number;
-	title?: string | null;
-	description?: string | null;
-	status?: string | null;
-	stale_after?: string | null;
-	tags?: string[];
-	add_tags?: string[];
-	remove_tags?: string[];
-	sources?: string[];
-	add_sources?: string[];
-	remove_sources?: string[];
-	reason?: string;
-	by?: string;
-}
-
-export async function setFields(
-	ctx: WriteContext,
-	input: SetFieldsInput,
-): Promise<Written | Refusal> {
-	const found = resolveNote(ctx.db, input.note);
-	if (isRefusal(found)) {
-		return found;
-	}
-	if (input.stale_after !== undefined && input.stale_after !== null) {
-		if (
-			input.stale_after.trim() !== "" &&
-			Number.isNaN(Date.parse(input.stale_after))
-		) {
-			return refuse(
-				`"${input.stale_after}" is not a date.`,
-				"Give stale_after as a date such as 2027-01-31, or an empty string to clear it.",
-			);
-		}
-	}
-
-	return commit(ctx, found.id, "set_fields", input, (snap) => {
-		if (input.version !== undefined && input.version !== snap.concept.version) {
-			return refuse(
-				`${snap.name} is at version ${snap.concept.version}; you read version ${input.version}. It changed since you read it.`,
-				"Read it again (read_note) and repeat the change.",
-			);
-		}
-		const dir = directoryOf(`${snap.name}.md`);
-		const next: Partial<NoteFields> = {};
-		if (input.title !== undefined) {
-			next.title = blankToNull(input.title);
-		}
-		if (input.description !== undefined) {
-			next.description = blankToNull(input.description);
-		}
-		if (input.status !== undefined) {
-			next.status = blankToNull(input.status);
-		}
-		if (input.stale_after !== undefined) {
-			next.staleAfter = blankToNull(input.stale_after);
-		}
-
-		let tags = input.tags === undefined ? snap.fields.tags : unique(input.tags);
-		tags = unique([...tags, ...(input.add_tags ?? [])]).filter(
-			(tag) => !(input.remove_tags ?? []).includes(tag),
-		);
-		if (JSON.stringify(tags) !== JSON.stringify(snap.fields.tags)) {
-			next.tags = tags;
-		}
-
-		let sources: NoteFields["sources"] =
-			input.sources === undefined
-				? snap.fields.sources
-				: input.sources.map((source) => sourceEntry(ctx.db, source, dir));
-		sources = unique([
-			...sources,
-			...(input.add_sources ?? []).map((source) =>
-				sourceEntry(ctx.db, source, dir),
-			),
-		]);
-		const removed = (input.remove_sources ?? []).map((source) =>
-			sourceEntry(ctx.db, source, dir),
-		);
-		sources = sources.filter(
-			(source) => typeof source !== "string" || !removed.includes(source),
-		);
-		if (JSON.stringify(sources) !== JSON.stringify(snap.fields.sources)) {
-			next.sources = sources;
-		}
-
-		const changed = (Object.keys(next) as Array<keyof NoteFields>).filter(
-			(key) => JSON.stringify(next[key]) !== JSON.stringify(snap.fields[key]),
-		);
-		if (changed.length === 0) {
-			return { ops: [], skip: "The note already has those values." };
-		}
-		const only: Partial<NoteFields> = {};
-		for (const key of changed) {
-			(only as Record<string, unknown>)[key] = next[key];
-		}
-		return { ops: [], fields: only };
-	});
-}
-
-// ---------------------------------------------------------------------------
-// rename, archive
-
-export interface RenameInput {
-	note: string;
-	title?: string;
-	type?: string;
-	reason?: string;
-	by?: string;
-}
-
-export async function renameNote(
-	ctx: WriteContext,
-	input: RenameInput,
-): Promise<Written | Refusal> {
-	const found = resolveNote(ctx.db, input.note);
-	if (isRefusal(found)) {
-		return found;
-	}
-	if (input.title === undefined && input.type === undefined) {
-		return refuse(
-			"Nothing to rename to.",
-			"Give a new title, a new type, or both.",
-		);
-	}
-
-	return commit(ctx, found.id, "rename", input, (snap) => {
-		const type = input.type?.trim() ?? snap.fields.type;
-		const title = input.title?.trim() ?? snap.fields.title ?? "";
-		const name = nameOf(type, title);
-		if (name === undefined) {
-			return refuse(
-				"A note's name is made from its type and its title, and one of them has no letters or digits.",
-				"Give a type and a title in words.",
-			);
-		}
-		if (title.includes("\n")) {
-			return refuse("A title is one line.", "Shorten it.");
-		}
-		if (
-			name === snap.name &&
-			type === snap.fields.type &&
-			title === snap.fields.title
-		) {
-			return refuse(
-				`${snap.name} already has that type and title.`,
-				"Give a different title or type.",
-			);
-		}
-		const holder = holderOf(ctx.db, name);
-		if (holder !== null && holder.name !== snap.name) {
-			return takenRefusal(name, holder);
-		}
-
-		const ops: SectionOp[] = [];
-		const fields: Build["fields"] = { type, title };
-		const from = directoryOf(`${snap.name}.md`);
-		const to = directoryOf(`${name}.md`);
-		if (from !== to) {
-			// The note's folder changes, so a relative link in it would point
-			// somewhere else; write each one so it still reaches the same note.
-			for (const section of snap.sections) {
-				const text = rewriteLinks(section.text, from, (link) =>
-					link.rawTarget.startsWith("/")
-						? undefined
-						: writeTarget(link.rawTarget, link.targetPath, to, link.anchor),
-				);
-				if (text !== section.text) {
-					ops.push({ op: "update", sid: section.sid, text });
-				}
-			}
-			const sources = snap.fields.sources.map((source) =>
-				moveSource(source, from, to),
-			);
-			if (JSON.stringify(sources) !== JSON.stringify(snap.fields.sources)) {
-				fields.sources = sources;
-			}
-		}
-		return {
-			ops,
-			fields,
-			rename: name === snap.name ? undefined : name,
-		};
-	});
-}
-
-export interface ArchiveInput {
-	note: string;
-	reason?: string;
-	by?: string;
-}
-
-export async function archiveNote(
-	ctx: WriteContext,
-	input: ArchiveInput,
-): Promise<Written | Refusal> {
-	const found = resolveNote(ctx.db, input.note);
-	if (isRefusal(found)) {
-		return found;
-	}
-	return commit(ctx, found.id, "archive", input, (snap) => {
-		if (snap.concept.archived === 1) {
-			return refuse(
-				`${snap.name} is already archived.`,
-				"To bring it back, undo the change that archived it (history, then revert).",
-			);
-		}
-		return { ops: [], fields: { archived: true } };
-	});
-}
-
-// ---------------------------------------------------------------------------
-// confirm
-
-export interface ConfirmInput {
-	note: string;
-	/** Section ids; all of them when left out. */
-	sections?: string[];
-	/** What James said, when he confirmed it in this session. */
-	james_said?: string;
-	reason?: string;
-	by?: string;
-}
-
-const RANK: Record<Trust, number> = {
-	unverified: 0,
-	"machine-confirmed": 1,
-	"human-reviewed": 2,
-};
-
-export async function confirmSections(
-	ctx: WriteContext,
-	input: ConfirmInput,
-): Promise<Written | Refusal> {
-	const found = resolveNote(ctx.db, input.note);
-	if (isRefusal(found)) {
-		return found;
-	}
-	const james = input.james_said !== undefined;
-	if (james && input.james_said?.trim() === "") {
-		return refuse(
-			"james_said is empty.",
-			"Give James's own words, or leave james_said out to confirm as an agent.",
-		);
-	}
-	const trust: Trust = james ? "human-reviewed" : "machine-confirmed";
-	const by = james
-		? "james"
-		: (input.by ?? ctx.who.by ?? ctx.who.client ?? "agent");
-	const at = ctx.now?.() ?? new Date().toISOString();
-
-	return commit(
-		ctx,
-		found.id,
-		"confirm",
-		{
-			reason: james ? `James said: ${input.james_said?.trim()}` : input.reason,
-			by: input.by,
-		},
-		(snap) => {
-			const wanted =
-				input.sections ?? snap.sections.map((section) => section.sid);
-			const ids = snap.sections.map((section) => section.sid);
-			const missing = wanted.filter((sid) => !ids.includes(sid));
-			if (missing.length > 0) {
-				return noSection(snap.name, missing.join(", "), ids.join(", "));
-			}
-			const ops: SectionOp[] = [];
-			for (const sid of wanted) {
-				const section = snap.sections.find((s) => s.sid === sid);
-				if (section !== undefined && RANK[section.trust] < RANK[trust]) {
-					ops.push({ op: "check", sid, trust, by, at });
-				}
-			}
-			if (ops.length === 0) {
-				return {
-					ops,
-					skip: james
-						? "Those sections are already checked by James."
-						: "Those sections are already checked (an agent's check does not replace James's).",
-				};
-			}
-			return { ops };
-		},
-	);
 }

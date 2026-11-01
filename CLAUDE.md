@@ -53,7 +53,8 @@ All data is stored under one home directory, resolved by `resolvePaths` in
 ├── docs/          # The markdown bundle
 ├── lattice.db     # The SQLite index (plus SQLite's own -wal/-shm sidecars)
 ├── store.db       # The note store `lattice import` builds (see below)
-├── backups/       # Snapshots of store.db: one a day on the first write, the last 30
+├── backups/       # Snapshots of store.db: one a day on the first write (last 30), and those `lattice backup` takes (last 30)
+├── export/        # Where `lattice export` writes by default: a copy of the notes, never read back
 ├── archive/       # Notes kept outside the bundle, such as v1/ (Lattice 1's library)
 ├── models/        # Cached embedding weights (`LATTICE_MODEL_DIR` moves it)
 └── .sync.lock     # Held while a sync is running
@@ -223,41 +224,67 @@ plus what files had held (a test pins the layout):
 `src/store/store.ts` is the one place a note changes (`createNote`,
 `changeNote`): it writes the sections, records the change and refreshes the
 note's passages, links and tags (`derive.ts`) in the caller's transaction, and a
-passage whose text did not change keeps its vector. It has no guards; they are in
-`src/store/write.ts`, which builds each tool's change from an agent's words
-(`edit`, `add_section`, `remove_section`, `move_section`, `append`, `set_fields`,
-`rename_note`, `archive_note`, `confirm`, `create_note`) and `src/store/undo.ts`
-(`revert`). The tools are registered in `src/mcp/server.ts`.
+passage whose text did not change keeps its vector. It has no guards; they are
+above it. `src/store/write.ts` is the machinery every write shares (the
+snapshot, the `Planner` that builds a change section by section, the commit, the
+embedding before the transaction); `write-text.ts` builds the changes to a
+note's text (`edit`, `add_section`, `remove_section`, `move_section`, `append`),
+`write-note.ts` the changes about a note as a whole (`create_note`,
+`set_fields`, `rename_note`, `archive_note`, `confirm`), and `undo.ts` `revert`.
+The tools are registered in `src/mcp/server.ts`.
 
-A write is worked out against a snapshot of the note, the vectors for the
-passages it adds are computed before any transaction opens, and then one
+A write is worked out against a snapshot of the note, the vectors it needs (for
+the passages it adds, and for the note's own vector when its title, description
+or tags change) are computed before any transaction opens, and then one
 `BEGIN IMMEDIATE` transaction checks the note is still at the version the
-snapshot was taken at and writes. If another session got in between, the write
-is worked out again against the new note (what was embedded is kept): a change to
-a different passage lands, a change to the same passage meets its guard and is
-refused with what to do. Guards: a quoted passage must occur exactly once in the
-section named or in the whole note (a quote across a section boundary is
-refused); replacing a whole section must name the version read; an edit may not
-take a section's own heading line away; `set_fields` may name the note version
-read. An undo (`revert`) is refused when a later change touched the same section
-or field, naming that change, and is itself a change that can be undone. Embedding
-failure never fails a write: it lands, is found by keyword, and the answer says so.
+snapshot was taken at and writes the change and those vectors together. If
+another session got in between, the write is worked out again against the new
+note (what was embedded is kept): a change to a different passage lands, a change
+to the same passage meets its guard and is refused with what to do. Guards: a
+quoted passage must occur exactly once in the section named or in the whole note
+(a quote across a section boundary is refused); replacing a whole section must
+name the version read; `remove_section` may name it, and `confirm` must (a
+section rewritten since it was read is not the text that was checked);
+`set_fields` may name the note version read, and putting a note back as at a
+version must name the version it is at now (`current`), so later work is never
+wiped unseen. An edit may not take a section's own heading line away, and no
+write may leave the note with no sections. An undo (`revert`) is refused when a
+later change touched the same section or field, naming that change, and is itself
+a change that can be undone. Embedding failure never fails a write: it lands, is
+found by keyword, and the answer says so.
+
+The sections joined must split back into the same sections (`structureProblem`,
+checked on every write, undo included). To keep that true, a plan closes by giving
+every section but the last a final newline and dropping blank lines from the top
+of any section that is not first, and a change that would let a heading be glued
+onto the text before it, or an open code block swallow the headings after it, is
+refused.
 
 New text containing a heading line starts a new section there, and the first
 part keeps the id. `append` goes to the named section, else "Key findings" (a
 Topic hub's "Research"), else the last. A rename gives a new name from the type
 and title; the old name stays in `note_names`, and links resolve through it
-(`resolveLinks` in `derive.ts`).
+(`resolveLinks` in `derive.ts`). `confirm` takes each section with the version
+read; `james_said` makes it "checked by James", and an agent cannot pass itself
+off as James with `by`.
 
 ### Snapshots and export
 
 `src/store/backup.ts`: the server takes a snapshot (`VACUUM INTO`, one
-consistent read) before the first write of each local day into `backups/`,
-keeping the last 30; `lattice backup` takes one now. Nothing schedules
-anything: slice 4 decides whether a scheduler is wanted (a LaunchAgent running
-`lattice backup` would do), and no LaunchAgent is installed by the build.
-`src/store/export.ts` writes one file per note under its type's folder, marked as
-a copy in its first frontmatter line; `lattice import` refuses an export.
+consistent read) before the first write of each local day into `backups/`
+(`store-YYYY-MM-DD.db`, the last 30); `lattice backup` takes one now
+(`store-YYYY-MM-DDTHHMMSS.db`, the last 30 of those). The two kinds are pruned
+apart, so a run of manual backups never pushes the daily window out, and a
+manual one does not stand in for the day's own. Nothing schedules anything:
+slice 4 decides whether a scheduler is wanted (a LaunchAgent running `lattice
+backup` would do), and no LaunchAgent is installed by the build.
+
+`src/store/export.ts` writes one file per note (archived ones are left out)
+under its type's folder, with a first frontmatter line saying it is a copy, and
+a `.lattice-export` manifest listing what it wrote. A later export of the same
+folder removes the files of notes renamed or archived since; a folder that holds
+anything else is refused, and so is the live bundle (`<home>/docs`) or any folder
+that holds it. `lattice import` refuses an export.
 
 ### Reading, search and import
 
@@ -289,19 +316,26 @@ question. It reads two sources and writes to neither:
 ### The tools and their size
 
 Every session carries the tools' descriptions, so their size is watched. The 17
-tools (six reading, eleven writing) and the server's instructions cost **2,888
+tools (six reading, eleven writing) and the server's instructions cost **2,849
 input tokens** in Claude Code, measured 2026-11-01 as the difference in input
 tokens between `claude -p` runs with and without the server, with tool search
-off (`ENABLE_TOOL_SEARCH=false`, so every description is loaded): 6,259
-characters of tool JSON, 2.3 characters a token. With Claude Code's default tool
-search the descriptions are deferred and the server costs about 350 tokens until
-a tool is used. The server sends its tool list without the `$schema` and
-`additionalProperties` the SDK would add, takes few parameter descriptions (the
-names carry them), and a test bounds the list at 6,400 characters. When adding a
-tool or a parameter, re-measure the same way and keep the figure under 3,000.
-`by` is on the five content writes (`create_note`, `edit`, `append`, `confirm`,
-`revert`) and `reason` on all eleven; the other writes record the client and the
-folder.
+off (`ENABLE_TOOL_SEARCH=false`, so every description is loaded): 6,324
+characters of tool JSON, 269 of instructions and the `mcp__lattice__` prefix
+Claude Code adds to each name (238), 2.4 characters a token. With Claude Code's
+default tool search the descriptions are deferred and the server costs about 330
+tokens until a tool is used. The server sends its tool list without the `$schema`
+and `additionalProperties` the SDK would add, takes few parameter descriptions
+(the names carry them), and a test bounds the sum at 7,000 characters. When
+adding a tool or a parameter, re-measure the same way and keep the figure under
+3,000.
+
+A deviation from the option, for that budget: `reason` and `by` are on the five
+writes that add or judge content (`create_note`, `edit`, `append`, `confirm`,
+`revert`) and not on the six structural ones (`add_section`, `remove_section`,
+`move_section`, `set_fields`, `rename_note`, `archive_note`), which record the
+client and the folder alone. `set_fields` has no list-replacing `sources`
+(`add_sources` and `remove_sources` cover it), and clears a field with an empty
+string rather than null (`null` costs an `anyOf` in every field's schema).
 
 Who made a change: the client from the handshake and the folder from the
 process's working directory; when that is the home folder or the root it falls
@@ -318,6 +352,11 @@ records a passage's embedding failure and gives a note its note-level vector
 after a write, the way `embed` does. A fourth, outside the product, is the tests
 in `store.test.ts` and `server.test.ts` that open the store directly for what the
 tools cannot do: planting a vector or an old name and moving the schema version.
+The other exceptions to "never open the database from a test" are the ones that
+open a snapshot (`write.test.ts`, `store-writes.test.ts`), which `lattice sql`
+cannot reach because it opens the store only, and the pruning test in
+`store-writes.test.ts`, which calls `backup.ts` directly on dated snapshots (it
+is a pure function of the folder and a date).
 
 ## Development Notes
 

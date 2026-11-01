@@ -9,7 +9,11 @@
  */
 
 import { posix } from "node:path";
-import { type AuthoredLink, extractBodyLinks } from "../sync/links.js";
+import {
+	type AuthoredLink,
+	extractBodyLinks,
+	isExternal,
+} from "../sync/links.js";
 
 /**
  * `text` with the target of some of its links replaced. `decide` is given each
@@ -85,9 +89,7 @@ export function moveSource<T extends string | Record<string, unknown>>(
 	if (typeof source !== "string") {
 		return source;
 	}
-	const external =
-		/^[a-z][a-z0-9+.-]*:/i.test(source) || source.startsWith("/");
-	if (external || source.trim() === "") {
+	if (isExternal(source) || source.startsWith("/") || source.trim() === "") {
 		return source;
 	}
 	const target = posix.normalize(posix.join(from, source));

@@ -9,8 +9,8 @@ import type { CommandContext, CommandOutput } from "../run.js";
 
 /**
  * `lattice revert <change>`: undo one change as a new change, the same as the
- * `revert` tool. `lattice revert <note> --version <n>` puts a whole note back as
- * it was at version n. `--reason` and `--by` are recorded with the change.
+ * `revert` tool. `lattice revert <note> --version <n> --current <m>` puts a whole note back as
+ * it was at version n; m is the version it is at now, as you read it. `--reason` and `--by` are recorded with the change.
  */
 export async function runRevert(
 	context: CommandContext,
@@ -48,6 +48,10 @@ export async function runRevert(
 				? {
 						note: first,
 						version: count(version, 1, "--version"),
+						current:
+							context.flags.current === undefined
+								? undefined
+								: count(context.flags.current, 1, "--current"),
 						reason: text(context.flags.reason),
 						by: text(context.flags.by),
 					}

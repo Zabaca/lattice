@@ -45,20 +45,21 @@ import { recall } from "../store/recall.js";
 import { STORE_SCHEMA_VERSION } from "../store/schema.js";
 import { collectStats } from "../store/stats.js";
 import { revert } from "../store/undo.js";
+import type { WriteContext, Written } from "../store/write.js";
 import {
-	addSection,
-	appendFinding,
 	archiveNote,
 	confirmSections,
 	createNewNote,
+	renameNote,
+	setFields,
+} from "../store/write-note.js";
+import {
+	addSection,
+	appendFinding,
 	editNote,
 	moveSection,
 	removeSection,
-	renameNote,
-	setFields,
-	type WriteContext,
-	type Written,
-} from "../store/write.js";
+} from "../store/write-text.js";
 import { type LatticePaths, resolvePaths } from "../utils/paths.js";
 
 export interface ServerOptions {
@@ -82,10 +83,10 @@ export interface LatticeServer {
 const NAME = "lattice";
 
 const INSTRUCTIONS =
-	"Lattice holds what has been researched. Ask first: call recall before researching or answering from memory. " +
-	"Write back what you learn: create_note, append a finding with its source, or fix a passage with edit. " +
+	"Lattice holds what has been researched. Ask first: recall before researching or answering from memory. " +
+	"Write back what you learn: create_note, append, edit. " +
 	"Writes count at once, unchecked until confirmed; revert undoes one. " +
-	"Old means from Lattice 1 and possibly out of date.";
+	"Old means from Lattice 1, maybe out of date.";
 
 /** How long to wait for a client to list its roots. */
 const ROOTS_TIMEOUT_MS = 2000;
@@ -200,8 +201,9 @@ export function createLatticeServer(options: ServerOptions): LatticeServer {
 	};
 
 	// `reason` is a line on why; `by` is the caller's own name. The names say it.
-	const why = { reason: z.string().optional() };
-	const whyBy = { ...why, by: z.string().optional() };
+	// Only the writes that add or judge content take them: the structural ones
+	// (sections, fields, rename, archive) record the client and folder alone.
+	const why = { reason: z.string().optional(), by: z.string().optional() };
 	const note = z.string();
 
 	// -- reading -------------------------------------------------------------
@@ -339,14 +341,14 @@ export function createLatticeServer(options: ServerOptions): LatticeServer {
 			text: z.string().optional(),
 			tags: z.array(z.string()).optional(),
 			sources: z.array(z.string()).optional(),
-			...whyBy,
+			...why,
 		},
 		(args) => write((ctx) => createNewNote(ctx, args)),
 	);
 
 	defineTool(
 		"edit",
-		"All-or-none edits. Each replaces an exact quoted passage (old, new) or a whole section (section, text with heading, version read). Refused if the quote is not unique or the section changed.",
+		"All or none. Each edit replaces a quoted passage (old, new; must occur once) or a whole section (section, text with heading, version read).",
 		{
 			note,
 			edits: z.array(
@@ -358,33 +360,32 @@ export function createLatticeServer(options: ServerOptions): LatticeServer {
 					version: z.number().optional(),
 				}),
 			),
-			...whyBy,
+			...why,
 		},
 		(args) => write((ctx) => editNote(ctx, args)),
 	);
 
 	defineTool(
 		"add_section",
-		'Add a section after a given one, or at "start" or "end" (default).',
+		'Add a section after one, or at "start" or "end" (default).',
 		{
 			note,
 			heading: z.string(),
 			text: z.string().optional(),
 			after: z.string().optional(),
 			depth: z.number().optional(),
-			...why,
 		},
 		(args) => write((ctx) => addSection(ctx, args)),
 	);
 
 	defineTool(
 		"remove_section",
-		"Remove a section (and its subsections if with_subsections).",
+		"Remove a section (and its subsections if with_subsections). version: refused if it changed.",
 		{
 			note,
 			section: z.string(),
 			with_subsections: z.boolean().optional(),
-			...why,
+			version: z.number().optional(),
 		},
 		(args) => write((ctx) => removeSection(ctx, args)),
 	);
@@ -396,7 +397,6 @@ export function createLatticeServer(options: ServerOptions): LatticeServer {
 			note,
 			section: z.string(),
 			after: z.string(),
-			...why,
 		},
 		(args) => write((ctx) => moveSection(ctx, args)),
 	);
@@ -409,14 +409,14 @@ export function createLatticeServer(options: ServerOptions): LatticeServer {
 			text: z.string(),
 			section: z.string().optional(),
 			source: z.string().optional(),
-			...whyBy,
+			...why,
 		},
 		(args) => write((ctx) => appendFinding(ctx, args)),
 	);
 
 	defineTool(
 		"set_fields",
-		"Set title, description, status, stale_after (empty clears), tags or sources; add_ and remove_ change some. version refuses if the note moved on.",
+		"Set title, description, status, stale_after (empty clears) or tags; add_ and remove_ adjust tags and sources. version: refused if the note moved on.",
 		{
 			note,
 			version: z.number().optional(),
@@ -427,10 +427,8 @@ export function createLatticeServer(options: ServerOptions): LatticeServer {
 			tags: z.array(z.string()).optional(),
 			add_tags: z.array(z.string()).optional(),
 			remove_tags: z.array(z.string()).optional(),
-			sources: z.array(z.string()).optional(),
 			add_sources: z.array(z.string()).optional(),
 			remove_sources: z.array(z.string()).optional(),
-			...why,
 		},
 		(args) => write((ctx) => setFields(ctx, args)),
 	);
@@ -438,37 +436,38 @@ export function createLatticeServer(options: ServerOptions): LatticeServer {
 	defineTool(
 		"rename_note",
 		"New title or type, so a new name. The old name keeps working.",
-		{ note, title: z.string().optional(), type: z.string().optional(), ...why },
+		{ note, title: z.string().optional(), type: z.string().optional() },
 		(args) => write((ctx) => renameNote(ctx, args)),
 	);
 
 	defineTool(
 		"archive_note",
 		"Hide a note from recall and list_notes; revert brings it back.",
-		{ note, ...why },
+		{ note },
 		(args) => write((ctx) => archiveNote(ctx, args)),
 	);
 
 	defineTool(
 		"confirm",
-		"Mark sections (default all) checked, once confirmed against sources. james_said (his words) only if James confirmed it in this session.",
+		"Mark sections checked (id and the version you read), once confirmed against sources. james_said: his words, only if James confirmed it in this session.",
 		{
 			note,
-			sections: z.array(z.string()).optional(),
+			sections: z.array(z.object({ id: z.string(), version: z.number() })),
 			james_said: z.string().optional(),
-			...whyBy,
+			...why,
 		},
 		(args) => write((ctx) => confirmSections(ctx, args)),
 	);
 
 	defineTool(
 		"revert",
-		"Undo one change, or put a note back as at a version. Refused if a later change touched the same section or field.",
+		"Undo one change, or put a note back as at a version (note, version, and current: the version you read). Refused if a later change touched the same section or field.",
 		{
 			change: z.number().optional(),
 			note: z.string().optional(),
 			version: z.number().optional(),
-			...whyBy,
+			current: z.number().optional(),
+			...why,
 		},
 		(args) => write((ctx) => revert(ctx, args)),
 	);

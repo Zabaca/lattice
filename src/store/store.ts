@@ -18,6 +18,7 @@ import {
 	carryFrom,
 	refreshDerived,
 	resolveLinksAround,
+	type StoredVector,
 	type VectorCarry,
 } from "./derive.js";
 import type { SectionText } from "./sections.js";
@@ -88,6 +89,12 @@ export interface ChangeSpec {
 	fields?: Partial<NoteFields> & { archived?: boolean };
 	/** Vectors already computed for text this change introduces. */
 	carry?: VectorCarry;
+	/**
+	 * The note's own vector for the title, description and tags this change
+	 * leaves it with, made before the transaction opened. Without it a change
+	 * to any of the three leaves the note with no vector until `embed` runs.
+	 */
+	conceptVectors?: StoredVector[];
 	/** The note's new name (it keeps answering to the old one). */
 	rename?: string;
 	/** The change this one undoes. */
@@ -502,7 +509,7 @@ export function loadHeld(db: Database, conceptId: number): Held[] {
 		);
 }
 
-function stripArchived(
+export function stripArchived(
 	fields: ChangeSpec["fields"],
 ): Partial<NoteFields> | undefined {
 	if (fields === undefined) {
@@ -703,6 +710,11 @@ function record(db: Database, run: Recording): ChangeResult {
 		db.query("DELETE FROM concept_embed_failures WHERE concept_id = ?").run(
 			conceptId,
 		);
+		for (const vector of run.change.conceptVectors ?? []) {
+			db.query(
+				"INSERT INTO concept_embeddings (concept_id, model, dim, vector) VALUES (?, ?, ?, ?)",
+			).run(conceptId, vector.model, vector.dim, vector.vector);
+		}
 	}
 
 	const changeId = db

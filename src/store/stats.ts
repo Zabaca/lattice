@@ -118,7 +118,7 @@ export function collectStats(
 	db: Database,
 	configured: VectorSpace | undefined,
 	configuredProblem: string | undefined,
-	backups: string | undefined,
+	backups: string,
 	now: Date = new Date(),
 ): Stats {
 	const one = <Row>(sql: string, ...values: (string | number)[]): Row | null =>
@@ -212,6 +212,6 @@ export function collectStats(
 				)?.n ?? 0,
 			last: lastQuestion?.at ?? null,
 		},
-		last_backup: backups === undefined ? null : lastBackup(backups),
+		last_backup: lastBackup(backups),
 	};
 }

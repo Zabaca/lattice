@@ -60,6 +60,8 @@ export interface RevertInput {
 	/** Or a note, with the version to put it back to. */
 	note?: string;
 	version?: number;
+	/** With `note`: the note's version the caller last read, so later work is never wiped unseen. */
+	current?: number;
 	reason?: string;
 	by?: string;
 }
@@ -72,6 +74,12 @@ export async function revert(
 		return revertChange(ctx, input.change, input);
 	}
 	if (input.note !== undefined && input.version !== undefined) {
+		if (input.current === undefined) {
+			return refuse(
+				"Putting a note back needs the version you last read.",
+				"Read the note (read_note shows its version), then pass it as `current`.",
+			);
+		}
 		return revertNote(ctx, input.note, input.version, input);
 	}
 	return refuse(
@@ -377,6 +385,12 @@ async function revertNote(
 			by: input.by,
 		},
 		(snap) => {
+			if (input.current !== snap.concept.version) {
+				return refuse(
+					`${snap.name} is at version ${snap.concept.version}; you read version ${input.current}. It changed since you read it, and putting it back would remove those changes.`,
+					"Read it again (read_note), check what changed (history), and repeat with the current version.",
+				);
+			}
 			if (
 				!Number.isInteger(version) ||
 				version < 1 ||

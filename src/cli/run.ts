@@ -117,7 +117,7 @@ const COMMANDS: Record<string, CommandSpec> = {
 	revert: {
 		usage:
 			"lattice revert <change> [--reason text] [--by name]\n" +
-			"       lattice revert <note> --version n [--reason text] [--by name]",
+			"       lattice revert <note> --version n --current m [--reason text] [--by name]",
 		summary: "Undo one change, or put a note back as at an earlier version",
 		requiredArgs: [],
 		run: runRevert,

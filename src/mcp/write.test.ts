@@ -16,6 +16,7 @@ import {
 	at,
 	type Body,
 	type Connected,
+	cli,
 	connect,
 	HASH_ENV,
 	storeHome,
@@ -27,6 +28,9 @@ import { createLatticeServer } from "./server.js";
  * the real protocol, on a home whose store `lattice import` built from the
  * fixture bundle (testing.ts). Expected values are literals from that fixture.
  */
+
+/** Sections as `confirm` takes them: each with the version read (all are at 1 in the fixture). */
+const v1 = (...ids: string[]) => ids.map((id) => ({ id, version: 1 }));
 
 const open: Connected[] = [];
 afterEach(async () => {
@@ -342,7 +346,7 @@ describe("edit", () => {
 		expect(stale.body).toEqual({
 			refused:
 				"s3 is at version 1; you read version 2. It changed since you read it.",
-			next: 'Read it again (read_note with sections: ["s3"]) and redo the replacement, or quote a passage instead.',
+			next: 'Read it again (read_note with sections: ["s3"]) and redo the change.',
 		});
 		expect(current.body).toMatchObject({
 			sections: [{ id: "s3", version: 2 }],
@@ -491,8 +495,13 @@ describe("sections", () => {
 		});
 
 		expect(added.body).toMatchObject({ sections: [{ id: "s4", version: 1 }] });
+		// s1 opened with the blank line above its heading, which cannot sit
+		// below another section, so it is rewritten without it.
 		expect(atStart.body).toMatchObject({
-			sections: [{ id: "s5", version: 1 }],
+			sections: [
+				{ id: "s5", version: 1 },
+				{ id: "s1", version: 2 },
+			],
 		});
 		expect(atEnd.body).toMatchObject({ sections: [{ id: "s6", version: 1 }] });
 		const note = await read(call, "research/jev-reranker");
@@ -802,7 +811,6 @@ describe("set_fields", () => {
 			note: "v1/exa/limits",
 			remove_tags: ["old"],
 			stale_after: "",
-			reason: "brought up to date",
 		});
 
 		expect(done.isError).toBe(false);
@@ -812,8 +820,16 @@ describe("set_fields", () => {
 		const changes = await call("history", { note: "v1/exa/limits" });
 		expect(at(changes.body, "changes", 0)).toMatchObject({
 			kind: "set_fields",
-			reason: "brought up to date",
+			who: { client: "test-client 1.2.3" },
 		});
+		const detail = await call("history", {
+			change: Number(at(changes.body, "changes", 0, "change")),
+		});
+		expect(
+			(detail.body.fields as Array<{ field: string }>)
+				.map((f) => f.field)
+				.sort(),
+		).toEqual(["stale_after", "tags"]);
 	});
 });
 
@@ -940,13 +956,13 @@ describe("confirm", () => {
 
 		const agent = await call("confirm", {
 			note: "research/jev-reranker",
-			sections: ["s2", "s3"],
+			sections: v1("s2", "s3"),
 			by: "checker",
 			reason: "checked against the sources",
 		});
 		const james = await call("confirm", {
 			note: "research/jev-reranker",
-			sections: ["s2"],
+			sections: v1("s2"),
 			james_said: "Yes, that finding is right.",
 		});
 
@@ -991,10 +1007,14 @@ describe("confirm", () => {
 		const { call } = await fresh();
 		await call("confirm", {
 			note: "research/exa-limits",
+			sections: v1("s1"),
 			james_said: "Fine.",
 		});
 
-		const agent = await call("confirm", { note: "research/exa-limits" });
+		const agent = await call("confirm", {
+			note: "research/exa-limits",
+			sections: v1("s1"),
+		});
 
 		expect(agent.isError).toBe(false);
 		expect(agent.body).toMatchObject({ unchanged: true });
@@ -1008,6 +1028,7 @@ describe("confirm", () => {
 
 		const result = await call("confirm", {
 			note: "research/exa-limits",
+			sections: v1("s1"),
 			james_said: " ",
 		});
 
@@ -1168,7 +1189,7 @@ describe("revert", () => {
 		});
 		const checked = await call("confirm", {
 			note: "research/jev-reranker",
-			sections: ["s1"],
+			sections: v1("s1"),
 		});
 		const renamed = await call("rename_note", {
 			note: "research/jev-reranker",
@@ -1217,6 +1238,7 @@ describe("revert", () => {
 		const back = await call("revert", {
 			note: "research/jev-reranker",
 			version: 1,
+			current: 5,
 		});
 
 		expect(back.isError).toBe(false);
@@ -1238,11 +1260,13 @@ describe("revert", () => {
 		const same = await call("revert", {
 			note: "research/jev-reranker",
 			version: 6,
+			current: 6,
 		});
 		expect(same.body).toMatchObject({ unchanged: true });
 		const nowhere = await call("revert", {
 			note: "research/jev-reranker",
 			version: 99,
+			current: 6,
 		});
 		expect(nowhere.body.refused).toBe(
 			"research/jev-reranker has no version 99; its versions run from 1 to 6.",
@@ -1332,7 +1356,12 @@ describe("reading an earlier version", () => {
 		await step("edit", {
 			edits: [{ old: "fraction of a cent", new: "tenth of a cent" }],
 		});
-		await step("confirm", { sections: ["s2", "s3"] });
+		await step("confirm", {
+			sections: [
+				{ id: "s2", version: 1 },
+				{ id: "s3", version: 2 },
+			],
+		});
 		await step("append", { text: "- one", section: "s2" });
 		const extra = await step("add_section", { heading: "Extra", after: "s2" });
 		await step("move_section", { section: "s3", after: "start" });
@@ -1341,7 +1370,10 @@ describe("reading an earlier version", () => {
 		});
 		await step("remove_section", { section: "s2" });
 		await step("set_fields", { status: "reviewed", add_tags: ["t"] });
-		await step("confirm", { sections: ["s3"], james_said: "ok" });
+		await step("confirm", {
+			sections: [{ id: "s3", version: 3 }],
+			james_said: "ok",
+		});
 		// Nothing later touched the added section, so its undo is allowed.
 		await step("revert", { change: extra, note: undefined });
 
@@ -1538,3 +1570,372 @@ describe("who", () => {
 
 // The files the tests above never read back, kept here so the import is used.
 void readFileSync;
+
+describe("sections stay where their headings are", () => {
+	const NAME = "research/jev-reranker";
+
+	/** The note read back as the outline and text a reader gets, and checked as a whole. */
+	async function whole(call: Connected["call"], name = NAME) {
+		const note = await read(call, name);
+		const text = textOf(note);
+		// No heading line may be glued onto the end of another line.
+		expect(text).not.toMatch(/[^\n#]#{1,6} /);
+		return note;
+	}
+
+	test("replacing a section whole, without a final newline, does not glue the next heading onto it", async () => {
+		const { call } = await fresh();
+
+		const done = await call("edit", {
+			note: NAME,
+			edits: [
+				{
+					section: "s2",
+					text: "## Key findings\n\n- One rewritten finding.",
+					version: 1,
+				},
+			],
+		});
+
+		expect(done.isError).toBe(false);
+		const note = await whole(call);
+		expect(textOf(note)).toContain(
+			"- One rewritten finding.\n## Cost\n\nA reranker call",
+		);
+		expect(
+			(note.outline as Array<{ id: string; heading: string }>).map((s) => s.id),
+		).toEqual(["s1", "s2", "s3"]);
+		const found = await call("recall", { question: "One rewritten finding" });
+		expect(String(at(found.body, "passages", 0, "text"))).not.toContain(
+			"finding.## ",
+		);
+	});
+
+	test("a quoted edit that takes a section's final newline away gets it back", async () => {
+		const { call } = await fresh();
+
+		await call("edit", {
+			note: NAME,
+			edits: [
+				{
+					old: "answers the question asked.\n\n",
+					new: "answers the question asked.",
+					section: "s2",
+				},
+			],
+		});
+
+		const note = await whole(call);
+		expect(textOf(note)).toContain("question asked.\n## Cost");
+	});
+
+	test("adding a section after a last section that has no final newline keeps both", async () => {
+		const { call } = await fresh();
+		await call("edit", {
+			note: NAME,
+			edits: [{ old: "model itself.\n", new: "model itself.", section: "s3" }],
+		});
+		expect(textOf(await read(call, NAME)).endsWith("model itself.")).toBe(true);
+
+		const added = await call("add_section", { note: NAME, heading: "After" });
+
+		expect(added.isError).toBe(false);
+		const note = await whole(call);
+		expect(textOf(note)).toContain("model itself.\n## After\n");
+		expect((note.outline as Array<{ id: string }>).map((s) => s.id)).toEqual([
+			"s1",
+			"s2",
+			"s3",
+			"s4",
+		]);
+	});
+
+	test("moving a last section that has no final newline into the middle keeps its heading line apart", async () => {
+		const { call } = await fresh();
+		await call("edit", {
+			note: NAME,
+			edits: [{ old: "model itself.\n", new: "model itself.", section: "s3" }],
+		});
+
+		const moved = await call("move_section", {
+			note: NAME,
+			section: "s3",
+			after: "s1",
+		});
+
+		expect(moved.isError).toBe(false);
+		const note = await whole(call);
+		expect((note.outline as Array<{ id: string }>).map((s) => s.id)).toEqual([
+			"s1",
+			"s3",
+			"s2",
+		]);
+	});
+
+	test("text that opens a code block and never closes it is refused, because it would swallow the headings after it", async () => {
+		const { call } = await fresh();
+
+		const result = await call("edit", {
+			note: NAME,
+			edits: [
+				{
+					old: "Reciprocal rank fusion",
+					new: "```\nReciprocal rank fusion",
+					section: "s2",
+				},
+			],
+		});
+
+		expect(result.isError).toBe(true);
+		expect(String(result.body.refused)).toContain(
+			"change where the note's sections split",
+		);
+		const note = await read(call, NAME);
+		expect(note.version).toBe(1);
+		expect(note.sections).toBe(3);
+	});
+
+	test("a section that would lose the heading it follows is refused the same way", async () => {
+		const { call } = await fresh();
+
+		const result = await call("add_section", {
+			note: NAME,
+			heading: "Open",
+			text: "```\nunclosed",
+			after: "s1",
+		});
+
+		expect(result.isError).toBe(true);
+		expect(result.body.refused).toContain(
+			"change where the note's sections split",
+		);
+		expect((await read(call, NAME)).version).toBe(1);
+	});
+
+	test("an export of a rewritten note has no glued line", async () => {
+		const home = await storeHome();
+		const { call } = await session(home);
+		await call("edit", {
+			note: NAME,
+			edits: [
+				{ section: "s2", text: "## Key findings\n\n- Last line.", version: 1 },
+			],
+		});
+		const out = join(mkdtempSync(join(tmpdir(), "lattice-out-")), "copy");
+
+		await cli(home, ["export", out]);
+
+		const exported = readFileSync(join(out, `${NAME}.md`), "utf8");
+		expect(exported).toContain("- Last line.\n## Cost");
+	});
+});
+
+describe("confirm checks what was read", () => {
+	test("a section rewritten since it was read is not confirmed, as an agent or as James", async () => {
+		const home = await storeHome();
+		const one = await session(home);
+		const two = await session(home);
+		// Session one reads s2 at version 1; session two rewrites it.
+		await two.call("edit", {
+			note: "research/jev-reranker",
+			edits: [{ old: "judges whether", new: "decides whether", section: "s2" }],
+		});
+
+		const agent = await one.call("confirm", {
+			note: "research/jev-reranker",
+			sections: v1("s2"),
+		});
+		const james = await one.call("confirm", {
+			note: "research/jev-reranker",
+			sections: v1("s2"),
+			james_said: "That finding is right.",
+		});
+
+		for (const result of [agent, james]) {
+			expect(result.isError).toBe(true);
+			expect(result.body.refused).toBe(
+				"s2 is at version 2; you read version 1. It changed since you read it.",
+			);
+		}
+		const note = await read(one.call, "research/jev-reranker");
+		expect(outlineOf(note)[1]).toEqual(["s2", 2, "unchecked"]);
+	});
+
+	test("one moved section refuses the whole confirm, and nothing is marked", async () => {
+		const { call } = await fresh();
+		await call("append", { note: "research/jev-reranker", text: "More." });
+
+		const result = await call("confirm", {
+			note: "research/jev-reranker",
+			sections: v1("s1", "s2", "s3"),
+		});
+
+		expect(result.isError).toBe(true);
+		expect((await read(call, "research/jev-reranker")).checked).toBe(0);
+	});
+
+	test("an agent cannot confirm as James by naming itself James", async () => {
+		const { call } = await fresh();
+
+		const result = await call("confirm", {
+			note: "research/exa-limits",
+			sections: v1("s1"),
+			by: "James",
+		});
+
+		expect(result.isError).toBe(true);
+		expect(result.body.refused).toBe("An agent cannot confirm as James.");
+		const log = await call("history", {
+			note: "research/exa-limits",
+			limit: 1,
+		});
+		expect(at(log.body, "changes", 0, "kind")).toBe("import");
+	});
+
+	test("with no sections named there is nothing to confirm", async () => {
+		const { call } = await fresh();
+
+		const result = await call("confirm", {
+			note: "research/exa-limits",
+			sections: [],
+		});
+
+		expect(result.isError).toBe(true);
+	});
+});
+
+describe("guards on removing and putting back", () => {
+	test("remove_section named with the version read is refused once the section changed", async () => {
+		const { call } = await fresh();
+		await call("append", { note: "research/jev-reranker", text: "More." });
+
+		const stale = await call("remove_section", {
+			note: "research/jev-reranker",
+			section: "s2",
+			version: 1,
+		});
+		const current = await call("remove_section", {
+			note: "research/jev-reranker",
+			section: "s2",
+			version: 2,
+		});
+
+		expect(stale.isError).toBe(true);
+		expect(stale.body.refused).toBe(
+			"s2 is at version 2; you read version 1. It changed since you read it.",
+		);
+		expect(current.isError).toBe(false);
+	});
+
+	test("putting a note back needs the version read, and is refused when the note has moved on, so later work is never wiped unseen", async () => {
+		const home = await storeHome();
+		const one = await session(home);
+		const two = await session(home);
+		// Session one reads the note at version 2; session two then appends (version 3).
+		await one.call("append", { note: "research/exa-limits", text: "First." });
+		await two.call("append", { note: "research/exa-limits", text: "Second." });
+
+		const missing = await one.call("revert", {
+			note: "research/exa-limits",
+			version: 1,
+		});
+		const stale = await one.call("revert", {
+			note: "research/exa-limits",
+			version: 1,
+			current: 2,
+		});
+
+		expect(missing.isError).toBe(true);
+		expect(String(missing.body.refused)).toContain(
+			"needs the version you last read",
+		);
+		expect(stale.isError).toBe(true);
+		expect(String(stale.body.refused)).toContain(
+			"research/exa-limits is at version 3; you read version 2.",
+		);
+		expect(textOf(await read(one.call, "research/exa-limits"))).toContain(
+			"Second.",
+		);
+	});
+
+	test("an undo that would leave a note with no sections is refused", async () => {
+		const { call } = await fresh();
+		await call("create_note", { type: "Topic", title: "Thin", text: "Body." });
+		const added = await call("add_section", {
+			note: "topic/thin",
+			heading: "Extra",
+		});
+		const removed = await call("remove_section", {
+			note: "topic/thin",
+			section: "s1",
+		});
+		expect(removed.isError).toBe(false);
+
+		const undone = await call("revert", { change: Number(added.body.change) });
+
+		expect(undone.isError).toBe(true);
+		expect(undone.body.refused).toBe("That would leave the note with no text.");
+		expect((await read(call, "topic/thin")).sections).toBe(1);
+	});
+});
+
+describe("the note's own vector", () => {
+	const vectors = async (home: string) =>
+		JSON.parse(
+			(
+				await cli(home, [
+					"sql",
+					"--store",
+					"SELECT count(*) AS n FROM concept_embeddings",
+				])
+			).stdout,
+		)[0].n as number;
+
+	test("a title change lands with the new vector in the same transaction, so there is never a note without one", async () => {
+		const home = await storeHome();
+		const { call } = await session(home);
+		expect(await vectors(home)).toBe(4);
+
+		const done = await call("set_fields", {
+			note: "research/exa-limits",
+			title: "A different title",
+		});
+
+		expect(done.isError).toBe(false);
+		expect(done.body.search).toBeUndefined();
+		expect(await vectors(home)).toBe(4);
+		const stats = await call("stats");
+		expect(at(stats.body, "search", "ok")).toBe(true);
+	});
+
+	test("a new note has its vector when the create returns", async () => {
+		const home = await storeHome();
+		const { call } = await session(home);
+
+		await call("create_note", { type: "Topic", title: "Fresh vector" });
+
+		expect(await vectors(home)).toBe(5);
+	});
+
+	test("when the note's own vector cannot be made the write lands, says so, and the failure is recorded", async () => {
+		const home = await storeHome();
+		const { call } = await session(home, {
+			env: { LATTICE_EMBED_FAIL: "permanent:Unembeddable" },
+		});
+
+		const done = await call("set_fields", {
+			note: "research/exa-limits",
+			title: "Unembeddable title",
+		});
+
+		expect(done.isError).toBe(false);
+		expect(String(done.body.search)).toContain("the note's own vector failed");
+		expect(await vectors(home)).toBe(3);
+		const failures = await cli(home, [
+			"sql",
+			"--store",
+			"SELECT count(*) AS n FROM concept_embed_failures",
+		]);
+		expect(JSON.parse(failures.stdout)[0].n).toBe(1);
+	});
+});

@@ -2,8 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { openStore } from "../store/open.js";
-import { at, type Body, storeHome } from "../store/testing.js";
+import { at, type Body, cli, storeHome } from "../store/testing.js";
 
 /**
  * Many sessions on one Mac share one store, each through a server process of
@@ -67,32 +66,26 @@ function textOf(body: Body): string {
 	return (body.text as Array<{ text: string }>).map((t) => t.text).join("");
 }
 
-/** The store as a person would check it afterwards: whole, and with a change per version. */
-function checkStore(home: string, note: string, versions: number) {
-	const db = openStore(join(home, "store.db"));
-	try {
-		expect(
-			db.query<{ integrity_check: string }, []>("PRAGMA integrity_check").get()
-				?.integrity_check,
-		).toBe("ok");
-		const rows = db
-			.query<{ version: number }, [string]>(
-				`SELECT ch.version FROM changes ch JOIN concepts c ON c.id = ch.concept_id
-				WHERE c.identifier = ? ORDER BY ch.version`,
+/** The store as a person would check it afterwards (with `lattice sql`): whole, and with a change per version. */
+async function checkStore(home: string, note: string, versions: number) {
+	const sql = async (query: string) =>
+		JSON.parse((await cli(home, ["sql", "--store", query])).stdout) as Array<
+			Record<string, unknown>
+		>;
+	expect((await sql("PRAGMA integrity_check"))[0].integrity_check).toBe("ok");
+	const quoted = note.replace(/'/g, "''");
+	expect(
+		(
+			await sql(
+				`SELECT ch.version FROM changes ch JOIN concepts c ON c.id = ch.concept_id WHERE c.identifier = '${quoted}' ORDER BY ch.version`,
 			)
-			.all(note)
-			.map((row) => row.version);
-		expect(rows).toEqual(Array.from({ length: versions }, (_, i) => i + 1));
-		expect(
-			db
-				.query<{ version: number }, [string]>(
-					"SELECT version FROM concepts WHERE identifier = ?",
-				)
-				.get(note)?.version,
-		).toBe(versions);
-	} finally {
-		db.close();
-	}
+		).map((row) => row.version),
+	).toEqual(Array.from({ length: versions }, (_, i) => i + 1));
+	expect(
+		(
+			await sql(`SELECT version FROM concepts WHERE identifier = '${quoted}'`)
+		)[0].version,
+	).toBe(versions);
 }
 
 describe("sessions writing at once", () => {
@@ -146,7 +139,7 @@ describe("sessions writing at once", () => {
 		expect(new Set(kinds.map((c) => c.who.client))).toEqual(
 			new Set(["session-1 1.0.0", "session-2 1.0.0"]),
 		);
-		checkStore(home, "research/jev-reranker", 3);
+		await checkStore(home, "research/jev-reranker", 3);
 	}, 30_000);
 
 	test("two edits quoting the same passage: one lands, the other is refused and the first stands", async () => {
@@ -177,7 +170,7 @@ describe("sessions writing at once", () => {
 		);
 		expect(text).toContain(a.isError ? "two cents" : "one cent");
 		expect(text).not.toContain(a.isError ? "one cent" : "two cents");
-		checkStore(home, "research/jev-reranker", 2);
+		await checkStore(home, "research/jev-reranker", 2);
 	}, 30_000);
 
 	test("two whole-section replacements of the version both read: one lands, the other is told the section changed", async () => {
@@ -200,7 +193,7 @@ describe("sessions writing at once", () => {
 		expect(String(refused?.body.refused)).toContain(
 			"s2 is at version 2; you read version 1. It changed since you read it.",
 		);
-		checkStore(home, "research/jev-reranker", 2);
+		await checkStore(home, "research/jev-reranker", 2);
 	}, 30_000);
 
 	test("four sessions each appending five findings to one section: all twenty land, none lost", async () => {
@@ -240,7 +233,7 @@ describe("sessions writing at once", () => {
 			expect(places).toEqual([...places].sort((x, y) => x - y));
 		}
 		expect(note.version).toBe(21);
-		checkStore(home, "research/exa-limits", 21);
+		await checkStore(home, "research/exa-limits", 21);
 		// The passages were rebuilt on every write and none is missing a vector.
 		const stats = await sessions[1].call("stats");
 		expect(at(stats.body, "search", "waiting")).toBe(0);
@@ -260,7 +253,7 @@ describe("sessions writing at once", () => {
 		expect(String([a, b].find((r) => r.isError)?.body.refused)).toBe(
 			"A note named research/race already exists (Race).",
 		);
-		checkStore(home, "research/race", 1);
+		await checkStore(home, "research/race", 1);
 	}, 30_000);
 
 	test("an undo is refused when another session has since changed the same section, and allowed when it changed another", async () => {
@@ -304,7 +297,7 @@ describe("sessions writing at once", () => {
 		expect(refused.body.refused).toBe(
 			`Change ${later.body.change} (edit, by session-2 1.0.0, ${new Date().toISOString().slice(0, 10)}) also changed section s3, after change ${again.body.change}.`,
 		);
-		checkStore(home, "research/jev-reranker", 6);
+		await checkStore(home, "research/jev-reranker", 6);
 	}, 30_000);
 
 	test("while one session writes, others keep reading and asking", async () => {
@@ -337,6 +330,6 @@ describe("sessions writing at once", () => {
 		})();
 		await Promise.all([writes, reads]);
 
-		checkStore(home, "research/exa-limits", 9);
+		await checkStore(home, "research/exa-limits", 9);
 	}, 60_000);
 });

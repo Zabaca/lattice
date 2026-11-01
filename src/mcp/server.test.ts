@@ -82,11 +82,17 @@ describe("the tools", () => {
 		const { tools } = await client.listTools();
 
 		// Measured 2026-11-01 with `claude -p`, tool search off, against a run with
-		// no server: the 17 tools and the instructions cost 2,888 input tokens
-		// (6,259 characters of tool JSON; 2.3 characters a token). The bound keeps
-		// the list under the 3,000-token aim, with a little room.
-		const chars = JSON.stringify(tools).length;
-		expect(chars).toBeLessThan(6400);
+		// no server: the 17 tools and the instructions cost 2,849 input tokens.
+		// That is 6,324 characters of tool JSON, 269 of instructions and the
+		// `mcp__lattice__` Claude Code puts before each name (238): 6,831
+		// characters, 2.4 to a token. The bound is that sum, kept under the
+		// 3,000-token aim (7,200 characters) with room to spare.
+		const prefix = "mcp__lattice__".length * tools.length;
+		const chars =
+			JSON.stringify(tools).length +
+			(client.getInstructions() ?? "").length +
+			prefix;
+		expect(chars).toBeLessThan(7000);
 		for (const tool of tools) {
 			expect(JSON.stringify(tool)).not.toContain("$schema");
 			expect(JSON.stringify(tool)).not.toContain("additionalProperties");

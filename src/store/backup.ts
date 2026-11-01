@@ -24,8 +24,14 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 
-/** How many snapshots are kept. */
+/**
+ * How many snapshots are kept of each kind: the daily ones (one per day, taken
+ * by the server) and the ones asked for with `lattice backup`. They are pruned
+ * apart, so a run of manual backups never pushes the daily window out.
+ */
 export const KEEP = 30;
+
+const DAILY = /^store-\d{4}-\d{2}-\d{2}\.db$/;
 
 const PREFIX = "store-";
 const SUFFIX = ".db";
@@ -55,6 +61,16 @@ export function snapshotsIn(dir: string): string[] {
 	} catch {
 		return [];
 	}
+}
+
+/** The daily snapshots in a folder, oldest first. */
+export function dailyIn(dir: string): string[] {
+	return snapshotsIn(dir).filter((name) => DAILY.test(name));
+}
+
+/** The snapshots asked for by hand, oldest first. */
+export function manualIn(dir: string): string[] {
+	return snapshotsIn(dir).filter((name) => !DAILY.test(name));
 }
 
 /** When the newest snapshot was made, or null when there is none. */
@@ -98,21 +114,23 @@ function snapshot(db: Database, dir: string, name: string): Snapshot | null {
 	}
 }
 
-/** Drop all but the newest `KEEP` snapshots. */
+/** Drop all but the newest `KEEP` snapshots of each kind. */
 function prune(dir: string): void {
-	const names = snapshotsIn(dir);
-	for (const name of names.slice(0, Math.max(0, names.length - KEEP))) {
-		try {
-			unlinkSync(join(dir, name));
-		} catch {
-			// Someone else pruned it first.
+	for (const names of [dailyIn(dir), manualIn(dir)]) {
+		for (const name of names.slice(0, Math.max(0, names.length - KEEP))) {
+			try {
+				unlinkSync(join(dir, name));
+			} catch {
+				// Someone else pruned it first.
+			}
 		}
 	}
 }
 
 /**
- * The day's snapshot, if none has been taken today (by anyone, including
- * `lattice backup`). Returns what it made, or null when today already has one.
+ * The day's snapshot, if no server has taken one today. Returns what it made,
+ * or null when today already has one. A snapshot asked for by hand does not
+ * count: the day's first write still takes its own.
  */
 export function dailyBackup(
 	db: Database,
@@ -120,7 +138,7 @@ export function dailyBackup(
 	now: Date = new Date(),
 ): Snapshot | null {
 	const day = localDay(now);
-	if (snapshotsIn(dir).some((name) => name.startsWith(`${PREFIX}${day}`))) {
+	if (dailyIn(dir).includes(`${PREFIX}${day}${SUFFIX}`)) {
 		return null;
 	}
 	const made = snapshot(db, dir, `${PREFIX}${day}${SUFFIX}`);

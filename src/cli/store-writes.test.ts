@@ -2,8 +2,15 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import matter from "gray-matter";
-import { backupNow, KEEP, snapshotsIn } from "../store/backup.js";
-import { EXPORT_MARK } from "../store/export.js";
+import {
+	backupNow,
+	dailyBackup,
+	dailyIn,
+	KEEP,
+	manualIn,
+	snapshotsIn,
+} from "../store/backup.js";
+import { EXPORT_MANIFEST, EXPORT_MARK } from "../store/export.js";
 import { openStore } from "../store/open.js";
 import {
 	BUNDLE,
@@ -133,6 +140,8 @@ describe("lattice revert", () => {
 			"research/exa-limits",
 			"--version",
 			"1",
+			"--current",
+			"3",
 		]);
 
 		expect(result.code).toBe(0);
@@ -202,6 +211,36 @@ describe("lattice backup", () => {
 				db.query<{ n: number }, []>("SELECT count(*) AS n FROM sections").get()
 					?.n,
 			).toBeGreaterThan(4);
+		} finally {
+			db.close();
+		}
+	});
+
+	test("snapshots asked for by hand never push the daily ones out, and the day's first write still takes its own", async () => {
+		const home = await storeHome();
+		const db = openStore(join(home, "store.db"));
+		try {
+			const dir = join(home, "backups");
+			for (let day = 1; day <= KEEP; day++) {
+				dailyBackup(db, dir, new Date(2026, 0, day, 9, 0, 0));
+			}
+			// Forty manual snapshots in one afternoon.
+			for (let n = 0; n < 40; n++) {
+				backupNow(db, dir, new Date(2026, 0, KEEP, 15, 0, n));
+			}
+
+			expect(dailyIn(dir)).toHaveLength(KEEP);
+			expect(dailyIn(dir)[0]).toBe("store-2026-01-01.db");
+			expect(manualIn(dir)).toHaveLength(KEEP);
+			// A manual snapshot does not stand in for the day's own.
+			expect(
+				dailyBackup(db, dir, new Date(2026, 0, KEEP, 16, 0, 0)),
+			).toBeNull();
+			expect(
+				dailyBackup(db, dir, new Date(2026, 0, KEEP + 1, 9, 0, 0)),
+			).not.toBeNull();
+			expect(dailyIn(dir)).toHaveLength(KEEP);
+			expect(dailyIn(dir)[0]).toBe("store-2026-01-02.db");
 		} finally {
 			db.close();
 		}
@@ -288,7 +327,7 @@ describe("lattice export", () => {
 		});
 		await call("confirm", {
 			note: "research/jev-reranker",
-			sections: ["s2"],
+			sections: [{ id: "s2", version: 2 }],
 			james_said: "yes",
 		});
 		await call("rename_note", {
@@ -307,8 +346,8 @@ describe("lattice export", () => {
 		expect(matter(renamed).data).toMatchObject({
 			title: "Jev as a Lattice reranker",
 			version: 4,
-			// The append touched s3 (no Key findings is the last section), the
-			// confirm then checked s2, so exactly one section is checked.
+			// The append touched s2 (Key findings, now at version 2), which James
+			// then confirmed as read, so exactly one section is checked.
 			checked: "1 of 3 sections",
 		});
 		expect(renamed).toContain("An exported finding.");
@@ -329,6 +368,55 @@ describe("lattice export", () => {
 		expect(result.code).toBe(1);
 		expect(result.stderr).toContain("is an export of the note store");
 		expect(existsSync(join(target, "store.db"))).toBe(false);
+	});
+
+	test("a folder that holds anything but an earlier export is refused, and left as it was", async () => {
+		const home = await storeHome();
+		const out = freshHome();
+		writeFileSync(join(out, "mine.txt"), "keep me");
+
+		const result = await cli(home, ["export", out]);
+
+		expect(result.code).toBe(1);
+		expect(result.stderr).toContain("not a previous export");
+		expect(readdirSync(out)).toEqual(["mine.txt"]);
+	});
+
+	test("the live bundle is never an export folder, nor a folder that holds it", async () => {
+		const home = await storeHome();
+
+		const into = await cli(home, ["export", join(home, "docs")]);
+		const inside = await cli(home, ["export", join(home, "docs", "sub")]);
+		const above = await cli(home, ["export", home]);
+
+		for (const result of [into, inside, above]) {
+			expect(result.code).toBe(1);
+			expect(result.stderr).toContain("live bundle");
+		}
+		expect(existsSync(join(home, "docs", "sub"))).toBe(false);
+	});
+
+	test("a re-export refreshes its own folder and removes the files of notes renamed or archived since", async () => {
+		const home = await storeHome();
+		const { call } = await session(home);
+		const out = join(freshHome(), "copy");
+		await cli(home, ["export", out]);
+		expect(existsSync(join(out, "research/exa-limits.md"))).toBe(true);
+		expect(existsSync(join(out, EXPORT_MANIFEST))).toBe(true);
+
+		await call("rename_note", {
+			note: "research/jev-reranker",
+			title: "Jev, renamed",
+		});
+		await call("archive_note", { note: "research/exa-limits" });
+		const again = await cli(home, ["export", out]);
+
+		expect(again.code).toBe(0);
+		expect(again.stdout).toContain("Exported 3 notes");
+		expect(existsSync(join(out, "research/jev-reranker.md"))).toBe(false);
+		expect(existsSync(join(out, "research/exa-limits.md"))).toBe(false);
+		expect(existsSync(join(out, "research/jev-renamed.md"))).toBe(true);
+		expect(existsSync(join(out, "topic/jev.md"))).toBe(true);
 	});
 
 	test("the default folder is export under the home", async () => {

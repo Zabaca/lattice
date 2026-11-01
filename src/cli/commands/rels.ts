@@ -1,6 +1,6 @@
-import { existsSync } from "node:fs";
-import { openDatabase } from "../../db/open.js";
+import type { openDatabase } from "../../db/open.js";
 import { resolvePaths } from "../../utils/paths.js";
+import { openTarget, targetProblem } from "../database.js";
 import type { CommandContext, CommandOutput } from "../run.js";
 
 /**
@@ -44,15 +44,13 @@ const EDGE_COLUMNS =
 export function runRels(context: CommandContext): CommandOutput {
 	const paths = resolvePaths(context.env);
 
-	if (!existsSync(paths.database)) {
-		return {
-			code: 1,
-			stderr: `No Lattice index at ${paths.database}. Run \`lattice init\` first.`,
-		};
+	const problem = targetProblem(paths, context.flags);
+	if (problem !== undefined) {
+		return { code: 1, stderr: problem };
 	}
 
 	const wanted = context.positionals[0];
-	const db = openDatabase(paths.database);
+	const db = openTarget(paths, context.flags);
 	try {
 		const concept = findConcept(db, wanted);
 		if (concept === undefined) {

@@ -15,6 +15,13 @@ export interface ParsedArgs {
 }
 
 /**
+ * Flags that never take a value, so `lattice sql --store "SELECT 1"` does not
+ * read the query as `--store`'s value. Every other flag still takes the next
+ * word, which is why the rest are written after the words they go with.
+ */
+const VALUELESS = new Set(["store"]);
+
+/**
  * Parse an argv tail (no executable or script path — just the user's words).
  *
  * Everything after a bare `--` is treated as a positional argument, so a query
@@ -48,7 +55,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
 				continue;
 			}
 			const next = argv[i + 1];
-			if (next !== undefined && !next.startsWith("-")) {
+			if (!VALUELESS.has(body) && next !== undefined && !next.startsWith("-")) {
 				flags[body] = next;
 				i++;
 				continue;

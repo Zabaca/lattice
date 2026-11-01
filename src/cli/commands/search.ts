@@ -1,5 +1,3 @@
-import { existsSync } from "node:fs";
-import { openDatabase } from "../../db/open.js";
 import { checkActiveSpace } from "../../embed/state.js";
 import {
 	RerankConfigurationError,
@@ -9,6 +7,7 @@ import {
 import { embedQuery } from "../../search/embed-query.js";
 import { type SearchHit, search, searchConcepts } from "../../search/search.js";
 import { resolvePaths } from "../../utils/paths.js";
+import { openTarget, targetProblem } from "../database.js";
 import { count, text } from "../flags.js";
 import type { CommandContext, CommandOutput } from "../run.js";
 
@@ -32,11 +31,9 @@ export async function runSearch(
 ): Promise<CommandOutput> {
 	const paths = resolvePaths(context.env);
 
-	if (!existsSync(paths.database)) {
-		return {
-			code: 1,
-			stderr: `No Lattice index at ${paths.database}. Run \`lattice init\` first.`,
-		};
+	const problem = targetProblem(paths, context.flags);
+	if (problem !== undefined) {
+		return { code: 1, stderr: problem };
 	}
 
 	let limit: number;
@@ -81,7 +78,7 @@ export async function runSearch(
 		context.report,
 	);
 
-	const db = openDatabase(paths.database);
+	const db = openTarget(paths, context.flags);
 	try {
 		// A query embedded by one model cannot be compared against vectors
 		// written by another, and answering anyway would be worse than not

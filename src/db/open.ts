@@ -8,6 +8,23 @@
 import { Database } from "bun:sqlite";
 import { SCHEMA_SQL, SCHEMA_VERSION } from "./schema.js";
 
+/** A schema a database can be in: the index's, or the note store's. */
+export interface SchemaSpec {
+	version: number;
+	sql: string;
+	/** What the database is called in a refusal. */
+	label: string;
+	/** What to do about a database in another version. */
+	remedy: string;
+}
+
+const INDEX_SCHEMA: SchemaSpec = {
+	version: SCHEMA_VERSION,
+	sql: SCHEMA_SQL,
+	label: "database",
+	remedy: "remove the database and run `lattice init` again",
+};
+
 /** How long a second process waits for a lock before giving up. */
 const BUSY_TIMEOUT_MS = 5000;
 
@@ -20,6 +37,8 @@ const PAGE_SIZE = 16384;
 export interface OpenOptions {
 	/** Create the file and apply the schema when it does not exist. */
 	create?: boolean;
+	/** The schema to apply and expect. Defaults to the index's. */
+	schema?: SchemaSpec;
 }
 
 /**
@@ -45,7 +64,7 @@ export function openDatabase(
 	db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
 
 	try {
-		applySchema(db);
+		applySchema(db, options.schema ?? INDEX_SCHEMA);
 	} catch (error) {
 		db.close();
 		throw error;
@@ -57,21 +76,21 @@ export function openDatabase(
 /**
  * Apply the schema if it is absent, and verify the version if it is present.
  */
-function applySchema(db: Database): void {
+function applySchema(db: Database, schema: SchemaSpec): void {
 	const existing = readSchemaVersion(db);
 
 	if (existing === undefined) {
-		db.exec(SCHEMA_SQL);
+		db.exec(schema.sql);
 		db.query("INSERT INTO meta (key, value) VALUES ('schema_version', ?)").run(
-			String(SCHEMA_VERSION),
+			String(schema.version),
 		);
 		return;
 	}
 
-	if (existing !== SCHEMA_VERSION) {
+	if (existing !== schema.version) {
 		throw new Error(
-			`Database schema version ${existing} does not match the expected version ${SCHEMA_VERSION}. ` +
-				"This build of Lattice cannot read it; remove the database and run `lattice init` again.",
+			`The ${schema.label}'s schema version ${existing} does not match the expected version ${schema.version}. ` +
+				`This build of Lattice cannot read it; ${schema.remedy}.`,
 		);
 	}
 }

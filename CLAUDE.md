@@ -21,7 +21,14 @@ lattice embed    # Embed the backlog alone (`--retry-failed` retries permanent f
 lattice search   # Hybrid search: keyword and meaning fused, then expanded one hop
 lattice sql      # Raw SQL queries
 lattice rels     # Show a concept's links, backlinks and unresolved links
+lattice import   # Build the note store (store.db) from the bundle and Lattice 1's library
+lattice mcp      # Serve the note store's tools to an agent over stdio
 ```
+
+`search`, `sql`, `rels` and `status` read the file index by default and the note
+store with `--store` (the store is not the default until the cutover; see
+[The note store](#the-note-store)). `--store` never takes a value, so it may sit
+before the query; every other flag takes the next word and goes after it.
 
 `lattice rels <concept>` takes either an OKF identifier (`bigquery-table/users`)
 or a bundle path (`bigquery-table/users.md`), and `--json` prints the same three
@@ -41,6 +48,8 @@ All data is stored under one home directory, resolved by `resolvePaths` in
 ~/.lattice/
 ├── docs/          # The markdown bundle
 ├── lattice.db     # The SQLite index (plus SQLite's own -wal/-shm sidecars)
+├── store.db       # The note store `lattice import` builds (see below)
+├── archive/       # Notes kept outside the bundle, such as v1/ (Lattice 1's library)
 ├── models/        # Cached embedding weights (`LATTICE_MODEL_DIR` moves it)
 └── .sync.lock     # Held while a sync is running
 ```
@@ -175,6 +184,62 @@ not written yet. Every sync re-resolves the whole table at the end, so writing
 the missing document repairs the edge and deleting a target returns its inbound
 links to unresolved.
 
+## The note store
+
+Lattice is moving from files to a store (ADR 0001, `docs/adr/`). Slice 2 of 5
+is built: the store, the import and the reading tools. The files stay the
+source until the cutover (slice 4), so everything above still describes the
+default behaviour.
+
+`store.db` (path `store` in `resolvePaths`) is a separate SQLite file in schema
+version 6 (`src/store/schema.ts`). It is the index's tables, unchanged, plus
+what files had held:
+
+- `concepts` is the notes table. `path` is the note's name plus `.md`, an
+  address that relative links resolve against and no file. `identifier` is the
+  name. Added columns: `sources`, `version`, `archived`, `next_section`,
+  `created_at`, `updated_at`. `frontmatter` holds the note's other fields.
+- `sections` is the note's text: ordered, each with an id (`s1`, `s2`, ...) given
+  once and never reused, its heading and depth, its text, its own version and its
+  `trust` (`unverified`, `machine-confirmed` for checked by an agent,
+  `human-reviewed` for checked by James). The sections joined in order are the
+  note's body exactly. `chunks.section_id` is the section a passage starts in.
+- `changes`, `change_sections` and `change_fields`: every write, with the text or
+  value before and after. `note_names` holds the old names a renamed note answers
+  to. `recall_log` records each question for `stats`.
+
+`src/store/store.ts` is the one place a note changes (`createNote`,
+`changeNote`): it writes the sections, records the change and refreshes the
+note's passages, links and tags (`derive.ts`) in the caller's transaction, and a
+passage whose text did not change keeps its vector. It has no guards yet; those,
+and the tools that build changes from an agent's words, are slice 3.
+
+`src/store/read.ts` and `recall.ts` answer the reading tools; `src/mcp/server.ts`
+registers them (`recall`, `read_note`, `list_notes`, `links`, `stats`,
+`history`). Every tool answers in compact JSON; a refusal is an error result
+`{ refused, next }`. A server re-checks the store's schema version on every call
+and reopens the file if it was replaced. Search is `src/search` unchanged,
+reached through `recall` with these filters added: `notes` (within given notes)
+and `excludeArchived`.
+
+`lattice import` builds the store in `store.db.importing`, verifies it
+(`src/store/verify.ts`: text joined back equals each file's body, each note's
+fields equal its parsed frontmatter, search matches the file index) and copies it
+into place only when all of it has finished. It reads two sources and writes to
+neither:
+
+- the bundle (`<home>/docs`): a note per file, named by its path, vectors copied
+  from `lattice.db` wherever the passage or note text is identical;
+- Lattice 1's library (`<home>/archive/v1`, `docs/` and `lost/`): a note per
+  `.md`, `index.md` included, named `v1/` plus its path, type `Lattice 1`, each
+  tagged `old` with a stale-after date in the past (which search already demotes
+  by half), stubs also tagged `full-text-lost`, and the two generated title lists
+  at the top archived. Embedding it takes minutes and several GB of memory, which
+  is why it runs here, once, and never inside a session's server.
+
+Keep `store.db` out of reach of anything but `src/store/store.ts`: `lattice sql`
+opens it with `query_only`.
+
 ## Development Notes
 
 - No external services: SQLite is embedded and the default embedding provider runs in-process
@@ -194,6 +259,19 @@ output out.
 A test gets an isolated home by passing `LATTICE_HOME` pointed at a fresh
 temporary directory, so there is no shared connection to manage, nothing to
 truncate between tests, and no order dependence.
+
+### The store's seams
+
+The note store has a second seam, because the tools are what agents use:
+`createLatticeServer` (`src/mcp/server.ts`) driven by an in-process MCP client
+over the real protocol, in `src/mcp/server.test.ts`, on a home that `lattice
+import` built (`src/store/testing.ts` has the helpers and the fixtures: a bundle
+in today's shape and a library in Lattice 1's). `src/cli/mcp.test.ts` runs
+`lattice mcp` itself as a process. `src/store/import.test.ts` drives the import
+and the `--store` commands through `runCli`. The write tools do not exist yet, so
+`src/store/store.test.ts` and the few server tests that need a note with a
+history call the store's write primitive directly; that is the exception to
+"never open the database from a test".
 
 ### Rules
 

@@ -70,7 +70,7 @@ const CHUNKS = {
 		THEN t.content ELSE t.heading_path || char(10) || char(10) || t.content END`,
 } as const;
 
-const CONCEPTS = {
+export const CONCEPTS = {
 	table: "concepts",
 	embeddings: "concept_embeddings",
 	failures: "concept_embed_failures",

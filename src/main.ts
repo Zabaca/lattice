@@ -11,6 +11,7 @@ import { runCli } from "./cli/run.js";
 const result = await runCli({
 	argv: process.argv.slice(2),
 	env: process.env,
+	cwd: process.cwd(),
 	onProgress: (line) => process.stderr.write(`${line}\n`),
 });
 

@@ -23,6 +23,10 @@ lattice sql      # Raw SQL queries
 lattice rels     # Show a concept's links, backlinks and unresolved links
 lattice import   # Build the note store (store.db) from the bundle and Lattice 1's library
 lattice mcp      # Serve the note store's tools to an agent over stdio
+lattice history  # The store's changes, or one change in full
+lattice revert   # Undo one change, or put a note back as at a version
+lattice export   # Write the store out as markdown (a copy, never read back)
+lattice backup   # Take a snapshot of the store now
 ```
 
 `search`, `sql`, `rels` and `status` read the file index by default and the note
@@ -49,6 +53,7 @@ All data is stored under one home directory, resolved by `resolvePaths` in
 ├── docs/          # The markdown bundle
 ├── lattice.db     # The SQLite index (plus SQLite's own -wal/-shm sidecars)
 ├── store.db       # The note store `lattice import` builds (see below)
+├── backups/       # Snapshots of store.db: one a day on the first write, the last 30
 ├── archive/       # Notes kept outside the bundle, such as v1/ (Lattice 1's library)
 ├── models/        # Cached embedding weights (`LATTICE_MODEL_DIR` moves it)
 └── .sync.lock     # Held while a sync is running
@@ -186,13 +191,14 @@ links to unresolved.
 
 ## The note store
 
-Lattice is moving from files to a store (ADR 0001, `docs/adr/`). Slice 2 of 5
-is built: the store, the import and the reading tools. The files stay the
-source until the cutover (slice 4), so everything above still describes the
+Lattice is moving from files to a store (ADR 0001, `docs/adr/`). Slices 2 and 3
+of 5 are built: the store, the import, the reading tools, and now the writing
+tools, history and undo, daily snapshots and the markdown export. The files stay
+the source until the cutover (slice 4), so everything above still describes the
 default behaviour.
 
 `store.db` (path `store` in `resolvePaths`) is a separate SQLite file with its
-own schema version (1) and `meta.kind = 'note store'`, so an index is never
+own schema version (2) and `meta.kind = 'note store'`, so an index is never
 mistaken for it (`src/store/schema.ts`). It is the index's tables, unchanged,
 plus what files had held (a test pins the layout):
 
@@ -206,22 +212,60 @@ plus what files had held (a test pins the layout):
   `human-reviewed` for checked by James). The sections joined in order are the
   note's body exactly. `chunks.section_id` is the section a passage starts in.
 - `changes`, `change_sections` and `change_fields`: every write, with the text or
-  value before and after. `note_names` holds the old names a renamed note answers
-  to. `recall_log` records each question for `stats`.
+  value before and after. A section's entry also keeps the version it had and
+  who had checked it, and a change that added, removed or moved a section keeps
+  the order the sections stood in (`changes.order_before`), so reading an earlier
+  version and undoing are exact rather than inferred. `note_names` holds the old
+  names a renamed note answers to. `recall_log` records each question for `stats`.
+
+### Writing
 
 `src/store/store.ts` is the one place a note changes (`createNote`,
 `changeNote`): it writes the sections, records the change and refreshes the
 note's passages, links and tags (`derive.ts`) in the caller's transaction, and a
-passage whose text did not change keeps its vector. It has no guards yet; those,
-and the tools that build changes from an agent's words, are slice 3.
+passage whose text did not change keeps its vector. It has no guards; they are in
+`src/store/write.ts`, which builds each tool's change from an agent's words
+(`edit`, `add_section`, `remove_section`, `move_section`, `append`, `set_fields`,
+`rename_note`, `archive_note`, `confirm`, `create_note`) and `src/store/undo.ts`
+(`revert`). The tools are registered in `src/mcp/server.ts`.
 
-`src/store/read.ts` and `recall.ts` answer the reading tools; `src/mcp/server.ts`
-registers them (`recall`, `read_note`, `list_notes`, `links`, `stats`,
-`history`). Every tool answers in compact JSON; a refusal is an error result
-`{ refused, next }`. A server re-checks the store's schema version on every call
-and reopens the file if it was replaced. Search is `src/search` unchanged,
-reached through `recall` with these filters added: `notes` (within given notes)
-and `excludeArchived`.
+A write is worked out against a snapshot of the note, the vectors for the
+passages it adds are computed before any transaction opens, and then one
+`BEGIN IMMEDIATE` transaction checks the note is still at the version the
+snapshot was taken at and writes. If another session got in between, the write
+is worked out again against the new note (what was embedded is kept): a change to
+a different passage lands, a change to the same passage meets its guard and is
+refused with what to do. Guards: a quoted passage must occur exactly once in the
+section named or in the whole note (a quote across a section boundary is
+refused); replacing a whole section must name the version read; an edit may not
+take a section's own heading line away; `set_fields` may name the note version
+read. An undo (`revert`) is refused when a later change touched the same section
+or field, naming that change, and is itself a change that can be undone. Embedding
+failure never fails a write: it lands, is found by keyword, and the answer says so.
+
+New text containing a heading line starts a new section there, and the first
+part keeps the id. `append` goes to the named section, else "Key findings" (a
+Topic hub's "Research"), else the last. A rename gives a new name from the type
+and title; the old name stays in `note_names`, and links resolve through it
+(`resolveLinks` in `derive.ts`).
+
+### Snapshots and export
+
+`src/store/backup.ts`: the server takes a snapshot (`VACUUM INTO`, one
+consistent read) before the first write of each local day into `backups/`,
+keeping the last 30; `lattice backup` takes one now. Nothing schedules
+anything: slice 4 decides whether a scheduler is wanted (a LaunchAgent running
+`lattice backup` would do), and no LaunchAgent is installed by the build.
+`src/store/export.ts` writes one file per note under its type's folder, marked as
+a copy in its first frontmatter line; `lattice import` refuses an export.
+
+### Reading, search and import
+
+`src/store/read.ts` and `recall.ts` answer the reading tools; every tool answers
+in compact JSON, and a refusal is an error result `{ refused, next }`. A server
+re-checks the store's schema version on every call and reopens the file if it was
+replaced. Search is `src/search` unchanged, reached through `recall` with these
+filters added: `notes` (within given notes) and `excludeArchived`.
 
 `lattice import` builds the store in a work file beside `store.db`, verifies it
 (`src/store/verify.ts`: text joined back equals each file's body, each note's
@@ -238,25 +282,42 @@ question. It reads two sources and writes to neither:
 - Lattice 1's library (`<home>/archive/v1`, `docs/` and `lost/`): a note per
   `.md`, `index.md` included, named `v1/` plus its path, type `Lattice 1`, each
   tagged `old` with a stale-after date in the past (which search already demotes
-  by half), stubs also tagged `full-text-lost`, and the two generated title lists
-  at the top archived. Embedding it takes minutes and several GB of memory, which
-  is why it runs here, once, and never inside a session's server.
+  by half), stubs also tagged `full-text-lost`, and the two generated title
+  lists at the top archived. Embedding it takes minutes and several GB of memory,
+  which is why it runs here, once, and never inside a session's server.
 
-Every session carries the tools' descriptions, so their size is watched: the six
-reading tools are 3,933 characters of JSON (about 1,000 tokens by characters over
-four; about 1,500 as Claude Code counts them, measured 2026-11-01 as the extra
-input tokens of loading them). The aim for all 17 is under 3,000, which the
-write tools in slice 3 will have to fit by trimming schemas and descriptions.
+### The tools and their size
+
+Every session carries the tools' descriptions, so their size is watched. The 17
+tools (six reading, eleven writing) and the server's instructions cost **2,888
+input tokens** in Claude Code, measured 2026-11-01 as the difference in input
+tokens between `claude -p` runs with and without the server, with tool search
+off (`ENABLE_TOOL_SEARCH=false`, so every description is loaded): 6,259
+characters of tool JSON, 2.3 characters a token. With Claude Code's default tool
+search the descriptions are deferred and the server costs about 350 tokens until
+a tool is used. The server sends its tool list without the `$schema` and
+`additionalProperties` the SDK would add, takes few parameter descriptions (the
+names carry them), and a test bounds the list at 6,400 characters. When adding a
+tool or a parameter, re-measure the same way and keep the figure under 3,000.
+`by` is on the five content writes (`create_note`, `edit`, `append`, `confirm`,
+`revert`) and `reason` on all eleven; the other writes record the client and the
+folder.
+
+Who made a change: the client from the handshake and the folder from the
+process's working directory; when that is the home folder or the root it falls
+back to `CLAUDE_PROJECT_DIR`, then to the client's first root (`roots/list`),
+and failing all of those the change records only the client and `by`.
 
 Notes change only through `src/store/store.ts`, so every change is in the
 history; `lattice sql` opens the store with `query_only`. Three other writers
 exist, none of them a note: the import creating the store (through `createNote`,
 then copying vectors it already has, which are derived data), the embed phase
 writing vectors, and the server's `recall_log` row for each question
-(bookkeeping that feeds `stats` and never costs an answer). A fourth, outside
-the product, is the tests in `store.test.ts` and `server.test.ts` that open the
-store directly for what the write primitive cannot do yet: marking a section
-checked, planting a vector or an old name, and moving the schema version.
+(bookkeeping that feeds `stats` and never costs an answer). The write path also
+records a passage's embedding failure and gives a note its note-level vector
+after a write, the way `embed` does. A fourth, outside the product, is the tests
+in `store.test.ts` and `server.test.ts` that open the store directly for what the
+tools cannot do: planting a vector or an old name and moving the schema version.
 
 ## Development Notes
 
@@ -282,14 +343,22 @@ truncate between tests, and no order dependence.
 
 The note store has a second seam, because the tools are what agents use:
 `createLatticeServer` (`src/mcp/server.ts`) driven by an in-process MCP client
-over the real protocol, in `src/mcp/server.test.ts`, on a home that `lattice
-import` built (`src/store/testing.ts` has the helpers and the fixtures: a bundle
-in today's shape and a library in Lattice 1's). `src/cli/mcp.test.ts` runs
-`lattice mcp` itself as a process. `src/store/import.test.ts` drives the import
-and the `--store` commands through `runCli`. The write tools do not exist yet, so
-`src/store/store.test.ts` and the few server tests that need a note with a
-history call the store's write primitive directly; that is the exception to
-"never open the database from a test".
+over the real protocol, on a home that `lattice import` built
+(`src/store/testing.ts` has the helpers and the fixtures: a bundle in today's
+shape and a library in Lattice 1's). `src/mcp/server.test.ts` is the reading
+tools, `src/mcp/write.test.ts` the writing tools, their guards and refusals, undo
+and the snapshots. `src/mcp/concurrent.test.ts` starts real `lattice mcp`
+processes on one home and has them write at once (two edits to different
+passages both land; the same quote or the same section version, one is refused;
+four sessions appending twenty findings lose none; two creating one note, one is
+told it exists; an undo is refused after another session changed the section),
+because the guards are decided inside SQLite's write lock and only separate
+processes show they hold. `src/cli/mcp.test.ts` runs `lattice mcp` as a
+process. `src/store/import.test.ts` drives the import and the `--store` commands,
+and `src/cli/store-writes.test.ts` `history`, `revert`, `export` and `backup`,
+through `runCli`. `src/store/store.test.ts` calls the write primitive directly
+for what the tools cannot reach; that and the few places a test plants a row are
+the exceptions to "never open the database from a test".
 
 ### Rules
 

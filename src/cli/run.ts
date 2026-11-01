@@ -8,11 +8,15 @@
  */
 
 import { parseArgs } from "./args.js";
+import { runBackup } from "./commands/backup.js";
 import { runEmbed } from "./commands/embed.js";
+import { runExport } from "./commands/export.js";
+import { runHistory } from "./commands/history.js";
 import { runImport } from "./commands/import.js";
 import { runInit } from "./commands/init.js";
 import { runMcp } from "./commands/mcp.js";
 import { runRels } from "./commands/rels.js";
+import { runRevert } from "./commands/revert.js";
 import { runSearch } from "./commands/search.js";
 import { runSql } from "./commands/sql.js";
 import { runStatus } from "./commands/status.js";
@@ -102,6 +106,34 @@ const COMMANDS: Record<string, CommandSpec> = {
 			"Build the note store from the bundle and Lattice 1's library, and prove nothing was lost",
 		requiredArgs: [],
 		run: runImport,
+	},
+	history: {
+		usage:
+			"lattice history [note] [--change id] [--who text] [--since date] [--limit n]",
+		summary: "List the note store's changes, or show one change in full",
+		requiredArgs: [],
+		run: runHistory,
+	},
+	revert: {
+		usage:
+			"lattice revert <change> [--reason text] [--by name]\n" +
+			"       lattice revert <note> --version n [--reason text] [--by name]",
+		summary: "Undo one change, or put a note back as at an earlier version",
+		requiredArgs: [],
+		run: runRevert,
+	},
+	export: {
+		usage: "lattice export [dir]",
+		summary:
+			"Write the note store out as markdown files (a copy, never read back)",
+		requiredArgs: [],
+		run: runExport,
+	},
+	backup: {
+		usage: "lattice backup",
+		summary: "Take a snapshot of the note store now",
+		requiredArgs: [],
+		run: runBackup,
 	},
 	embed: {
 		usage: "lattice embed [--retry-failed] [--reembed]",

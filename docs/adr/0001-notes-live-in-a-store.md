@@ -1,6 +1,6 @@
 # 1. Notes live in a store, not in files
 
-Status: accepted, 2026-11-01. Slice 2 of 5 builds the store and the import; the cutover is slice 4.
+Status: accepted, 2026-11-01. Slices 2 and 3 of 5 build the store, the import and the tools (reading, writing, history and undo, snapshots, export); the cutover is slice 4.
 
 ## Context
 

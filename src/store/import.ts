@@ -40,6 +40,7 @@ import { NO_TYPE, normalizeDates, parseConcept } from "../sync/okf.js";
 import { scanBundle } from "../sync/scan.js";
 import { workPath } from "../utils/paths.js";
 import { carryKey, resolveLinks, type StoredVector } from "./derive.js";
+import { EXPORT_MARK } from "./export.js";
 import { openStore } from "./open.js";
 import { splitSections } from "./sections.js";
 import { createNote, type NoteFields } from "./store.js";
@@ -252,6 +253,15 @@ export async function importNotes(input: ImportInput): Promise<ImportReport> {
 	return report;
 }
 
+/** An export is a copy of the store; reading it back would make two sources of truth. */
+function refuseExport(raw: string, origin: string): void {
+	if (raw.startsWith(`---\n${EXPORT_MARK}\n`)) {
+		throw new Error(
+			`${origin} is an export of the note store, a copy that Lattice never reads back. Import the original files, not an export.`,
+		);
+	}
+}
+
 function removeStore(path: string): void {
 	for (const suffix of ["", "-wal", "-shm"]) {
 		rmSync(`${path}${suffix}`, { force: true });
@@ -262,6 +272,7 @@ function removeStore(path: string): void {
 function readBundle(root: string): Prepared[] {
 	return scanBundle(root).map((file) => {
 		const raw = readFileSync(file.absolutePath, "utf8");
+		refuseExport(raw, file.path);
 		const concept = parseConcept(raw);
 		const { sources: _sources, ...extra } = concept.rest;
 		return {
@@ -297,6 +308,7 @@ function readLibrary(root: string): Prepared[] {
 	] as const) {
 		for (const path of walk(join(root, folder), "").sort()) {
 			const raw = readFileSync(join(root, folder, ...path.split("/")), "utf8");
+			refuseExport(raw, `${folder}/${path}`);
 			out.push(prepareOld(raw, path, lost, `${folder}/${path}`));
 		}
 	}

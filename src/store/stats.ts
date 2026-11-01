@@ -10,6 +10,7 @@ import {
 	sameSpace,
 	type VectorSpace,
 } from "../embed/state.js";
+import { lastBackup } from "./backup.js";
 
 export interface SearchHealth {
 	/** True when search can run fully: a model, and a vector for every passage. */
@@ -109,7 +110,7 @@ export interface Stats {
 	wanted: Array<{ note: string; wanted_by: number }>;
 	/** How the store is being asked: counted from the record of questions. */
 	questions: { last_7_days: number; projects: number; last: string | null };
-	/** Until daily backups exist this is null. */
+	/** When the newest snapshot was made; null when there is none. */
 	last_backup: string | null;
 }
 
@@ -117,6 +118,7 @@ export function collectStats(
 	db: Database,
 	configured: VectorSpace | undefined,
 	configuredProblem: string | undefined,
+	backups: string | undefined,
 	now: Date = new Date(),
 ): Stats {
 	const one = <Row>(sql: string, ...values: (string | number)[]): Row | null =>
@@ -210,6 +212,6 @@ export function collectStats(
 				)?.n ?? 0,
 			last: lastQuestion?.at ?? null,
 		},
-		last_backup: null,
+		last_backup: backups === undefined ? null : lastBackup(backups),
 	};
 }

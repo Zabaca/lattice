@@ -5,6 +5,7 @@
  * - docs/        Markdown documentation
  * - lattice.db   SQLite index (concepts, chunks, links, embeddings)
  * - store.db     The note store (notes, sections, changes, and the same index tables)
+ * - backups/     Snapshots of store.db: one a day, the last 30
  * - archive/     What `lattice import` may be asked to read; nothing watches it
  * - models/      Cached embedding model weights (`LATTICE_MODEL_DIR` moves it)
  * - .env         Reserved for local configuration; nothing reads it yet
@@ -25,6 +26,8 @@ export interface LatticePaths {
 	database: string;
 	/** The note store: the notes themselves, their changes, and an index derived from them. */
 	store: string;
+	/** Snapshots of the note store: one a day, the last 30. */
+	backups: string;
 	/** Folders of notes kept outside the bundle, such as `archive/v1`. */
 	archive: string;
 	/** Lattice 1's archived library: `docs/` and `lost/` under it. */
@@ -53,6 +56,7 @@ export function resolvePaths(
 		docs: join(home, "docs"),
 		database: join(home, "lattice.db"),
 		store: join(home, "store.db"),
+		backups: join(home, "backups"),
 		archive: join(home, "archive"),
 		library: join(home, "archive", "v1"),
 		env: join(home, ".env"),

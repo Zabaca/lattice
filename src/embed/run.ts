@@ -330,3 +330,63 @@ function countPermanent(db: Database, kind: Kind, space: VectorSpace): number {
 			.get(space.model, space.dim)?.n ?? 0
 	);
 }
+
+/** Record that one passage could not be embedded, the way a run of `embed` does. */
+export function recordChunkFailure(
+	db: Database,
+	chunkId: number,
+	space: VectorSpace,
+	error: unknown,
+): void {
+	recordFailure(db, CHUNKS, chunkId, space, error);
+}
+
+/**
+ * Give one note its note-level vector (made from its title, description and
+ * tags), which a write that changed any of those has just dropped. A failure
+ * is recorded like any other and reported, never thrown.
+ */
+export async function embedConceptVector(
+	db: Database,
+	provider: EmbeddingProvider,
+	conceptId: number,
+): Promise<{ failed: unknown } | undefined> {
+	const space: VectorSpace = { model: provider.model, dim: provider.dim };
+	const row = db
+		.query<{ text: string }, [number]>(
+			`SELECT ${text(CONCEPTS)} AS text FROM concepts t WHERE t.id = ?`,
+		)
+		.get(conceptId);
+	if (row === null || row.text === "") {
+		return undefined;
+	}
+	let vector: Float32Array;
+	try {
+		[vector] = await provider.embed([row.text]);
+	} catch (error) {
+		recordFailure(db, CONCEPTS, conceptId, space, error);
+		return { failed: error };
+	}
+	db.query(
+		`INSERT INTO ${CONCEPTS.embeddings} (${CONCEPTS.key}, model, dim, vector)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(${CONCEPTS.key}, model, dim) DO UPDATE SET
+			vector = excluded.vector, created_at = datetime('now')`,
+	).run(conceptId, space.model, space.dim, toBlob(vector));
+	db.query(
+		`DELETE FROM ${CONCEPTS.failures} WHERE ${CONCEPTS.key} = ? AND model = ? AND dim = ?`,
+	).run(conceptId, space.model, space.dim);
+	return undefined;
+}
+
+/** The text a passage is embedded from, exactly as `embedPending` builds it. */
+export function passageText(
+	headingPath: string | null,
+	content: string,
+): string {
+	const joined =
+		headingPath === null || headingPath === ""
+			? content
+			: `${headingPath}\n\n${content}`;
+	return joined.replace(/^[ \t\n\r]+|[ \t\n\r]+$/g, "");
+}

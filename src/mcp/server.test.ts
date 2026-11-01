@@ -37,31 +37,68 @@ async function session(
 }
 
 describe("the tools", () => {
-	test("the server offers the six reading tools, each described, each read-only", async () => {
+	test("the server offers the six reading tools, each read-only, and the eleven writing tools, none", async () => {
 		const home = await storeHome();
 		const { client } = await session(home);
 
 		const { tools } = await client.listTools();
 
-		expect(tools.map((tool) => tool.name).sort()).toEqual([
+		const reading = [
 			"history",
 			"links",
 			"list_notes",
 			"read_note",
 			"recall",
 			"stats",
-		]);
+		];
+		const writing = [
+			"add_section",
+			"append",
+			"archive_note",
+			"confirm",
+			"create_note",
+			"edit",
+			"move_section",
+			"remove_section",
+			"rename_note",
+			"revert",
+			"set_fields",
+		];
+		expect(tools.map((tool) => tool.name).sort()).toEqual(
+			[...reading, ...writing].sort(),
+		);
 		for (const tool of tools) {
 			expect(tool.description?.length).toBeGreaterThan(20);
-			expect(tool.annotations?.readOnlyHint).toBe(true);
+			expect(tool.annotations?.readOnlyHint === true).toBe(
+				reading.includes(tool.name),
+			);
 		}
 	});
 
-	test("the server tells an agent to ask first", async () => {
+	test("the tool list stays small: 17 tools stay under 3,000 tokens as Claude Code counts them", async () => {
+		const home = await storeHome();
+		const { client } = await session(home);
+
+		const { tools } = await client.listTools();
+
+		// Measured 2026-11-01 with `claude -p`, tool search off, against a run with
+		// no server: the 17 tools and the instructions cost 2,888 input tokens
+		// (6,259 characters of tool JSON; 2.3 characters a token). The bound keeps
+		// the list under the 3,000-token aim, with a little room.
+		const chars = JSON.stringify(tools).length;
+		expect(chars).toBeLessThan(6400);
+		for (const tool of tools) {
+			expect(JSON.stringify(tool)).not.toContain("$schema");
+			expect(JSON.stringify(tool)).not.toContain("additionalProperties");
+		}
+	});
+
+	test("the server tells an agent to ask first and to write back what it learns", async () => {
 		const home = await storeHome();
 		const { client } = await session(home);
 
 		expect(client.getInstructions()).toContain("Ask first");
+		expect(client.getInstructions()).toContain("Write back what you learn");
 	});
 
 	test("with no store the tools refuse and say how to build it", async () => {
@@ -88,7 +125,7 @@ describe("the tools", () => {
 
 		expect(result.isError).toBe(true);
 		expect(result.body).toEqual({
-			refused: "The store is now in layout 7; this server knows layout 1.",
+			refused: "The store is now in layout 7; this server knows layout 2.",
 			next: "Restart your session so it runs the current Lattice.",
 		});
 	});

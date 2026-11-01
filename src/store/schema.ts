@@ -23,7 +23,7 @@ import { SCHEMA_SQL } from "../db/schema.js";
  * the index's as of schema 5; if the index's schema changes, the store's layout
  * changes with it, and `store.test.ts` pins the layout so that shows up there.
  */
-export const STORE_SCHEMA_VERSION = 1;
+export const STORE_SCHEMA_VERSION = 2;
 
 export const STORE_SCHEMA_SQL = `${SCHEMA_SQL}
 
@@ -88,17 +88,22 @@ CREATE TABLE IF NOT EXISTS changes (
 	by_name    TEXT,
 	-- The change this one undid, when it is an undo.
 	undoes     INTEGER REFERENCES changes(id),
+	-- The note's sections in order as they stood before this change (a JSON
+	-- list of section ids), when it added, removed or moved one; NULL when the
+	-- order was not touched. Reading an earlier version and undoing put the
+	-- order back from it, so an order is never inferred.
+	order_before TEXT,
 	UNIQUE (concept_id, version)
 );
 
 CREATE INDEX IF NOT EXISTS idx_changes_at ON changes(at);
 CREATE INDEX IF NOT EXISTS idx_changes_undoes ON changes(undoes);
 
--- What a change did to each section it touched: the text before and after.
--- 'before_prev' and 'after_prev' say where the section stood (the section it
--- followed, '' for the start, NULL when the change did not move it) rather
--- than as a number, because a number would be wrong again the moment another
--- section was added above it.
+-- What a change did to each section it touched: the text before and after, and
+-- the section's version (a change to its text raises it by one; moving or
+-- checking it does not). 'moved' says the change moved the section. 'before_by'
+-- and 'before_at' are who had checked it and when, so an undo of a check puts
+-- them back.
 CREATE TABLE IF NOT EXISTS change_sections (
 	change_id      INTEGER NOT NULL REFERENCES changes(id) ON DELETE CASCADE,
 	sid            TEXT NOT NULL,
@@ -109,10 +114,13 @@ CREATE TABLE IF NOT EXISTS change_sections (
 	after_heading  TEXT,
 	before_depth   INTEGER,
 	after_depth    INTEGER,
-	before_prev    TEXT,
-	after_prev     TEXT,
+	before_version INTEGER,
+	after_version  INTEGER,
 	before_trust   TEXT,
 	after_trust    TEXT,
+	before_by      TEXT,
+	before_at      TEXT,
+	moved          INTEGER NOT NULL DEFAULT 0,
 	PRIMARY KEY (change_id, sid)
 );
 

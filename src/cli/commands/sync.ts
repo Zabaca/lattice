@@ -56,9 +56,9 @@ export async function runSync(context: CommandContext): Promise<CommandOutput> {
 }
 
 /** The index and the configuration name different vector spaces; the message says which and what to do. */
-export class SpaceMismatchError extends Error {}
+class SpaceMismatchError extends Error {}
 
-export interface SyncOutcome {
+interface SyncOutcome {
 	plan: SyncPlan;
 	/** What was done, or null when the plan was a no-op and nothing was. */
 	report: SyncReport | null;
@@ -67,11 +67,10 @@ export interface SyncOutcome {
 
 /**
  * One sync, under the lock: refuse a space mismatch before a single
- * document is read, plan, apply, embed the backlog. `lattice sync` and
- * `lattice research` both run this; only what they say about it differs.
- * A held lock and a mismatch are typed so a caller can map them to an exit.
+ * document is read, plan, apply, embed the backlog. A held lock and a
+ * mismatch are typed so a caller can map them to an exit.
  */
-export async function syncBundle(
+async function syncBundle(
 	paths: LatticePaths,
 	provider: EmbeddingProvider,
 ): Promise<SyncOutcome> {

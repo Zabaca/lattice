@@ -11,13 +11,10 @@ import { parseArgs } from "./args.js";
 import { runEmbed } from "./commands/embed.js";
 import { runInit } from "./commands/init.js";
 import { runRels } from "./commands/rels.js";
-import { runResearch } from "./commands/research.js";
-import { runRun } from "./commands/run.js";
 import { runSearch } from "./commands/search.js";
 import { runSql } from "./commands/sql.js";
 import { runStatus } from "./commands/status.js";
 import { runSync } from "./commands/sync.js";
-import { runWeb } from "./commands/web.js";
 
 export interface CliOptions {
 	/** The argv tail: no executable, no script path. */
@@ -112,29 +109,6 @@ const COMMANDS: Record<string, CommandSpec> = {
 		summary: "Search the index by keyword and by meaning at once",
 		requiredArgs: ["query"],
 		run: runSearch,
-	},
-	run: {
-		usage:
-			"lattice run <question> [--json] [--no-web] [--no-index] [--max-rewrites n]\n" +
-			"       [--tried q]...",
-		summary: "Run a judged search loop: plan, search, judge, rewrite",
-		requiredArgs: ["question"],
-		run: runRun,
-	},
-	research: {
-		usage: "lattice research <topic> [--json] [--max-rewrites n]",
-		summary:
-			"Research a topic: judge the index, research the web, write and link a document",
-		requiredArgs: ["topic"],
-		run: runResearch,
-	},
-	web: {
-		usage:
-			"lattice web <query> [--json] [--limit n] [--type t] [--since date]\n" +
-			"       [--domain d]... [--text]",
-		summary: "Search the web through Exa, for the research skill",
-		requiredArgs: ["query"],
-		run: runWeb,
 	},
 };
 

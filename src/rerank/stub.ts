@@ -15,7 +15,7 @@ import type { RerankCandidate, Reranker, RerankResponse } from "./provider.js";
 
 export const STUB_RERANKER = "stub";
 export const STUB_SCORES_VAR = "LATTICE_RERANK_STUB";
-export const STUB_FAIL_VAR = "LATTICE_RERANK_FAIL";
+const STUB_FAIL_VAR = "LATTICE_RERANK_FAIL";
 
 export class StubReranker implements Reranker {
 	readonly name = STUB_RERANKER;

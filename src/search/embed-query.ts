@@ -33,7 +33,7 @@ export async function embedQuery(
  * The same, over a provider the caller supplies. `provider` is a thunk so
  * that selecting one can fail into the reason like embedding can.
  */
-export async function embedQueryWith(
+async function embedQueryWith(
 	query: string,
 	provider: () => EmbeddingProvider,
 ): Promise<EmbeddedQuery> {

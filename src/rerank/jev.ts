@@ -20,9 +20,9 @@ import {
 	type RerankResponse,
 } from "./provider.js";
 
-export const API_KEY_VAR = "TYPESAFE_API_KEY";
-export const RERANK_MODEL_VAR = "LATTICE_RERANK_MODEL";
-export const DEFAULT_RERANK_MODEL = "jev-latest";
+const API_KEY_VAR = "TYPESAFE_API_KEY";
+const RERANK_MODEL_VAR = "LATTICE_RERANK_MODEL";
+const DEFAULT_RERANK_MODEL = "jev-latest";
 
 /** What "answers the query" means, told to the model in its own terms. */
 const CRITERIA = {

@@ -4,11 +4,10 @@
  * A search must still answer when no model will: a provider that cannot be
  * selected or cannot embed costs the semantic leg, not the command. The reason
  * travels with the result so the caller can say the answer is weaker than
- * usual rather than quietly returning a worse one. `search` and `run` share
- * it so the two embed a question the same way.
+ * usual rather than quietly returning a worse one.
  */
 
-import { type EmbeddingProvider, selectProvider } from "../embed/provider.js";
+import { selectProvider } from "../embed/provider.js";
 import type { VectorSpace } from "../embed/state.js";
 import type { SemanticInput } from "./vector.js";
 
@@ -26,19 +25,9 @@ export async function embedQuery(
 	env: Record<string, string | undefined>,
 	report: (line: string) => void,
 ): Promise<EmbeddedQuery> {
-	return embedQueryWith(query, () => selectProvider(env, report));
-}
-
-/**
- * The same, over a provider the caller supplies. `provider` is a thunk so
- * that selecting one can fail into the reason like embedding can.
- */
-export async function embedQueryWith(
-	query: string,
-	provider: () => EmbeddingProvider,
-): Promise<EmbeddedQuery> {
 	try {
-		const embedder = provider();
+		// Selecting a provider can fail into the reason like embedding can.
+		const embedder = selectProvider(env, report);
 		const space = { model: embedder.model, dim: embedder.dim };
 		// `embedQuery`, not `embed`: an asymmetric model is trained to be told
 		// that this is a question rather than a passage, and a query embedded

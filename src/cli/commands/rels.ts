@@ -78,7 +78,7 @@ export function runRels(context: CommandContext): CommandOutput {
  * and `note/cooling.md` are the same document, and either is a reasonable
  * thing to have copied from somewhere else.
  */
-export function findConcept(
+function findConcept(
 	db: ReturnType<typeof openDatabase>,
 	wanted: string,
 ): ConceptRow | undefined {
@@ -90,14 +90,14 @@ export function findConcept(
 	return row ?? undefined;
 }
 
-export interface Relations {
+interface Relations {
 	outlinks: EdgeRow[];
 	backlinks: EdgeRow[];
 	unresolved: UnresolvedRow[];
 }
 
 /** The three relations of one indexed concept, each in authoring order. */
-export function relationsFor(
+function relationsFor(
 	db: ReturnType<typeof openDatabase>,
 	conceptId: number,
 ): Relations {

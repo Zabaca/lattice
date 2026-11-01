@@ -5,7 +5,7 @@ description: Search the Lattice knowledge base and report what's already indexed
 
 Search the Lattice bundle for the topic given in `args` and report what is
 already known. This skill is read-only: it never writes, edits, or syncs
-documents. For writing new research, use the `research` skill instead.
+documents.
 
 ## Where documents live
 
@@ -60,6 +60,5 @@ Tell the user, with paths:
 - Whether any hit is `stale` (past its `stale_after` date) or has low
   `trust` (`unverified`) — flag it rather than presenting it as settled.
 
-If the search surfaces a real gap and the user wants it filled, say so and
-suggest running the `research` skill — do not write a new document from
+If the search surfaces a real gap, say so; do not write a new document from
 within this skill.

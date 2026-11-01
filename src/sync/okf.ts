@@ -21,7 +21,7 @@ const PROMOTED = [
 
 export type Trust = "unverified" | "machine-confirmed" | "human-reviewed";
 
-export interface OkfConcept {
+interface OkfConcept {
 	/** The markdown body with the frontmatter block removed. */
 	body: string;
 	/** Characters of the original file consumed before the body starts. */
@@ -114,10 +114,9 @@ export function parseConcept(raw: string): OkfConcept {
 
 /**
  * The bundle directory a type's documents live in: `BigQuery Table` files
- * under `bigquery-table/`. One rule, applied both when a document is written
- * and when it is checked, so the two can never disagree.
+ * under `bigquery-table/`.
  */
-export function typeDirectory(type: string): string {
+function typeDirectory(type: string): string {
 	return type
 		.toLowerCase()
 		.replace(/[^a-z0-9]+/g, "-")

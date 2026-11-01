@@ -90,7 +90,7 @@ function findConcept(
 	return row ?? undefined;
 }
 
-export interface Relations {
+interface Relations {
 	outlinks: EdgeRow[];
 	backlinks: EdgeRow[];
 	unresolved: UnresolvedRow[];

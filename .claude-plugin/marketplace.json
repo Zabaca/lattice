@@ -3,7 +3,7 @@
 	"owner": {
 		"name": "Zabaca"
 	},
-	"version": "1.0.0",
+	"version": "1.1.0",
 	"metadata": {
 		"pluginRoot": "./plugins"
 	},
@@ -12,7 +12,7 @@
 			"name": "lattice",
 			"source": "./plugins/lattice",
 			"description": "Skills for working with a Lattice knowledge graph bundle.",
-			"version": "1.0.0"
+			"version": "1.1.0"
 		}
 	]
 }

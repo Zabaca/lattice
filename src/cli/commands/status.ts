@@ -14,12 +14,16 @@ import { conceptProblem, parseConcept } from "../../sync/okf.js";
 import type { BundleFile } from "../../sync/scan.js";
 import { resolvePaths } from "../../utils/paths.js";
 import type { CommandContext, CommandOutput } from "../run.js";
+import { runStoreStatus } from "./store-status.js";
 
 /**
  * Report what the index holds, what a sync would change, and which files
  * Lattice could not read as OKF.
  */
 export function runStatus(context: CommandContext): CommandOutput {
+	if (context.flags.store !== undefined) {
+		return runStoreStatus(context);
+	}
 	const paths = resolvePaths(context.env);
 
 	if (!existsSync(paths.database)) {

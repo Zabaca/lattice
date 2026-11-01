@@ -1,6 +1,6 @@
-import { existsSync } from "node:fs";
-import { openDatabase } from "../../db/open.js";
+import type { Database } from "bun:sqlite";
 import { resolvePaths } from "../../utils/paths.js";
+import { openTarget, targetProblem } from "../database.js";
 import type { CommandContext, CommandOutput } from "../run.js";
 
 /**
@@ -44,15 +44,13 @@ const EDGE_COLUMNS =
 export function runRels(context: CommandContext): CommandOutput {
 	const paths = resolvePaths(context.env);
 
-	if (!existsSync(paths.database)) {
-		return {
-			code: 1,
-			stderr: `No Lattice index at ${paths.database}. Run \`lattice init\` first.`,
-		};
+	const problem = targetProblem(paths, context.flags);
+	if (problem !== undefined) {
+		return { code: 1, stderr: problem };
 	}
 
 	const wanted = context.positionals[0];
-	const db = openDatabase(paths.database);
+	const db = openTarget(paths, context.flags);
 	try {
 		const concept = findConcept(db, wanted);
 		if (concept === undefined) {
@@ -78,10 +76,7 @@ export function runRels(context: CommandContext): CommandOutput {
  * and `note/cooling.md` are the same document, and either is a reasonable
  * thing to have copied from somewhere else.
  */
-function findConcept(
-	db: ReturnType<typeof openDatabase>,
-	wanted: string,
-): ConceptRow | undefined {
+function findConcept(db: Database, wanted: string): ConceptRow | undefined {
 	const row = db
 		.query<ConceptRow, [string, string]>(
 			"SELECT id, path, identifier, title FROM concepts WHERE path = ? OR identifier = ?",
@@ -97,10 +92,7 @@ interface Relations {
 }
 
 /** The three relations of one indexed concept, each in authoring order. */
-function relationsFor(
-	db: ReturnType<typeof openDatabase>,
-	conceptId: number,
-): Relations {
+function relationsFor(db: Database, conceptId: number): Relations {
 	const outlinks = db
 		.query<EdgeRow, [number]>(
 			`SELECT ${EDGE_COLUMNS} FROM links l

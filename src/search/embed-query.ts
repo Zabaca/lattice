@@ -7,7 +7,7 @@
  * usual rather than quietly returning a worse one.
  */
 
-import { selectProvider } from "../embed/provider.js";
+import { type EmbeddingProvider, selectProvider } from "../embed/provider.js";
 import type { VectorSpace } from "../embed/state.js";
 import type { SemanticInput } from "./vector.js";
 
@@ -27,7 +27,22 @@ export async function embedQuery(
 ): Promise<EmbeddedQuery> {
 	try {
 		// Selecting a provider can fail into the reason like embedding can.
-		const embedder = selectProvider(env, report);
+		return await embedWith(selectProvider(env, report), query);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return { reason: `the query could not be embedded: ${message}` };
+	}
+}
+
+/**
+ * The same, with a provider already in hand: a server holds one for its whole
+ * life, so the model is loaded once rather than once per question.
+ */
+export async function embedWith(
+	embedder: EmbeddingProvider,
+	query: string,
+): Promise<EmbeddedQuery> {
+	try {
 		const space = { model: embedder.model, dim: embedder.dim };
 		// `embedQuery`, not `embed`: an asymmetric model is trained to be told
 		// that this is a question rather than a passage, and a query embedded

@@ -46,6 +46,12 @@ interface OkfConcept {
 	problem?: string;
 }
 
+/** What a file whose frontmatter cannot be parsed is reported with, before the reason. */
+export const INVALID_YAML = "frontmatter is not valid YAML";
+
+/** The problem a file with frontmatter but no `type` is reported with. */
+export const NO_TYPE = "frontmatter has no `type`";
+
 /** The opening delimiter, the YAML, and the closing delimiter's line. */
 const FRONTMATTER = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
 
@@ -77,12 +83,15 @@ export function parseConcept(raw: string): OkfConcept {
 
 	let data: Record<string, unknown>;
 	try {
-		data = normalizeDates(matter(raw).data) as Record<string, unknown>;
+		// The empty options keep gray-matter from caching by content: after a
+		// parse that threw, its cache hands the same text back as empty
+		// frontmatter, so a second read of a broken file would not be broken.
+		data = normalizeDates(matter(raw, {}).data) as Record<string, unknown>;
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		return {
 			...empty,
-			problem: `frontmatter is not valid YAML: ${firstLine(message)}`,
+			problem: `${INVALID_YAML}: ${firstLine(message)}`,
 		};
 	}
 
@@ -108,7 +117,7 @@ export function parseConcept(raw: string): OkfConcept {
 		sources: asSources(data.sources),
 		trust: deriveTrust(data.verified),
 		rest,
-		problem: type === undefined ? "frontmatter has no `type`" : undefined,
+		problem: type === undefined ? NO_TYPE : undefined,
 	};
 }
 
@@ -222,7 +231,7 @@ function asSources(value: unknown): Array<string | Record<string, unknown>> {
  * js-yaml turns bare timestamps into Date objects. Frontmatter is stored and
  * compared as the author wrote it, so they go back to ISO strings.
  */
-function normalizeDates(value: unknown): unknown {
+export function normalizeDates(value: unknown): unknown {
 	if (value instanceof Date) {
 		return value.toISOString().replace(".000Z", "Z");
 	}

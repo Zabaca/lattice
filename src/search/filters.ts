@@ -15,6 +15,10 @@ export interface SearchFilters {
 	trust?: string;
 	/** Include concepts whose status is `deprecated`, which are otherwise left out. */
 	includeDeprecated?: boolean;
+	/** Only these notes, by name. */
+	notes?: string[];
+	/** Leave out archived notes. Only a store has them; an index has no such column. */
+	excludeArchived?: boolean;
 }
 
 /**
@@ -52,6 +56,15 @@ export function conceptFilters(
 			`EXISTS (SELECT 1 FROM tags t WHERE t.concept_id = ${alias}.id AND t.tag = ?)`,
 		);
 		values.push(filters.tag);
+	}
+	if (filters.notes !== undefined) {
+		clauses.push(
+			`${alias}.identifier IN (${filters.notes.map(() => "?").join(", ")})`,
+		);
+		values.push(...filters.notes);
+	}
+	if (filters.excludeArchived === true) {
+		clauses.push(`${alias}.archived = 0`);
 	}
 	// A deprecated concept is retired, not deleted: it stays out of the way
 	// unless it is the thing being asked for.

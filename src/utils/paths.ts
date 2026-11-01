@@ -4,6 +4,8 @@
  * All Lattice data lives under a single home directory:
  * - docs/        Markdown documentation
  * - lattice.db   SQLite index (concepts, chunks, links, embeddings)
+ * - store.db     The note store (notes, sections, changes, and the same index tables)
+ * - archive/     What `lattice import` may be asked to read; nothing watches it
  * - models/      Cached embedding model weights (`LATTICE_MODEL_DIR` moves it)
  * - .env         Reserved for local configuration; nothing reads it yet
  *
@@ -21,6 +23,12 @@ export interface LatticePaths {
 	docs: string;
 	/** The SQLite index. */
 	database: string;
+	/** The note store: the notes themselves, their changes, and an index derived from them. */
+	store: string;
+	/** Folders of notes kept outside the bundle, such as `archive/v1`. */
+	archive: string;
+	/** Lattice 1's archived library: `docs/` and `lost/` under it. */
+	library: string;
 	/** The local configuration file. */
 	env: string;
 	/** Cached embedding model weights, one directory per hub repository. */
@@ -44,10 +52,21 @@ export function resolvePaths(
 		home,
 		docs: join(home, "docs"),
 		database: join(home, "lattice.db"),
+		store: join(home, "store.db"),
+		archive: join(home, "archive"),
+		library: join(home, "archive", "v1"),
 		env: join(home, ".env"),
 		models: env.LATTICE_MODEL_DIR?.trim() || join(home, "models"),
 		syncLock: join(home, ".sync.lock"),
 	};
+}
+
+/**
+ * A path beside `path` that only this process uses, for a file built before it
+ * is moved into place. Two imports running at once never share one.
+ */
+export function workPath(path: string, label: string): string {
+	return `${path}.${label}-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function resolveHome(env: Record<string, string | undefined>): string {

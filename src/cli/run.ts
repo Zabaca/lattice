@@ -9,7 +9,9 @@
 
 import { parseArgs } from "./args.js";
 import { runEmbed } from "./commands/embed.js";
+import { runImport } from "./commands/import.js";
 import { runInit } from "./commands/init.js";
+import { runMcp } from "./commands/mcp.js";
 import { runRels } from "./commands/rels.js";
 import { runSearch } from "./commands/search.js";
 import { runSql } from "./commands/sql.js";
@@ -28,6 +30,11 @@ export interface CliOptions {
 	 * so a test sees it without having to watch for it.
 	 */
 	onProgress?: (line: string) => void;
+	/**
+	 * The folder the command was run from. Only `mcp` uses it, to record which
+	 * project a question came from; the seam does not read it from the process.
+	 */
+	cwd?: string;
 }
 
 export interface CliResult {
@@ -42,6 +49,7 @@ export interface CommandContext {
 	positionals: string[];
 	flags: Record<string, string | true>;
 	env: Record<string, string | undefined>;
+	cwd?: string;
 	/** Say what is happening, now, to whoever is waiting. */
 	report(line: string): void;
 }
@@ -79,6 +87,21 @@ const COMMANDS: Record<string, CommandSpec> = {
 		summary: "Index the OKF bundle",
 		requiredArgs: [],
 		run: runSync,
+	},
+	mcp: {
+		usage: "lattice mcp",
+		summary: "Serve the note store's tools to an agent over stdio",
+		requiredArgs: [],
+		run: runMcp,
+	},
+	import: {
+		usage:
+			"lattice import [--docs dir] [--library dir] [--no-docs] [--no-library]\n" +
+			"       [--questions file] [--json]",
+		summary:
+			"Build the note store from the bundle and Lattice 1's library, and prove nothing was lost",
+		requiredArgs: [],
+		run: runImport,
 	},
 	embed: {
 		usage: "lattice embed [--retry-failed] [--reembed]",
@@ -162,6 +185,7 @@ export async function runCli(options: CliOptions): Promise<CliResult> {
 			positionals,
 			flags,
 			env: options.env,
+			cwd: options.cwd,
 			report,
 		});
 		return {

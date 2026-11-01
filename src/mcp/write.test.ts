@@ -1712,6 +1712,56 @@ describe("sections stay where their headings are", () => {
 		expect((await read(call, NAME)).version).toBe(1);
 	});
 
+	test("undoing a section's addition restores a last section that had no final newline, without a false refusal", async () => {
+		const { call } = await fresh();
+		await call("edit", {
+			note: NAME,
+			edits: [{ old: "model itself.\n", new: "model itself.", section: "s3" }],
+		});
+		const open = await call("add_section", { note: NAME, heading: "Open" });
+		await call("add_section", { note: NAME, heading: "More" });
+
+		const undone = await call("revert", { change: Number(open.body.change) });
+
+		expect(undone.isError).toBe(false);
+		const note = await whole(call);
+		expect((note.outline as Array<{ id: string }>).map((s) => s.id)).toEqual([
+			"s1",
+			"s2",
+			"s3",
+			"s5",
+		]);
+		expect(textOf(note)).toContain("model itself.\n## More");
+	});
+
+	test("undoing the removal of a last section puts it back even when the new last section lost its final newline", async () => {
+		const { call } = await fresh();
+		const removed = await call("remove_section", { note: NAME, section: "s3" });
+		await call("edit", {
+			note: NAME,
+			edits: [
+				{
+					old: "answers the question asked.\n\n",
+					new: "answers the question asked.",
+					section: "s2",
+				},
+			],
+		});
+
+		const undone = await call("revert", {
+			change: Number(removed.body.change),
+		});
+
+		expect(undone.isError).toBe(false);
+		const note = await whole(call);
+		expect((note.outline as Array<{ id: string }>).map((s) => s.id)).toEqual([
+			"s1",
+			"s2",
+			"s3",
+		]);
+		expect(textOf(note)).toContain("question asked.\n## Cost");
+	});
+
 	test("an export of a rewritten note has no glued line", async () => {
 		const home = await storeHome();
 		const { call } = await session(home);

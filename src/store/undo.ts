@@ -21,6 +21,7 @@ import type { NoteFields, Trust } from "./store.js";
 import {
 	type Build,
 	commit,
+	finished,
 	Planner,
 	refuse,
 	type Snapshot,
@@ -283,12 +284,11 @@ function undoOf(db: Database, row: ChangeRow, snap: Snapshot): Build | Refusal {
 			"The note already reads as it did before that change.",
 		);
 	}
-	return {
-		ops: plan.ops,
+	return finished(plan, {
 		fields: back.fields,
 		rename: back.rename,
 		undoes: row.id,
-	};
+	});
 }
 
 /** The section before `sid` in `order` that is in the plan now, or null for the start. */
@@ -502,7 +502,10 @@ async function revertNote(
 					skip: `${snap.name} already reads as it did at version ${version}.`,
 				};
 			}
-			return { ops: plan.ops, fields: noFields ? undefined : fields, rename };
+			return finished(plan, {
+				fields: noFields ? undefined : fields,
+				rename,
+			});
 		},
 	);
 }

@@ -330,3 +330,50 @@ function countPermanent(db: Database, kind: Kind, space: VectorSpace): number {
 			.get(space.model, space.dim)?.n ?? 0
 	);
 }
+
+/** Record that one passage could not be embedded, the way a run of `embed` does. */
+export function recordChunkFailure(
+	db: Database,
+	chunkId: number,
+	space: VectorSpace,
+	error: unknown,
+): void {
+	recordFailure(db, CHUNKS, chunkId, space, error);
+}
+
+/** Record that a note's own vector could not be made, the way a run of `embed` does. */
+export function recordConceptFailure(
+	db: Database,
+	conceptId: number,
+	space: VectorSpace,
+	error: unknown,
+): void {
+	recordFailure(db, CONCEPTS, conceptId, space, error);
+}
+
+/**
+ * The text a note's own vector is made from: its title, description and tags,
+ * exactly as `embedPending` builds it from the stored columns, so a vector made
+ * before a write lands is the one a later `embed` would have made. Empty when
+ * there is nothing to embed.
+ */
+export function conceptText(
+	title: string | null,
+	description: string | null,
+	tags: string[],
+): string {
+	const joined = `${title ?? ""}\n\n${description ?? ""}\n\n${[...tags].sort().join(", ")}`;
+	return joined.replace(/^[ \t\n\r]+|[ \t\n\r]+$/g, "");
+}
+
+/** The text a passage is embedded from, exactly as `embedPending` builds it. */
+export function passageText(
+	headingPath: string | null,
+	content: string,
+): string {
+	const joined =
+		headingPath === null || headingPath === ""
+			? content
+			: `${headingPath}\n\n${content}`;
+	return joined.replace(/^[ \t\n\r]+|[ \t\n\r]+$/g, "");
+}

@@ -1,6 +1,6 @@
 # 1. Notes live in a store, not in files
 
-Status: accepted, 2026-11-01. Slice 2 of 5 builds the store and the import; the cutover is slice 4.
+Status: accepted, 2026-11-01. Slices 2 and 3 of 5 build the store, the import and the tools (reading, writing, history and undo, snapshots, export); the cutover is slice 4.
 
 ## Context
 
@@ -55,3 +55,18 @@ file in a new schema version, and a build refuses a schema it does not know.
 Notes kept as one text each, changed by quoting (option 02 of the plan): fewer
 ideas for an agent to hold, but one checked mark per note, so every agent write
 unchecks the whole note, and a long note can only be read whole. Rejected.
+
+## Where the build differs from the option
+
+Recorded here so the deviations are not found later by surprise (see CLAUDE.md,
+"The tools and their size"):
+
+- `reason` and `by` are on five of the eleven writing tools, not all, to keep the
+  tool descriptions under 3,000 tokens.
+- `confirm` and a whole-note `revert` must name what the caller read (section
+  versions, and the note's current version), and `remove_section` may. The option
+  asked for guards only on whole-section replaces and on `set_fields`.
+- An export leaves out archived notes, writes a manifest, and will not write into
+  a folder that is not its own or into the live bundle.
+- The export's "this is a copy" line is the first line inside the frontmatter, not
+  above it, so the file still parses as a note's frontmatter would.

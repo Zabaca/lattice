@@ -237,14 +237,54 @@ function chunkContaining(
 }
 
 /**
+ * The note a link's `target_path` names: one that has that path now, or else
+ * one that answered to that name before it was renamed, so a rename keeps
+ * every link that pointed at the old name.
+ */
+const TARGET_OF = `COALESCE(
+	(SELECT c.id FROM concepts c WHERE c.path = links.target_path),
+	(SELECT n.concept_id FROM note_names n
+		WHERE n.name = substr(links.target_path, 1, length(links.target_path) - 3)
+			AND links.target_path LIKE '%.md')
+)`;
+
+/**
  * Point every link at the note its `target_path` names, and at nothing when
  * no such note exists. A link written before its target was is repaired by
  * running this once the target is there.
  */
 export function resolveLinks(db: Database): void {
+	db.query(`UPDATE links SET target_concept_id = ${TARGET_OF}`).run();
+}
+
+/**
+ * The same, for one note's surroundings only, which is all a single write can
+ * change: the links it wrote, and links elsewhere that were waiting for a note
+ * of its name (or one of its old names) to exist.
+ */
+export function resolveLinksAround(db: Database, conceptId: number): void {
 	db.query(
-		`UPDATE links SET target_concept_id = (
-			SELECT c.id FROM concepts c WHERE c.path = links.target_path
-		)`,
-	).run();
+		`UPDATE links SET target_concept_id = ${TARGET_OF} WHERE source_concept_id = ?`,
+	).run(conceptId);
+
+	const names = [
+		...db
+			.query<{ path: string }, [number]>(
+				"SELECT path FROM concepts WHERE id = ?",
+			)
+			.all(conceptId)
+			.map((row) => row.path),
+		...db
+			.query<{ name: string }, [number]>(
+				"SELECT name FROM note_names WHERE concept_id = ?",
+			)
+			.all(conceptId)
+			.map((row) => `${row.name}.md`),
+	];
+	const waiting = db.query(
+		"UPDATE links SET target_concept_id = ? WHERE target_concept_id IS NULL AND target_path = ?",
+	);
+	for (const name of names) {
+		waiting.run(conceptId, name);
+	}
 }

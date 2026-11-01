@@ -388,6 +388,7 @@ describe("the store's file", () => {
 			"project",
 			"by_name",
 			"undoes",
+			"order_before",
 		]);
 		expect(columns("change_sections")).toEqual([
 			"change_id",
@@ -399,10 +400,13 @@ describe("the store's file", () => {
 			"after_heading",
 			"before_depth",
 			"after_depth",
-			"before_prev",
-			"after_prev",
+			"before_version",
+			"after_version",
 			"before_trust",
 			"after_trust",
+			"before_by",
+			"before_at",
+			"moved",
 		]);
 	});
 
@@ -424,11 +428,11 @@ describe("the store's file", () => {
 	test("a store in another layout version is refused with what to do", () => {
 		const path = join(freshHome(), "store.db");
 		const db = openStore(path, { create: true });
-		db.query("UPDATE meta SET value = '2' WHERE key = 'schema_version'").run();
+		db.query("UPDATE meta SET value = '1' WHERE key = 'schema_version'").run();
 		db.close();
 
 		expect(() => openStore(path)).toThrow(
-			/note store's schema version 2 does not match the expected version 1.*restart the session/,
+			/note store's schema version 1 does not match the expected version 2.*restart the session/,
 		);
 	});
 });

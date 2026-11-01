@@ -125,7 +125,7 @@ export function parseConcept(raw: string): OkfConcept {
  * The bundle directory a type's documents live in: `BigQuery Table` files
  * under `bigquery-table/`.
  */
-function typeDirectory(type: string): string {
+export function typeDirectory(type: string): string {
 	return type
 		.toLowerCase()
 		.replace(/[^a-z0-9]+/g, "-")

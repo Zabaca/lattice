@@ -34,14 +34,8 @@ test("lattice mcp serves the tools over stdio and records the folder it was star
 		});
 		const stats = await client.callTool({ name: "stats", arguments: {} });
 
-		expect(tools.tools.map((tool) => tool.name).sort()).toEqual([
-			"history",
-			"links",
-			"list_notes",
-			"read_note",
-			"recall",
-			"stats",
-		]);
+		expect(tools.tools).toHaveLength(17);
+		expect(tools.tools.map((tool) => tool.name)).toContain("edit");
 		const answer = JSON.parse(
 			(asked.content as Array<{ text: string }>)[0].text,
 		);

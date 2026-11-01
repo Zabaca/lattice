@@ -21,7 +21,7 @@ export function runStoreStatus(context: CommandContext): CommandOutput {
 		} catch (error) {
 			problem = error instanceof Error ? error.message : String(error);
 		}
-		const stats = collectStats(db, configured, problem);
+		const stats = collectStats(db, configured, problem, paths.backups);
 
 		if (context.flags.json !== undefined) {
 			return { code: 0, stdout: `${JSON.stringify(stats, null, 2)}\n` };
@@ -41,6 +41,7 @@ export function runStoreStatus(context: CommandContext): CommandOutput {
 					: `; last ${stats.changes.last.kind} of ${stats.changes.last.note} at ${stats.changes.last.at}`
 			}`,
 			`Questions: ${stats.questions.last_7_days} in the last 7 days from ${stats.questions.projects} projects`,
+			`Backup:    ${stats.last_backup === null ? "none yet (lattice backup takes one)" : `last at ${stats.last_backup}`}`,
 			"",
 			stats.search.model === null
 				? "Model:    unavailable"

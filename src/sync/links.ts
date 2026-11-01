@@ -148,7 +148,7 @@ function toLink(
 }
 
 /** Anything addressed by scheme or authority belongs to someone else. */
-function isExternal(raw: string): boolean {
+export function isExternal(raw: string): boolean {
 	return raw.startsWith("//") || /^[a-z][a-z0-9+.-]*:/i.test(raw);
 }
 

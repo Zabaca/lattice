@@ -95,7 +95,7 @@ export interface OutlineEntry {
 }
 
 /** A section as read, in whichever version was asked for. */
-interface SectionState {
+export interface SectionState {
 	sid: string;
 	depth: number;
 	heading: string | null;
@@ -104,7 +104,8 @@ interface SectionState {
 	trust: Trust;
 }
 
-interface NoteState {
+export interface NoteState {
+	name: string;
 	type: string;
 	title: string | null;
 	description: string | null;
@@ -276,10 +277,12 @@ function isPast(date: string | null, now: number): boolean {
 	return !Number.isNaN(at) && at < now;
 }
 
-function currentState(db: Database, conceptId: number): NoteState {
+/** The note as it stands now. */
+export function currentState(db: Database, conceptId: number): NoteState {
 	const row = db
 		.query<
 			{
+				identifier: string;
 				type: string;
 				title: string | null;
 				description: string | null;
@@ -291,7 +294,7 @@ function currentState(db: Database, conceptId: number): NoteState {
 			},
 			[number]
 		>(
-			`SELECT type, title, description, status, stale_after, sources,
+			`SELECT identifier, type, title, description, status, stale_after, sources,
 				frontmatter, archived FROM concepts WHERE id = ?`,
 		)
 		.get(conceptId);
@@ -299,6 +302,7 @@ function currentState(db: Database, conceptId: number): NoteState {
 		throw new Error(`No note with id ${conceptId}`);
 	}
 	return {
+		name: row.identifier,
 		type: row.type,
 		title: row.title,
 		description: row.description,
@@ -328,16 +332,18 @@ interface ChangedSection {
 	before_text: string | null;
 	before_heading: string | null;
 	before_depth: number | null;
-	before_prev: string | null;
+	before_version: number | null;
 	before_trust: Trust | null;
 }
 
 /**
  * The note as it stood at an earlier version: the present state with every
  * later change taken back, newest first. A change records what each section
- * was before it, so taking it back is putting that back.
+ * was before it (text, heading, depth, version, checked mark) and the order the
+ * sections stood in when it altered that, so taking it back is putting that
+ * back, and the result is exact.
  */
-function rewind(
+export function rewind(
 	db: Database,
 	conceptId: number,
 	now: NoteState,
@@ -351,8 +357,9 @@ function rewind(
 	};
 
 	const changes = db
-		.query<{ id: number; version: number }, [number, number]>(
-			"SELECT id, version FROM changes WHERE concept_id = ? AND version > ? ORDER BY version DESC",
+		.query<{ id: number; order_before: string | null }, [number, number]>(
+			`SELECT id, order_before FROM changes
+			WHERE concept_id = ? AND version > ? ORDER BY version DESC`,
 		)
 		.all(conceptId, target);
 
@@ -360,12 +367,15 @@ function rewind(
 		const sections = db
 			.query<ChangedSection, [number]>(
 				`SELECT sid, op, before_text, before_heading, before_depth,
-					before_prev, before_trust
+					before_version, before_trust
 				FROM change_sections WHERE change_id = ?`,
 			)
 			.all(change.id);
 		for (const entry of sections) {
 			putBack(state.sections, entry);
+		}
+		if (change.order_before !== null) {
+			putInOrder(state.sections, JSON.parse(change.order_before) as string[]);
 		}
 
 		for (const field of db
@@ -381,11 +391,9 @@ function rewind(
 	return state;
 }
 
-/** Undo one section's part of a change. */
+/** Undo one section's part of a change, apart from where it stood. */
 function putBack(sections: SectionState[], entry: ChangedSection): void {
 	const at = sections.findIndex((section) => section.sid === entry.sid);
-	// '' is "first"; NULL is "not moved".
-	const moved = entry.before_prev !== null;
 
 	if (entry.op === "insert") {
 		if (at !== -1) {
@@ -393,44 +401,47 @@ function putBack(sections: SectionState[], entry: ChangedSection): void {
 		}
 		return;
 	}
-
-	let section: SectionState;
 	if (entry.op === "remove") {
-		section = {
+		sections.push({
 			sid: entry.sid,
 			depth: entry.before_depth ?? 0,
 			heading: entry.before_heading,
 			text: entry.before_text ?? "",
-			// The version it had is not kept; what matters here is its text.
-			version: 1,
+			version: entry.before_version ?? 1,
 			trust: entry.before_trust ?? "unverified",
-		};
-	} else if (at === -1) {
+		});
 		return;
-	} else {
-		section = sections[at];
-		sections.splice(at, 1);
-		if (entry.before_text !== null) {
-			section.text = entry.before_text;
-			section.heading = entry.before_heading;
-			section.depth = entry.before_depth ?? section.depth;
-			section.trust = entry.before_trust ?? section.trust;
-			section.version = Math.max(1, section.version - 1);
-		}
+	}
+	if (at === -1) {
+		return;
 	}
 
-	if (moved || entry.op === "remove") {
-		const prev = entry.before_prev === "" ? null : entry.before_prev;
-		const after =
-			prev === null ? 0 : sections.findIndex((s) => s.sid === prev) + 1;
-		sections.splice(after, 0, section);
-	} else {
-		sections.splice(at, 0, section);
+	const section = sections[at];
+	if (entry.before_text !== null) {
+		section.text = entry.before_text;
+		section.heading = entry.before_heading;
+		section.depth = entry.before_depth ?? section.depth;
+		section.version = entry.before_version ?? section.version;
 	}
+	if (entry.before_trust !== null) {
+		section.trust = entry.before_trust;
+	}
+}
+
+/** Put the sections in the order a change recorded, leaving none out. */
+function putInOrder(sections: SectionState[], order: string[]): void {
+	const rank = new Map(order.map((sid, index) => [sid, index]));
+	sections.sort(
+		(a, b) =>
+			(rank.get(a.sid) ?? order.length) - (rank.get(b.sid) ?? order.length),
+	);
 }
 
 function setField(state: NoteState, field: string, value: unknown): void {
 	switch (field) {
+		case "name":
+			state.name = String(value);
+			break;
 		case "type":
 			state.type = String(value);
 			break;
@@ -702,14 +713,25 @@ interface ChangeRow {
 	project: string | null;
 	by_name: string | null;
 	undoes: number | null;
-	undone: number;
 }
 
 const CHANGE_COLUMNS = `ch.id, c.identifier, ch.version, ch.at, ch.kind, ch.reason,
-	ch.client, ch.project, ch.by_name, ch.undoes,
-	EXISTS (SELECT 1 FROM changes u WHERE u.undoes = ch.id) AS undone`;
+	ch.client, ch.project, ch.by_name, ch.undoes`;
 
-function changeLine(row: ChangeRow): ChangeLine {
+/**
+ * Whether a change stands undone: some change undid it, and that one has not
+ * itself been undone (undoing an undo brings the first change back).
+ */
+export function isUndone(db: Database, changeId: number): boolean {
+	return db
+		.query<{ id: number }, [number]>(
+			"SELECT id FROM changes WHERE undoes = ? ORDER BY id",
+		)
+		.all(changeId)
+		.some((undo) => !isUndone(db, undo.id));
+}
+
+function changeLine(db: Database, row: ChangeRow): ChangeLine {
 	return {
 		change: row.id,
 		note: row.identifier,
@@ -722,7 +744,7 @@ function changeLine(row: ChangeRow): ChangeLine {
 		},
 		kind: row.kind,
 		...(row.reason === null ? {} : { reason: row.reason }),
-		...(row.undone === 1 ? { undone: true as const } : {}),
+		...(isUndone(db, row.id) ? { undone: true as const } : {}),
 		...(row.undoes === null ? {} : { undoes: row.undoes }),
 	};
 }
@@ -784,7 +806,7 @@ export function history(
 				after:
 					entry.after === null ? null : (JSON.parse(entry.after) as unknown),
 			}));
-		return { ...changeLine(row), sections, fields };
+		return { ...changeLine(db, row), sections, fields };
 	}
 
 	const clauses: string[] = [];
@@ -823,5 +845,5 @@ export function history(
 			ORDER BY ch.at DESC, ch.id DESC LIMIT ?`,
 		)
 		.all(...values, limit);
-	return { changes: rows.map(changeLine) };
+	return { changes: rows.map((row) => changeLine(db, row)) };
 }

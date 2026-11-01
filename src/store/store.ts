@@ -17,7 +17,8 @@ import { hashContent } from "../sync/scan.js";
 import {
 	carryFrom,
 	refreshDerived,
-	resolveLinks,
+	resolveLinksAround,
+	type StoredVector,
 	type VectorCarry,
 } from "./derive.js";
 import type { SectionText } from "./sections.js";
@@ -55,6 +56,10 @@ export type SectionOp =
 			depth: number;
 			heading: string | null;
 			text: string;
+			/** Give the section this id (an undo bringing back a removed one). */
+			sid?: string;
+			/** The version it starts at; 1 for a new section. */
+			version?: number;
 	  }
 	| {
 			op: "update";
@@ -64,7 +69,15 @@ export type SectionOp =
 			depth?: number;
 	  }
 	| { op: "remove"; sid: string }
-	| { op: "move"; sid: string; after: string | null };
+	| { op: "move"; sid: string; after: string | null }
+	/** Set who has checked a section. The text and its version are untouched. */
+	| {
+			op: "check";
+			sid: string;
+			trust: Trust;
+			by: string | null;
+			at: string | null;
+	  };
 
 export interface ChangeSpec {
 	kind: string;
@@ -76,7 +89,17 @@ export interface ChangeSpec {
 	fields?: Partial<NoteFields> & { archived?: boolean };
 	/** Vectors already computed for text this change introduces. */
 	carry?: VectorCarry;
-	/** Re-point every link afterwards. Off for a bulk load that does it once. */
+	/**
+	 * The note's own vector for the title, description and tags this change
+	 * leaves it with, made before the transaction opened. Without it a change
+	 * to any of the three leaves the note with no vector until `embed` runs.
+	 */
+	conceptVectors?: StoredVector[];
+	/** The note's new name (it keeps answering to the old one). */
+	rename?: string;
+	/** The change this one undoes. */
+	undoes?: number;
+	/** Re-point the links around this note. Off for a bulk load that does it once. */
 	resolve?: boolean;
 }
 
@@ -97,7 +120,7 @@ export interface ChangeResult {
 }
 
 /** A section as held while a change is being worked out. */
-interface Held {
+export interface Held {
 	sid: string;
 	depth: number;
 	heading: string | null;
@@ -119,7 +142,7 @@ interface SectionRow {
 	checked_at: string | null;
 }
 
-interface ConceptRow {
+export interface ConceptRow {
 	id: number;
 	identifier: string;
 	type: string;
@@ -147,7 +170,7 @@ const TRUST_RANK: Record<Trust, number> = {
 export function createNote(
 	db: Database,
 	note: NewNote,
-	change: Omit<ChangeSpec, "sections" | "fields">,
+	change: Omit<ChangeSpec, "sections" | "fields" | "rename" | "undoes">,
 ): ChangeResult {
 	return db.transaction(() => {
 		const at = change.at ?? new Date().toISOString();
@@ -166,7 +189,6 @@ export function createNote(
 		const held: Held[] = [];
 		let next = 1;
 		const sectionChanges: SectionChange[] = [];
-		let previous: string | null = null;
 		for (const section of note.sections) {
 			const sid = `s${next++}`;
 			held.push({
@@ -185,10 +207,9 @@ export function createNote(
 				afterText: section.text,
 				afterHeading: section.heading,
 				afterDepth: section.depth,
-				afterPrev: previous,
+				afterVersion: 1,
 				afterTrust: "unverified",
 			});
-			previous = sid;
 		}
 
 		const empty: NoteFields = {
@@ -204,20 +225,200 @@ export function createNote(
 		return record(db, {
 			conceptId: row.id,
 			name: note.name,
+			oldName: null,
 			version: 1,
 			at,
 			change,
 			held,
 			nextSection: next,
 			sectionChanges,
+			orderBefore: null,
 			before: empty,
 			after: note.fields,
 			archived: note.archived ?? false,
 			beforeArchived: false,
 			carry: change.carry ?? new Map(),
 			resolve: change.resolve ?? true,
+			undoes: null,
 		});
 	})();
+}
+
+/** What a change did to one section, as it is recorded. */
+export interface SectionChange {
+	sid: string;
+	op: "insert" | "update" | "remove" | "move" | "check";
+	beforeText?: string;
+	afterText?: string;
+	beforeHeading?: string | null;
+	afterHeading?: string | null;
+	beforeDepth?: number;
+	afterDepth?: number;
+	beforeVersion?: number;
+	afterVersion?: number;
+	beforeTrust?: Trust;
+	afterTrust?: Trust;
+	beforeBy?: string | null;
+	beforeAt?: string | null;
+	moved?: boolean;
+}
+
+export interface Applied {
+	/** The number the next section would be given. */
+	next: number;
+	changes: SectionChange[];
+	/** The ids the inserts were given, in order. */
+	assigned: string[];
+}
+
+/**
+ * Work out what a list of section operations does to a note's sections: the
+ * sections after them, in `held` (changed in place), what each section was and
+ * became, and the ids new sections were given. A section the operations touch
+ * is unchecked again and its version rises by one, however many operations
+ * touched it; a section only moved or checked keeps its version.
+ *
+ * The write layer calls this to see a change before making it, and
+ * `changeNote` calls it to make it, so the two cannot disagree.
+ */
+export function applySectionOps(
+	held: Held[],
+	next: number,
+	ops: SectionOp[],
+	note = "the note",
+): Applied {
+	const changes: SectionChange[] = [];
+	const assigned: string[] = [];
+	const touched = new Set<string>();
+	const inserted = new Set<string>();
+
+	const indexOf = (sid: string): number => {
+		const at = held.findIndex((section) => section.sid === sid);
+		if (at === -1) {
+			throw new Error(`No section ${sid} in ${note}`);
+		}
+		return at;
+	};
+	const placeAfter = (after: string | null): number =>
+		after === null ? 0 : indexOf(after) + 1;
+
+	for (const op of ops) {
+		if (op.op === "insert") {
+			let sid = op.sid;
+			if (sid === undefined) {
+				sid = `s${next++}`;
+			} else {
+				if (held.some((section) => section.sid === sid)) {
+					throw new Error(`Section ${sid} already exists in ${note}`);
+				}
+				const number = Number(sid.slice(1));
+				if (Number.isInteger(number) && number >= next) {
+					next = number + 1;
+				}
+			}
+			const version = op.version ?? 1;
+			held.splice(placeAfter(op.after), 0, {
+				sid,
+				depth: op.depth,
+				heading: op.heading,
+				text: op.text,
+				version,
+				trust: "unverified",
+				checkedBy: null,
+				checkedAt: null,
+			});
+			changes.push({
+				sid,
+				op: "insert",
+				afterText: op.text,
+				afterHeading: op.heading,
+				afterDepth: op.depth,
+				afterVersion: version,
+				afterTrust: "unverified",
+			});
+			assigned.push(sid);
+			inserted.add(sid);
+			touched.add(sid);
+		} else if (op.op === "update") {
+			const section = held[indexOf(op.sid)];
+			changes.push({
+				sid: op.sid,
+				op: "update",
+				beforeText: section.text,
+				afterText: op.text,
+				beforeHeading: section.heading,
+				afterHeading: op.heading === undefined ? section.heading : op.heading,
+				beforeDepth: section.depth,
+				afterDepth: op.depth ?? section.depth,
+				beforeVersion: section.version,
+				beforeTrust: section.trust,
+				afterTrust: "unverified",
+				beforeBy: section.checkedBy,
+				beforeAt: section.checkedAt,
+			});
+			section.text = op.text;
+			if (op.heading !== undefined) {
+				section.heading = op.heading;
+			}
+			if (op.depth !== undefined) {
+				section.depth = op.depth;
+			}
+			touched.add(op.sid);
+		} else if (op.op === "remove") {
+			const at = indexOf(op.sid);
+			const section = held[at];
+			changes.push({
+				sid: op.sid,
+				op: "remove",
+				beforeText: section.text,
+				beforeHeading: section.heading,
+				beforeDepth: section.depth,
+				beforeVersion: section.version,
+				beforeTrust: section.trust,
+				beforeBy: section.checkedBy,
+				beforeAt: section.checkedAt,
+			});
+			held.splice(at, 1);
+			touched.delete(op.sid);
+		} else if (op.op === "move") {
+			const section = held[indexOf(op.sid)];
+			held.splice(indexOf(op.sid), 1);
+			held.splice(placeAfter(op.after), 0, section);
+			changes.push({ sid: op.sid, op: "move", moved: true });
+		} else {
+			const section = held[indexOf(op.sid)];
+			changes.push({
+				sid: op.sid,
+				op: "check",
+				beforeTrust: section.trust,
+				afterTrust: op.trust,
+				beforeBy: section.checkedBy,
+				beforeAt: section.checkedAt,
+			});
+			section.trust = op.trust;
+			section.checkedBy = op.by;
+			section.checkedAt = op.at;
+		}
+	}
+
+	for (const section of held) {
+		if (!touched.has(section.sid)) {
+			continue;
+		}
+		if (!inserted.has(section.sid)) {
+			section.version += 1;
+		}
+		section.trust = "unverified";
+		section.checkedBy = null;
+		section.checkedAt = null;
+		for (const entry of changes) {
+			if (entry.sid === section.sid && entry.op === "update") {
+				entry.afterVersion = section.version;
+			}
+		}
+	}
+
+	return { next, changes, assigned };
 }
 
 /** Change a note that exists: its sections, its fields, or both. */
@@ -228,141 +429,20 @@ export function changeNote(
 ): ChangeResult {
 	return db.transaction(() => {
 		const at = change.at ?? new Date().toISOString();
-		const concept = db
-			.query<ConceptRow, [number]>(
-				`SELECT id, identifier, type, title, description, status, stale_after,
-					sources, frontmatter, archived, version, next_section
-				FROM concepts WHERE id = ?`,
-			)
-			.get(conceptId);
-		if (concept === null) {
-			throw new Error(`No note with id ${conceptId}`);
-		}
-
-		const held = db
-			.query<SectionRow, [number]>(
-				`SELECT sid, depth, heading, text, version, trust, checked_by, checked_at
-				FROM sections WHERE concept_id = ? ORDER BY position`,
-			)
-			.all(conceptId)
-			.map(
-				(row): Held => ({
-					sid: row.sid,
-					depth: row.depth,
-					heading: row.heading,
-					text: row.text,
-					version: row.version,
-					trust: row.trust,
-					checkedBy: row.checked_by,
-					checkedAt: row.checked_at,
-				}),
-			);
-
+		const concept = loadConcept(db, conceptId);
+		const held = loadHeld(db, conceptId);
 		const before = fieldsOf(db, concept);
-		const sectionChanges: SectionChange[] = [];
-		let next = concept.next_section;
-		const touched = new Set<string>();
+		const orderBefore = held.map((section) => section.sid);
 
-		const indexOf = (sid: string): number => {
-			const at = held.findIndex((section) => section.sid === sid);
-			if (at === -1) {
-				throw new Error(`No section ${sid} in ${concept.identifier}`);
-			}
-			return at;
-		};
-		const prevOf = (sid: string): string | null => {
-			const at = indexOf(sid);
-			return at === 0 ? null : held[at - 1].sid;
-		};
-		const placeAfter = (after: string | null): number =>
-			after === null ? 0 : indexOf(after) + 1;
-
-		for (const op of change.sections ?? []) {
-			if (op.op === "insert") {
-				const sid = `s${next++}`;
-				held.splice(placeAfter(op.after), 0, {
-					sid,
-					depth: op.depth,
-					heading: op.heading,
-					text: op.text,
-					version: 1,
-					trust: "unverified",
-					checkedBy: null,
-					checkedAt: null,
-				});
-				sectionChanges.push({
-					sid,
-					op: "insert",
-					afterText: op.text,
-					afterHeading: op.heading,
-					afterDepth: op.depth,
-					afterPrev: prevOf(sid),
-					afterTrust: "unverified",
-				});
-				touched.add(sid);
-			} else if (op.op === "update") {
-				const section = held[indexOf(op.sid)];
-				sectionChanges.push({
-					sid: op.sid,
-					op: "update",
-					beforeText: section.text,
-					afterText: op.text,
-					beforeHeading: section.heading,
-					afterHeading: op.heading === undefined ? section.heading : op.heading,
-					beforeDepth: section.depth,
-					afterDepth: op.depth ?? section.depth,
-					beforeTrust: section.trust,
-					afterTrust: "unverified",
-				});
-				section.text = op.text;
-				if (op.heading !== undefined) {
-					section.heading = op.heading;
-				}
-				if (op.depth !== undefined) {
-					section.depth = op.depth;
-				}
-				touched.add(op.sid);
-			} else if (op.op === "remove") {
-				const at = indexOf(op.sid);
-				const section = held[at];
-				sectionChanges.push({
-					sid: op.sid,
-					op: "remove",
-					beforeText: section.text,
-					beforeHeading: section.heading,
-					beforeDepth: section.depth,
-					beforePrev: prevOf(op.sid),
-					beforeTrust: section.trust,
-				});
-				held.splice(at, 1);
-				touched.delete(op.sid);
-			} else {
-				const section = held[indexOf(op.sid)];
-				const beforePrev = prevOf(op.sid);
-				held.splice(indexOf(op.sid), 1);
-				held.splice(placeAfter(op.after), 0, section);
-				sectionChanges.push({
-					sid: op.sid,
-					op: "move",
-					beforePrev,
-					afterPrev: prevOf(op.sid),
-				});
-			}
-		}
-
-		for (const section of held) {
-			if (touched.has(section.sid)) {
-				const wasInserted = sectionChanges.some(
-					(entry) => entry.sid === section.sid && entry.op === "insert",
-				);
-				if (!wasInserted) {
-					section.version += 1;
-				}
-				section.trust = "unverified";
-				section.checkedBy = null;
-				section.checkedAt = null;
-			}
-		}
+		const applied = applySectionOps(
+			held,
+			concept.next_section,
+			change.sections ?? [],
+			concept.identifier,
+		);
+		const orderChanged =
+			JSON.stringify(orderBefore) !==
+			JSON.stringify(held.map((section) => section.sid));
 
 		const after: NoteFields = { ...before, ...stripArchived(change.fields) };
 		const carry = carryFrom(db, conceptId);
@@ -372,24 +452,64 @@ export function changeNote(
 
 		return record(db, {
 			conceptId,
-			name: concept.identifier,
+			name: change.rename ?? concept.identifier,
+			oldName: change.rename === undefined ? null : concept.identifier,
 			version: concept.version + 1,
 			at,
 			change,
 			held,
-			nextSection: next,
-			sectionChanges,
+			nextSection: applied.next,
+			sectionChanges: applied.changes,
+			orderBefore: orderChanged ? orderBefore : null,
 			before,
 			after,
 			archived: change.fields?.archived ?? concept.archived === 1,
 			beforeArchived: concept.archived === 1,
 			carry,
-			resolve: change.resolve ?? false,
+			resolve: change.resolve ?? true,
+			undoes: change.undoes ?? null,
 		});
 	})();
 }
 
-function stripArchived(
+/** A note's row, or a failure when it is not there. */
+export function loadConcept(db: Database, conceptId: number): ConceptRow {
+	const concept = db
+		.query<ConceptRow, [number]>(
+			`SELECT id, identifier, type, title, description, status, stale_after,
+				sources, frontmatter, archived, version, next_section
+			FROM concepts WHERE id = ?`,
+		)
+		.get(conceptId);
+	if (concept === null) {
+		throw new Error(`No note with id ${conceptId}`);
+	}
+	return concept;
+}
+
+/** A note's sections as stored, in order. */
+export function loadHeld(db: Database, conceptId: number): Held[] {
+	return db
+		.query<SectionRow, [number]>(
+			`SELECT sid, depth, heading, text, version, trust, checked_by, checked_at
+			FROM sections WHERE concept_id = ? ORDER BY position`,
+		)
+		.all(conceptId)
+		.map(
+			(row): Held => ({
+				sid: row.sid,
+				depth: row.depth,
+				heading: row.heading,
+				text: row.text,
+				version: row.version,
+				trust: row.trust,
+				checkedBy: row.checked_by,
+				checkedAt: row.checked_at,
+			}),
+		);
+}
+
+export function stripArchived(
 	fields: ChangeSpec["fields"],
 ): Partial<NoteFields> | undefined {
 	if (fields === undefined) {
@@ -399,37 +519,96 @@ function stripArchived(
 	return rest;
 }
 
-/** One section's part of a change, as it is recorded. */
-interface SectionChange {
-	sid: string;
-	op: "insert" | "update" | "remove" | "move" | "check";
-	beforeText?: string;
-	afterText?: string;
-	beforeHeading?: string | null;
-	afterHeading?: string | null;
-	beforeDepth?: number;
-	afterDepth?: number;
-	beforePrev?: string | null;
-	afterPrev?: string | null;
-	beforeTrust?: Trust;
-	afterTrust?: Trust;
-}
-
 interface Recording {
 	conceptId: number;
 	name: string;
+	/** The name the note had, when this change renames it. */
+	oldName: string | null;
 	version: number;
 	at: string;
-	change: Omit<ChangeSpec, "sections" | "fields">;
+	change: Omit<ChangeSpec, "sections" | "fields" | "rename" | "undoes">;
 	held: Held[];
 	nextSection: number;
 	sectionChanges: SectionChange[];
+	/** The sections' order before, when this change altered it. */
+	orderBefore: string[] | null;
 	before: NoteFields;
 	after: NoteFields;
 	archived: boolean;
 	beforeArchived: boolean;
 	carry: VectorCarry;
 	resolve: boolean;
+	undoes: number | null;
+}
+
+/** insert outranks remove, then update, then check, then move. */
+const OP_RANK: Record<SectionChange["op"], number> = {
+	insert: 4,
+	remove: 3,
+	update: 2,
+	check: 1,
+	move: 0,
+};
+
+const BEFORE_KEYS = [
+	"beforeText",
+	"beforeHeading",
+	"beforeDepth",
+	"beforeVersion",
+	"beforeTrust",
+	"beforeBy",
+	"beforeAt",
+] as const;
+const AFTER_KEYS = [
+	"afterText",
+	"afterHeading",
+	"afterDepth",
+	"afterVersion",
+	"afterTrust",
+] as const;
+
+/**
+ * A section touched twice in one change is one entry: what it was before the
+ * first touch and what it is after the last. (undefined is "not recorded";
+ * null is a value, for a heading and for who checked it.)
+ */
+function mergeEntries(entries: SectionChange[]): SectionChange[] {
+	const merged = new Map<string, SectionChange>();
+	for (const entry of entries) {
+		const earlier = merged.get(entry.sid);
+		if (earlier === undefined) {
+			merged.set(entry.sid, { ...entry });
+			continue;
+		}
+		if (earlier.op === "insert" && entry.op === "remove") {
+			merged.delete(entry.sid);
+			continue;
+		}
+		const target = earlier as unknown as Record<string, unknown>;
+		const source = entry as unknown as Record<string, unknown>;
+		if (earlier.op !== "insert") {
+			for (const key of BEFORE_KEYS) {
+				if (target[key] === undefined) {
+					target[key] = source[key];
+				}
+			}
+		}
+		for (const key of AFTER_KEYS) {
+			if (source[key] !== undefined) {
+				target[key] = source[key];
+			}
+		}
+		earlier.moved = earlier.moved === true || entry.moved === true;
+		if (OP_RANK[entry.op] > OP_RANK[earlier.op]) {
+			earlier.op = entry.op;
+		}
+		if (earlier.op === "remove") {
+			for (const key of AFTER_KEYS) {
+				target[key] = undefined;
+			}
+		}
+	}
+	return [...merged.values()];
 }
 
 /**
@@ -439,6 +618,7 @@ interface Recording {
 function record(db: Database, run: Recording): ChangeResult {
 	const { conceptId, held, after } = run;
 	const body = held.map((section) => section.text).join("");
+	const directory = directoryOf(`${run.name}.md`);
 
 	db.query("DELETE FROM sections WHERE concept_id = ?").run(conceptId);
 	const insert = db.query(
@@ -470,12 +650,16 @@ function record(db: Database, run: Recording): ChangeResult {
 
 	db.query(
 		`UPDATE concepts SET
+			path = ?, identifier = ?, dir = ?,
 			type = ?, title = ?, description = ?, status = ?, stale_after = ?,
 			sources = ?, frontmatter = ?, archived = ?, version = ?, next_section = ?,
 			trust = ?, content_hash = ?, byte_size = ?, updated_at = ?,
 			indexed_at = datetime('now')
 		WHERE id = ?`,
 	).run(
+		`${run.name}.md`,
+		run.name,
+		directory,
 		after.type,
 		after.title,
 		after.description,
@@ -492,6 +676,14 @@ function record(db: Database, run: Recording): ChangeResult {
 		run.at,
 		conceptId,
 	);
+	if (run.oldName !== null) {
+		// The old name keeps answering; a name the note is taking back stops
+		// being an old one.
+		db.query("DELETE FROM note_names WHERE name = ?").run(run.name);
+		db.query(
+			"INSERT OR REPLACE INTO note_names (name, concept_id) VALUES (?, ?)",
+		).run(run.oldName, conceptId);
+	}
 
 	const fieldChanges = diffFields(run.before, run.after);
 	if (run.archived !== run.beforeArchived) {
@@ -500,6 +692,9 @@ function record(db: Database, run: Recording): ChangeResult {
 			before: run.beforeArchived,
 			after: run.archived,
 		});
+	}
+	if (run.oldName !== null) {
+		fieldChanges.push({ field: "name", before: run.oldName, after: run.name });
 	}
 
 	// What the concept vector is made from: a change to any of the three
@@ -515,15 +710,19 @@ function record(db: Database, run: Recording): ChangeResult {
 		db.query("DELETE FROM concept_embed_failures WHERE concept_id = ?").run(
 			conceptId,
 		);
+		for (const vector of run.change.conceptVectors ?? []) {
+			db.query(
+				"INSERT INTO concept_embeddings (concept_id, model, dim, vector) VALUES (?, ?, ?, ?)",
+			).run(conceptId, vector.model, vector.dim, vector.vector);
+		}
 	}
 
 	const changeId = db
-		.query<
-			{ id: number },
-			[number, number, string, string, string | null, ...(string | null)[]]
-		>(
-			`INSERT INTO changes (concept_id, version, at, kind, reason, client, project, by_name)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+		.query<{ id: number }, (string | number | null)[]>(
+			`INSERT INTO changes (
+				concept_id, version, at, kind, reason, client, project, by_name,
+				undoes, order_before
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
 		)
 		.get(
 			conceptId,
@@ -534,64 +733,21 @@ function record(db: Database, run: Recording): ChangeResult {
 			run.change.who.client ?? null,
 			run.change.who.project ?? null,
 			run.change.who.by ?? null,
+			run.undoes,
+			run.orderBefore === null ? null : JSON.stringify(run.orderBefore),
 		)?.id;
 	if (changeId === undefined) {
 		throw new Error("Failed to record the change");
 	}
 
-	// A section touched twice in one change is one entry: what it was before
-	// the first touch and what it is after the last.
-	const merged: SectionChange[] = [];
-	for (const entry of run.sectionChanges) {
-		const earlier = merged.find((other) => other.sid === entry.sid);
-		if (earlier === undefined) {
-			merged.push({ ...entry });
-		} else if (earlier.op === "insert" && entry.op === "remove") {
-			merged.splice(merged.indexOf(earlier), 1);
-		} else {
-			// What it was comes from the earlier touch, what it is from the later.
-			// (null is a value for a heading and for "first", so only undefined
-			// means "not recorded".)
-			if (earlier.beforeText === undefined) {
-				earlier.beforeText = entry.beforeText;
-				earlier.beforeHeading = entry.beforeHeading;
-				earlier.beforeDepth = entry.beforeDepth;
-				earlier.beforeTrust = entry.beforeTrust;
-			}
-			if (earlier.beforePrev === undefined) {
-				earlier.beforePrev = entry.beforePrev;
-			}
-			if (entry.afterText !== undefined) {
-				earlier.afterText = entry.afterText;
-				earlier.afterHeading = entry.afterHeading;
-				earlier.afterDepth = entry.afterDepth;
-				earlier.afterTrust = entry.afterTrust;
-			}
-			if (entry.afterPrev !== undefined) {
-				earlier.afterPrev = entry.afterPrev;
-			}
-			// insert outranks everything, then remove, then update, then move.
-			const rank = { insert: 3, remove: 2, update: 1, move: 0, check: 0 };
-			if (rank[entry.op] > rank[earlier.op]) {
-				earlier.op = entry.op;
-			}
-			if (earlier.op === "remove") {
-				earlier.afterText = undefined;
-				earlier.afterHeading = undefined;
-				earlier.afterDepth = undefined;
-				earlier.afterTrust = undefined;
-				earlier.afterPrev = undefined;
-			}
-		}
-	}
-
 	const insertSection = db.query(
 		`INSERT INTO change_sections (
 			change_id, sid, op, before_text, after_text, before_heading, after_heading,
-			before_depth, after_depth, before_prev, after_prev, before_trust, after_trust
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			before_depth, after_depth, before_version, after_version,
+			before_trust, after_trust, before_by, before_at, moved
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 	);
-	for (const entry of merged) {
+	for (const entry of mergeEntries(run.sectionChanges)) {
 		insertSection.run(
 			changeId,
 			entry.sid,
@@ -602,10 +758,13 @@ function record(db: Database, run: Recording): ChangeResult {
 			entry.afterHeading ?? null,
 			entry.beforeDepth ?? null,
 			entry.afterDepth ?? null,
-			prevColumn(entry.beforePrev),
-			prevColumn(entry.afterPrev),
+			entry.beforeVersion ?? null,
+			entry.afterVersion ?? null,
 			entry.beforeTrust ?? null,
 			entry.afterTrust ?? null,
+			entry.beforeBy ?? null,
+			entry.beforeAt ?? null,
+			entry.moved === true ? 1 : 0,
 		);
 	}
 	const insertField = db.query(
@@ -624,7 +783,7 @@ function record(db: Database, run: Recording): ChangeResult {
 		db,
 		{
 			conceptId,
-			dir: directoryOf(`${run.name}.md`),
+			dir: directory,
 			sections: held,
 			tags: after.tags,
 			sources: after.sources,
@@ -632,7 +791,7 @@ function record(db: Database, run: Recording): ChangeResult {
 		run.carry,
 	);
 	if (run.resolve) {
-		resolveLinks(db);
+		resolveLinksAround(db, conceptId);
 	}
 
 	return {
@@ -642,14 +801,6 @@ function record(db: Database, run: Recording): ChangeResult {
 		chunks: derived.chunks,
 		carried: derived.carried,
 	};
-}
-
-/**
- * Where a section stood, as stored: the section it followed, an empty string
- * for the start, and NULL when the change did not say.
- */
-function prevColumn(prev: string | null | undefined): string | null {
-	return prev === undefined ? null : prev === null ? "" : prev;
 }
 
 /** Every field whose value differs, with what it was and what it is. */
@@ -698,7 +849,7 @@ function diffFields(
 }
 
 /** The fields a stored note has now. */
-function fieldsOf(db: Database, concept: ConceptRow): NoteFields {
+export function fieldsOf(db: Database, concept: ConceptRow): NoteFields {
 	const tags = db
 		.query<{ tag: string }, [number]>(
 			"SELECT tag FROM tags WHERE concept_id = ? ORDER BY rowid",
@@ -718,7 +869,7 @@ function fieldsOf(db: Database, concept: ConceptRow): NoteFields {
 }
 
 /** A note's directory in its virtual path; empty at the root. */
-function directoryOf(path: string): string {
+export function directoryOf(path: string): string {
 	const dir = posix.dirname(path);
 	return dir === "." ? "" : dir;
 }

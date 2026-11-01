@@ -58,12 +58,16 @@ export function openDatabase(
 		readwrite: true,
 	});
 
+	// The wait comes first: the pragmas below touch the file, and with several
+	// sessions opening one store while another writes, a pragma that finds it
+	// locked must wait rather than fail at once (found by writing from several
+	// processes: opening the store failed with "database is locked").
+	db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
 	// page_size must be set before the first page is written, and before WAL:
 	// on an established database it is silently ignored.
 	db.exec(`PRAGMA page_size = ${PAGE_SIZE}`);
 	db.exec("PRAGMA journal_mode = WAL");
 	db.exec("PRAGMA foreign_keys = ON");
-	db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
 
 	try {
 		applySchema(db, options.schema ?? INDEX_SCHEMA);

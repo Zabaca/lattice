@@ -74,7 +74,7 @@ async function main(): Promise<void> {
 		if (!options.json) console.error(line);
 	};
 
-	// A missing key fails here, before any search or sync has cost time.
+	// A missing key fails here, before any search or import has cost time.
 	const apiKey = options.rerank === "jev" ? resolveApiKey() : undefined;
 
 	await ensureDataset(log);

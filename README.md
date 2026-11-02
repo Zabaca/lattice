@@ -136,7 +136,7 @@ lattice sql "SELECT ..."       # Read-only SQL against the store
 lattice history [note]         # The changes, or --change <id> for one in full
 lattice revert <change>        # Undo one change (or: revert <note> --version n --current m)
 lattice export [dir]           # Write the store out as markdown (a copy, never read back)
-lattice backup [--remote]      # Snapshot the store now; --remote also copies it to another machine
+lattice backup [--remote host:dir]  # Snapshot the store now; copies it to another machine when one is named
 lattice embed                  # Embed what has no vector (--retry-failed, --reembed)
 lattice import                 # Build the store from Lattice 2's files and Lattice 1's library
 ```
@@ -181,8 +181,9 @@ lattice sql "SELECT type, count(*) AS n FROM concepts GROUP BY type"
 ### `lattice backup`
 
 Takes a snapshot of the store into `~/.lattice/backups` (the server also takes
-one before the first write of each day; the last 30 of each kind are kept). With
-`--remote` it copies the snapshot to another machine as well; see below.
+one before the first write of each day; the last 30 of each kind are kept). When
+`LATTICE_BACKUP_REMOTE` is set, or `--remote user@host:folder` is given, it
+copies the snapshot to another machine as well; see below.
 
 </details>
 
@@ -238,7 +239,7 @@ the machine is off or ssh is not set up, never affects a write: `stats` and
 `lattice status` show the last good copy and the last error, and a later write
 tries again after 15 minutes. The other machine keeps the newest 30 and holds
 only whole snapshots, each a SQLite file you can open as it is.
-`lattice backup --remote` copies a fresh snapshot on demand. Nothing is
+`lattice backup` copies a fresh snapshot on demand. Nothing is
 scheduled: no LaunchAgent, no cron.
 
 <details>

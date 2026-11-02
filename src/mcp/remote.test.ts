@@ -262,7 +262,7 @@ describe("the daily copy off the Mac", () => {
 	});
 });
 
-describe("lattice backup --remote", () => {
+describe("lattice backup and the copy off the Mac", () => {
 	test("takes a snapshot and copies it to the place named", async () => {
 		const away = remote();
 		const home = await storeHome();
@@ -328,13 +328,29 @@ describe("lattice backup --remote", () => {
 		expect(existsSync(join(home, "backups"))).toBe(false);
 	});
 
-	test("without --remote it only takes the snapshot, even when a place is set", async () => {
+	test("a plain backup copies too when a place is set, as the server does", async () => {
 		const away = remote();
 		const home = await storeHome();
 
 		const result = await cli(home, ["backup"], away.env);
 
 		expect(result.code).toBe(0);
+		expect(result.stdout).toContain(
+			`Copied to uptown@ryzen-9:${away.dir}/store-`,
+		);
+		expect(away.calls()).toBe(1);
+	});
+
+	test("a plain backup with no place set only takes the snapshot", async () => {
+		const away = remote();
+		const home = await storeHome();
+
+		const result = await cli(home, ["backup"], {
+			LATTICE_SSH: away.env.LATTICE_SSH,
+		});
+
+		expect(result.code).toBe(0);
+		expect(result.stdout).not.toContain("Copied");
 		expect(away.calls()).toBe(0);
 	});
 

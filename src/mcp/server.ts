@@ -158,7 +158,7 @@ export function createLatticeServer(options: ServerOptions): LatticeServer {
 			const message = error instanceof Error ? error.message : String(error);
 			return refusal({
 				refused: `Lattice failed: ${message}`,
-				next: "Try again; if it keeps failing, run `lattice status --store` in a terminal.",
+				next: "Try again; if it keeps failing, run `lattice status` in a terminal.",
 			});
 		}
 	};

@@ -32,7 +32,7 @@ lattice sql      # Read-only SQL queries
 lattice history  # The store's changes, or one change in full
 lattice revert   # Undo one change, or put a note back as at a version
 lattice export   # Write the store out as markdown (a copy, never read back)
-lattice backup   # Take a snapshot of the store now (--remote also copies it to another machine)
+lattice backup   # Take a snapshot of the store now (copied to another machine when one is named)
 lattice embed    # Embed what has no vector (`--retry-failed` retries permanent failures,
                  # `--reembed` moves the store to a changed model)
 lattice import   # Build the store from Lattice 2's markdown files and Lattice 1's library
@@ -289,8 +289,8 @@ The snapshots sit on the same disk as the store, so they guard against a bad day
 and not against losing the machine. `src/store/remote.ts` copies them off it:
 with `LATTICE_BACKUP_REMOTE=user@host:folder` set, the server starts a copy of
 the day's snapshot over ssh in the background after the day's first write, and
-`lattice backup --remote [user@host:folder]` takes a fresh snapshot and copies
-it on demand. The file is streamed to the other side's stdin and renamed into
+`lattice backup` (with the setting, or `--remote user@host:folder`) takes a fresh
+snapshot and copies it on demand. The file is streamed to the other side's stdin and renamed into
 place there, which keeps the newest 30 of each kind, so the other side holds
 only whole snapshots that open as SQLite files. A copy never costs a write: it is
 never awaited, a failure (host down, no ssh, full disk) is written to

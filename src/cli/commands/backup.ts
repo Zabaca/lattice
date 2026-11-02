@@ -15,10 +15,11 @@ import type { CommandContext, CommandOutput } from "../run.js";
  * folder, keeping the last 30. The server takes one itself on the first write
  * of each day; this is for before something risky.
  *
- * `--remote` also copies the new snapshot to another machine over ssh, to the
- * place `LATTICE_BACKUP_REMOTE` names or the one given (`--remote
- * user@host:folder`). The snapshot is kept either way; a copy that fails exits
- * 1 and says why.
+ * When `LATTICE_BACKUP_REMOTE` names a place, or `--remote user@host:folder`
+ * does, the new snapshot is also copied there over ssh, the way the server
+ * copies the day's. The snapshot is kept either way; a copy that fails exits 1
+ * and says why. `--remote` with no place anywhere is an error rather than a
+ * silent local-only snapshot.
  */
 export async function runBackup(
 	context: CommandContext,
@@ -26,18 +27,16 @@ export async function runBackup(
 	const paths = resolvePaths(context.env);
 
 	let target: ReturnType<typeof remoteFrom>;
-	if (context.flags.remote !== undefined) {
-		try {
-			target = remoteFrom(context.env, text(context.flags.remote));
-		} catch (error) {
-			return { code: 1, stderr: (error as Error).message };
-		}
-		if (target === undefined) {
-			return {
-				code: 1,
-				stderr: `No place to copy to: set ${REMOTE_ENV} (user@host:folder), or give it: lattice backup --remote user@host:folder.`,
-			};
-		}
+	try {
+		target = remoteFrom(context.env, text(context.flags.remote));
+	} catch (error) {
+		return { code: 1, stderr: (error as Error).message };
+	}
+	if (target === undefined && context.flags.remote !== undefined) {
+		return {
+			code: 1,
+			stderr: `No place to copy to: set ${REMOTE_ENV} (user@host:folder), or give it: lattice backup --remote user@host:folder.`,
+		};
 	}
 
 	const db = openNoteStore(paths);

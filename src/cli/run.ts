@@ -124,9 +124,9 @@ const COMMANDS: Record<string, CommandSpec> = {
 		run: runExport,
 	},
 	backup: {
-		usage: "lattice backup [--remote [host:folder]]",
+		usage: "lattice backup [--remote user@host:folder]",
 		summary:
-			"Take a snapshot of the note store now; --remote also copies it to another machine",
+			"Take a snapshot of the note store now, and copy it to another machine when LATTICE_BACKUP_REMOTE or --remote names one",
 		requiredArgs: [],
 		run: runBackup,
 	},

@@ -59,7 +59,8 @@ All data is under one home directory, resolved by `resolvePaths` in
 ```
 ~/.lattice/
 ├── store.db       # The notes: the only copy (plus SQLite's own -wal/-shm sidecars)
-├── backups/       # Snapshots of store.db: one a day on the first write (last 30), and those `lattice backup` takes (last 30)
+├── backups/       # Snapshots of store.db: one a day on the first write (last 30), and those `lattice backup` takes (last 30);
+│                  # .remote-copy.json (how the last copy to another machine went) and .remote-copy-<snapshot>.lock (held while one runs)
 ├── export/        # Where `lattice export` writes by default: a copy of the notes, never read back
 ├── archive/       # Notes kept outside the store: v1/ (Lattice 1's library), v2/ (Lattice 2's markdown files); nothing reads them but `lattice import`
 ├── models/        # Cached embedding weights (`LATTICE_MODEL_DIR` moves it)
@@ -153,6 +154,8 @@ Environment:
 | `LATTICE_OFFLINE` / `HF_HUB_OFFLINE` | Never download. A model already cached is used; a missing one is an error naming the directory and the files to place there. |
 | `LATTICE_HF_MIRROR` | Where a download comes from, when not the hub (`HF_ENDPOINT` is honoured as a fallback). |
 | `LATTICE_EMBED_FAIL` | Fault injection for tests: `retryable:<substring>` or `permanent:<substring>` makes the hash provider fail on any text containing the substring. |
+| `LATTICE_BACKUP_REMOTE` | Where to copy each day's snapshot, as `user@host:folder` over ssh. Unset, nothing is copied. A malformed value is reported by `stats` and `status`, and nothing is copied. |
+| `LATTICE_SSH` | The ssh program, if it is not `ssh` on the PATH. |
 | `LATTICE_E2E_MODEL` | Set to run `src/embed/local.e2e.test.ts`, the one test that downloads and runs the real model. It is skipped otherwise. |
 
 ## Search
@@ -166,8 +169,8 @@ why the non-semantic `hash` provider leaves passage ranking exactly as keyword
 search left it. `recall` (`src/store/recall.ts`) adds the store's marks to each
 passage: the section it starts in and whether that section is checked, whether
 the note is old or archived, and how search ran. The `lattice search` command
-prints the engine's own hits, which carry no checked mark (the `trust` in its
-`--json` is the notes table's, always `unverified`).
+prints the engine's own hits, which carry no checked mark (a note has none of
+its own; ask `recall`, or `read_note`, for the sections' marks).
 
 `concept_embeddings` is a tiebreak in passage search and nothing more: the
 nudge is sized against the smallest gap between two distinct fused scores, so
@@ -290,16 +293,23 @@ and not against losing the machine. `src/store/remote.ts` copies them off it:
 with `LATTICE_BACKUP_REMOTE=user@host:folder` set, the server starts a copy of
 the day's snapshot over ssh in the background after the day's first write, and
 `lattice backup` (with the setting, or `--remote user@host:folder`) takes a fresh
-snapshot and copies it on demand. The file is streamed to the other side's stdin and renamed into
-place there, which keeps the newest 30 of each kind, so the other side holds
-only whole snapshots that open as SQLite files. A copy never costs a write: it is
-never awaited, a failure (host down, no ssh, full disk) is written to
-`backups/.remote-copy.json`, and `stats` and `lattice status` report the last
-good copy and the last error. A later write tries again once 15 minutes have
-passed since the last attempt, so a host that is down is asked a few times a day,
-not once a write. `LATTICE_SSH` names another ssh program (the tests use a
-stand-in that runs the remote command locally); ssh runs with `BatchMode`, so it
-fails rather than asks.
+snapshot and copies it on demand. The file is streamed to the other side's
+stdin with its size and SHA-256, into a hidden name of that attempt's own; the
+far side renames it into place only when both match, and removes it on any other
+ending (a stream cut short, a dropped connection), so it holds only whole
+snapshots that open as SQLite files, and keeps the newest 30 of each kind. Several
+sessions' servers share one home, so a copy of a snapshot first creates
+`backups/.remote-copy-<snapshot>.lock` exclusively; a server that finds it held
+(by a live process, younger than a copy may run) waits instead of sending the
+same file again. A copy never costs a write: it is never awaited, a failure
+(host down, no ssh, full disk) is written to `backups/.remote-copy.json`, and
+`stats` and `lattice status` report the last good copy with its age and the last
+error. A later write tries again once 15 minutes have passed since the last
+attempt, so a host that is down is asked a few times a day, not once a write. The
+server's copy is stopped when the server goes away. `LATTICE_SSH` names another
+ssh program (the tests use stand-ins that run the remote command locally, one
+for each way a link fails); ssh runs with `BatchMode`, so it fails rather than
+asks.
 
 `src/store/export.ts` writes one file per note (archived ones are left out)
 under its type's folder, with a first frontmatter line saying it is a copy, and

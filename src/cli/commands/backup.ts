@@ -52,12 +52,7 @@ export async function runBackup(
 	}
 
 	context.report(`Copying to ${describeRemote(target)}.`);
-	const copied = await copySnapshot(
-		paths.backups,
-		made.path,
-		target,
-		context.env,
-	);
+	const copied = await copySnapshot(paths, made.path, target, context.env);
 	if (!copied.ok) {
 		return {
 			code: 1,

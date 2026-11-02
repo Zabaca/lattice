@@ -1,6 +1,6 @@
 import { selectProvider } from "../../embed/provider.js";
 import type { VectorSpace } from "../../embed/state.js";
-import { describeRemote, remoteFrom } from "../../store/remote.js";
+import { remoteSetting } from "../../store/remote.js";
 import { collectStats, type Stats } from "../../store/stats.js";
 import { resolvePaths } from "../../utils/paths.js";
 import { openNoteStore } from "../database.js";
@@ -22,25 +22,13 @@ export function runStatus(context: CommandContext): CommandOutput {
 		} catch (error) {
 			problem = error instanceof Error ? error.message : String(error);
 		}
-		let remote: string | null = null;
-		let remoteProblem: string | undefined;
-		try {
-			const target = remoteFrom(context.env);
-			remote = target === undefined ? null : describeRemote(target);
-		} catch (error) {
-			remoteProblem = error instanceof Error ? error.message : String(error);
-		}
-		const stats = collectStats(
-			db,
+		const setting = remoteSetting(context.env);
+		const stats = collectStats(db, {
 			configured,
-			problem,
-			paths.backups,
-			new Date(),
-			remote,
-		);
-		if (remoteProblem !== undefined) {
-			stats.remote_copy.error = remoteProblem;
-		}
+			configuredProblem: problem,
+			paths,
+			remote: { label: setting.label, problem: setting.problem },
+		});
 
 		if (context.flags.json !== undefined) {
 			return { code: 0, stdout: `${JSON.stringify(stats, null, 2)}\n` };
@@ -83,15 +71,20 @@ export function runStatus(context: CommandContext): CommandOutput {
 	}
 }
 
+/** "3 h" as "3 h ago", and "just now" as it is. */
+function ago(age: string | null): string {
+	return age === "just now" || age === null ? (age ?? "") : `${age} ago`;
+}
+
 /** The copy of the snapshots on another machine, in a line. */
 function offMac(copy: Stats["remote_copy"]): string {
 	if (copy.error !== null) {
-		return `${copy.target ?? "not set up"}: ${copy.error}${copy.last_ok === null ? "" : ` (last copy ${copy.last_ok})`}`;
+		return `${copy.target ?? "not set up"}: ${copy.error}${copy.last_ok === null ? "" : ` (last good copy ${copy.last_ok}, ${ago(copy.last_ok_age)})`}`;
 	}
 	if (copy.target === null) {
 		return "not set up (LATTICE_BACKUP_REMOTE=user@host:folder copies each day's snapshot there)";
 	}
 	return copy.last_ok === null
 		? `${copy.target}, nothing copied yet (the first write of the day sends one)`
-		: `last copy ${copy.last_ok} to ${copy.target}`;
+		: `last copy ${copy.last_ok} (${ago(copy.last_ok_age)}) to ${copy.target}`;
 }

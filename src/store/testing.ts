@@ -12,6 +12,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { runCli } from "../cli/run.js";
 import { createLatticeServer } from "../mcp/server.js";
+import { resolvePaths } from "../utils/paths.js";
 
 /** The deterministic provider every test runs on unless it says otherwise. */
 export const HASH_ENV = { LATTICE_EMBED_PROVIDER: "hash" };
@@ -110,7 +111,7 @@ export const FILE_INDEX = join(
 
 /** Put Lattice 2's file index of `BUNDLE` in the home. */
 export function writeFileIndex(home: string): void {
-	copyFileSync(FILE_INDEX, join(home, "lattice.db"));
+	copyFileSync(FILE_INDEX, resolvePaths({ LATTICE_HOME: home }).fileIndex);
 }
 
 /** Lattice 1's shape: no types, subject folders, an index.md, a stub, a dead link. */

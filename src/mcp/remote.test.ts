@@ -11,8 +11,10 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { localDay } from "../store/backup.js";
+import { dailyName } from "../store/backup.js";
+import { copySnapshot, parseRemote } from "../store/remote.js";
 import { type Connected, cli, connect, storeHome } from "../store/testing.js";
+import { remoteLockPath, resolvePaths } from "../utils/paths.js";
 
 /**
  * The copy of the day's snapshot to another machine. The other machine is a
@@ -34,37 +36,60 @@ interface Remote {
 	env: Record<string, string>;
 	/** How many times ssh was run. */
 	calls(): number;
-	/** Make the next runs fail the way an unreachable host does. */
-	unreachable(): void;
-	/** Make the next runs work again. */
-	reachable(): void;
+	/** How the connection behaves from now on. */
+	behave(mode: Mode): void;
 }
 
-function remote(): Remote {
-	const root = mkdtempSync(join(tmpdir(), "lattice-remote-"));
-	const dir = join(root, "far", "lattice-backups");
-	const log = join(root, "ssh.log");
-	const script = join(root, "ssh");
-	const works = [
-		"#!/bin/sh",
-		`echo "$@" >> '${log}'`,
-		"for last; do :; done",
-		'exec sh -c "$last"',
-		"",
-	].join("\n");
-	const refuses = [
-		"#!/bin/sh",
-		`echo "$@" >> '${log}'`,
+type Mode =
+	| "works"
+	/** A host that refuses the connection. */
+	| "unreachable"
+	/** A link that drops after 4,096 bytes and says so (ssh exits 255). */
+	| "drops"
+	/** The same, but ssh passes on the far side's own exit status. */
+	| "ends-early"
+	/** One byte of the stream changed on the way, the length the same. */
+	| "corrupts"
+	/** Takes a second to connect, then works. */
+	| "slow"
+	/** Never answers. */
+	| "hangs";
+
+const SCRIPTS: Record<Mode, string[]> = {
+	works: ["for last; do :; done", 'exec sh -c "$last"'],
+	unreachable: [
 		"cat > /dev/null",
 		'echo "ssh: connect to host ryzen-9 port 22: Connection refused" >&2',
 		"exit 255",
-		"",
-	].join("\n");
-	const install = (text: string): void => {
-		writeFileSync(script, text);
+	],
+	drops: [
+		"for last; do :; done",
+		'head -c 4096 | sh -c "$last"',
+		'echo "Connection to ryzen-9 closed by remote host." >&2',
+		"exit 255",
+	],
+	"ends-early": ["for last; do :; done", 'head -c 4096 | sh -c "$last"'],
+	corrupts: [
+		"for last; do :; done",
+		`python3 -c "import sys;d=bytearray(sys.stdin.buffer.read());d[100]^=1;sys.stdout.buffer.write(d)" | sh -c "$last"`,
+	],
+	slow: ["for last; do :; done", "sleep 1", 'exec sh -c "$last"'],
+	hangs: ["sleep 4"],
+};
+
+function remote(folder?: string): Remote {
+	const root = mkdtempSync(join(tmpdir(), "lattice-remote-"));
+	const dir = folder ?? join(root, "far", "lattice-backups");
+	const log = join(root, "ssh.log");
+	const script = join(root, "ssh");
+	const behave = (mode: Mode): void => {
+		writeFileSync(
+			script,
+			["#!/bin/sh", `echo called >> '${log}'`, ...SCRIPTS[mode], ""].join("\n"),
+		);
 		chmodSync(script, 0o755);
 	};
-	install(works);
+	behave("works");
 	return {
 		dir,
 		env: {
@@ -75,8 +100,7 @@ function remote(): Remote {
 			existsSync(log)
 				? readFileSync(log, "utf8").split("\n").filter(Boolean).length
 				: 0,
-		unreachable: () => install(refuses),
-		reachable: () => install(works),
+		behave,
 	};
 }
 
@@ -100,7 +124,7 @@ async function eventually(check: () => boolean | Promise<boolean>) {
 	}
 }
 
-const today = `store-${localDay(new Date())}.db`;
+const today = dailyName();
 
 describe("the daily copy off the Mac", () => {
 	test("the first write of the day sends the day's snapshot, whole, and stats says when it arrived", async () => {
@@ -149,7 +173,7 @@ describe("the daily copy off the Mac", () => {
 
 	test("a host that is down costs the write nothing, is reported, and is not asked again at once", async () => {
 		const away = remote();
-		away.unreachable();
+		away.behave("unreachable");
 		const { call } = await session(await storeHome(), away.env);
 
 		const written = await call("append", {
@@ -171,17 +195,17 @@ describe("the daily copy off the Mac", () => {
 
 	test("after a pause it tries again, and the copy then arrives", async () => {
 		const away = remote();
-		away.unreachable();
+		away.behave("unreachable");
 		const home = await storeHome();
 		const { call } = await session(home, away.env);
 		await call("append", { note: "research/exa-limits", text: "One." });
 		await eventually(
 			async () => (await call("stats")).body.remote_copy.error !== null,
 		);
-		away.reachable();
+		away.behave("works");
 
 		// A quarter hour on, as the marker would show.
-		const marker = join(home, "backups", ".remote-copy.json");
+		const marker = resolvePaths({ LATTICE_HOME: home }).remoteCopy;
 		const record = JSON.parse(readFileSync(marker, "utf8"));
 		record.attempted_at = new Date(Date.now() - 16 * 60_000).toISOString();
 		writeFileSync(marker, JSON.stringify(record));
@@ -237,6 +261,7 @@ describe("the daily copy off the Mac", () => {
 		expect((await call("stats")).body.remote_copy).toEqual({
 			target: null,
 			last_ok: null,
+			last_ok_age: null,
 			last_attempt: null,
 			error: null,
 		});
@@ -301,7 +326,7 @@ describe("lattice backup and the copy off the Mac", () => {
 
 	test("keeps the snapshot and exits 1 with the reason when the copy fails", async () => {
 		const away = remote();
-		away.unreachable();
+		away.behave("unreachable");
 		const home = await storeHome();
 
 		const result = await cli(home, ["backup", "--remote"], away.env);
@@ -367,5 +392,233 @@ describe("lattice backup and the copy off the Mac", () => {
 		expect(result.code).toBe(1);
 		expect(result.stderr).toContain("a host ssh would not take");
 		expect(away.calls()).toBe(0);
+	});
+});
+
+/** What is on the far side: whole snapshots and anything half-sent. */
+function farFiles(dir: string): string[] {
+	return existsSync(dir) ? readdirSync(dir) : [];
+}
+
+describe("a copy that does not arrive whole leaves nothing on the far side", () => {
+	for (const mode of ["drops", "ends-early", "corrupts"] as const) {
+		test(`when the link ${mode === "drops" ? "drops after 4,096 bytes" : mode === "ends-early" ? "ends early and ssh reports the far side's status" : "changes a byte"}`, async () => {
+			const away = remote();
+			away.behave(mode);
+			const home = await storeHome();
+
+			const result = await cli(home, ["backup"], away.env);
+
+			expect(result.code).toBe(1);
+			expect(result.stdout).toContain("Snapshot written:");
+			expect(result.stderr).toContain("copying it to");
+			if (mode === "ends-early") {
+				expect(result.stderr).toMatch(/received 4096 of \d+ bytes/);
+			}
+			if (mode === "corrupts") {
+				expect(result.stderr).toContain("checksum differs");
+			}
+			expect(farFiles(away.dir)).toEqual([]);
+		});
+	}
+
+	test("and the next copy, over a good link, lands whole beside no leftovers", async () => {
+		const away = remote();
+		away.behave("drops");
+		const home = await storeHome();
+		await cli(home, ["backup"], away.env);
+
+		away.behave("works");
+		const again = await cli(home, ["backup"], away.env);
+
+		expect(again.code).toBe(0);
+		const kept = farFiles(away.dir);
+		expect(kept).toHaveLength(1);
+		const [local] = readdirSync(join(home, "backups")).filter((n) =>
+			n.startsWith("store-"),
+		);
+		expect(statSync(join(away.dir, kept[0])).size).toBeGreaterThan(4096);
+		expect(kept[0].startsWith("store-")).toBe(true);
+		expect(local).toBeDefined();
+	});
+});
+
+describe("several sessions copying at once", () => {
+	test("while one server copies the day's snapshot, another sends nothing, and the file that lands is whole", async () => {
+		const away = remote();
+		away.behave("slow");
+		const home = await storeHome();
+		const a = await session(home, away.env);
+		const b = await session(home, away.env);
+
+		await a.call("append", { note: "research/exa-limits", text: "From A." });
+		await b.call("append", { note: "research/exa-limits", text: "From B." });
+		await eventually(
+			async () => (await a.call("stats")).body.remote_copy.last_ok !== null,
+		);
+		await Bun.sleep(300);
+
+		expect(away.calls()).toBe(1);
+		expect(farFiles(away.dir)).toEqual([today]);
+		expect(
+			Buffer.compare(
+				readFileSync(join(away.dir, today)),
+				readFileSync(join(home, "backups", today)),
+			),
+		).toBe(0);
+		expect(existsSync(remoteLockPath(join(home, "backups"), today))).toBe(
+			false,
+		);
+	});
+
+	test("two copies of one snapshot started together: one runs, the other says it was busy", async () => {
+		const away = remote();
+		away.behave("slow");
+		const home = await storeHome();
+		const paths = resolvePaths({ LATTICE_HOME: home });
+		await cli(home, ["backup"]);
+		const file = join(
+			paths.backups,
+			readdirSync(paths.backups).find((n) => n.startsWith("store-")) ?? "",
+		);
+		const target = parseRemote(away.env.LATTICE_BACKUP_REMOTE);
+
+		const [first, second] = await Promise.all([
+			copySnapshot(paths, file, target, away.env),
+			copySnapshot(paths, file, target, away.env),
+		]);
+
+		expect([first.ok, second.ok].sort()).toEqual([false, true]);
+		const busy = first.ok ? second : first;
+		expect(busy.busy).toBe(true);
+		expect(away.calls()).toBe(1);
+		expect(farFiles(away.dir)).toHaveLength(1);
+	});
+
+	test("a lock left by a copy that is gone does not stop the next one", async () => {
+		const away = remote();
+		const home = await storeHome();
+		const dir = join(home, "backups");
+		mkdirSync(dir, { recursive: true });
+		const dead = Bun.spawnSync(["true"]);
+		writeFileSync(
+			remoteLockPath(dir, today),
+			JSON.stringify({ pid: dead.pid, at: Date.now() }),
+		);
+		const { call } = await session(home, away.env);
+
+		await call("append", { note: "research/exa-limits", text: "One." });
+		await eventually(
+			async () => (await call("stats")).body.remote_copy.last_ok !== null,
+		);
+
+		expect(farFiles(away.dir)).toEqual([today]);
+	});
+
+	test("nor does a lock older than a copy may run", async () => {
+		const away = remote();
+		const home = await storeHome();
+		const dir = join(home, "backups");
+		mkdirSync(dir, { recursive: true });
+		writeFileSync(
+			remoteLockPath(dir, today),
+			JSON.stringify({ pid: process.pid, at: Date.now() - 60 * 60_000 }),
+		);
+		const { call } = await session(home, away.env);
+
+		await call("append", { note: "research/exa-limits", text: "One." });
+		await eventually(
+			async () => (await call("stats")).body.remote_copy.last_ok !== null,
+		);
+
+		expect(farFiles(away.dir)).toEqual([today]);
+	});
+});
+
+describe("how old the last good copy is", () => {
+	test("a failure after a good copy shows the error and the age of the good one", async () => {
+		const away = remote();
+		const home = await storeHome();
+		await cli(home, ["backup"], away.env);
+		const marker = resolvePaths({ LATTICE_HOME: home }).remoteCopy;
+		const record = JSON.parse(readFileSync(marker, "utf8"));
+		record.last_ok_at = new Date(Date.now() - 3 * 3_600_000).toISOString();
+		writeFileSync(marker, JSON.stringify(record));
+		away.behave("unreachable");
+
+		const failed = await cli(home, ["backup"], away.env);
+		const status = await cli(home, ["status"], away.env);
+		const { call } = await session(home, away.env);
+		const stats = (await call("stats")).body.remote_copy;
+
+		expect(failed.code).toBe(1);
+		expect(status.stdout).toContain("Connection refused");
+		expect(status.stdout).toContain(
+			`last good copy ${record.last_ok_at}, 3 h ago`,
+		);
+		expect(stats.error).toContain("Connection refused");
+		expect(stats.last_ok).toBe(record.last_ok_at);
+		expect(stats.last_ok_age).toBe("3 h");
+	});
+
+	test("a copy that just arrived says so", async () => {
+		const away = remote();
+		const home = await storeHome();
+		await cli(home, ["backup"], away.env);
+
+		const status = await cli(home, ["status"], away.env);
+
+		expect(status.stdout).toMatch(/Off Mac: {3}last copy \S+ \(just now\)/);
+	});
+});
+
+describe("a host that never answers", () => {
+	test("does not slow a write, or the answers around it", async () => {
+		const away = remote();
+		away.behave("hangs");
+		const { call } = await session(await storeHome(), away.env);
+
+		const started = performance.now();
+		const written = await call("append", {
+			note: "research/exa-limits",
+			text: "While the host hangs.",
+		});
+		const stats = await call("stats");
+		const elapsed = performance.now() - started;
+
+		expect(written.isError).toBe(false);
+		expect(stats.isError).toBe(false);
+		expect(elapsed).toBeLessThan(1500);
+		await eventually(() => away.calls() === 1);
+		expect(stats.body.remote_copy.last_ok).toBeNull();
+	});
+});
+
+describe("a folder named relative to the login folder", () => {
+	test("is read from there whatever CDPATH holds", async () => {
+		const login = mkdtempSync(join(tmpdir(), "lattice-login-"));
+		const decoy = mkdtempSync(join(tmpdir(), "lattice-decoy-"));
+		mkdirSync(join(decoy, "lattice-backups"));
+		const away = remote("lattice-backups");
+		// Log in to the folder, with CDPATH pointing at a place that has a folder of that name.
+		const script = away.env.LATTICE_SSH;
+		writeFileSync(
+			script,
+			[
+				"#!/bin/sh",
+				`cd '${login}'`,
+				`export CDPATH='${decoy}'`,
+				"for last; do :; done",
+				'exec sh -c "$last"',
+				"",
+			].join("\n"),
+		);
+		const home = await storeHome();
+
+		const result = await cli(home, ["backup"], away.env);
+
+		expect(result.code).toBe(0);
+		expect(readdirSync(join(login, "lattice-backups"))).toHaveLength(1);
+		expect(readdirSync(join(decoy, "lattice-backups"))).toEqual([]);
 	});
 });

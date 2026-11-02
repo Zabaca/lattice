@@ -3,7 +3,7 @@
  *
  * All Lattice data lives under a single home directory:
  * - store.db     The note store: the only copy of the notes, their changes, and the search index derived from them
- * - backups/     Snapshots of store.db: one a day, the last 30
+ * - backups/     Snapshots of store.db: one a day, the last 30; and `.remote-copy.json`, how the last copy off the machine went
  * - export/      The default home of `lattice export`, a copy never read back
  * - archive/     Notes kept outside the store (Lattice 1's library, Lattice 2's files); only `lattice import` reads them
  * - models/      Cached embedding model weights (`LATTICE_MODEL_DIR` moves it)
@@ -28,6 +28,8 @@ export interface LatticePaths {
 	store: string;
 	/** Snapshots of the note store: one a day, the last 30. */
 	backups: string;
+	/** How the last copy of a snapshot to another machine went, beside the snapshots. */
+	remoteCopy: string;
 	/** Where `lattice export` writes by default: a copy of the notes as markdown. */
 	export: string;
 	/** Folders of notes kept outside the store, such as `archive/v1` and `archive/v2`. */
@@ -59,6 +61,7 @@ export function resolvePaths(
 		fileIndex: join(home, "lattice.db"),
 		store: join(home, "store.db"),
 		backups: join(home, "backups"),
+		remoteCopy: join(home, "backups", ".remote-copy.json"),
 		export: join(home, "export"),
 		archive: join(home, "archive"),
 		library: join(home, "archive", "v1"),
@@ -66,6 +69,11 @@ export function resolvePaths(
 		models: env.LATTICE_MODEL_DIR?.trim() || join(home, "models"),
 		embedLock: join(home, ".embed.lock"),
 	};
+}
+
+/** The file a copy of one snapshot to another machine holds while it runs, so no second one starts. */
+export function remoteLockPath(backups: string, snapshot: string): string {
+	return join(backups, `.remote-copy-${snapshot}.lock`);
 }
 
 /**

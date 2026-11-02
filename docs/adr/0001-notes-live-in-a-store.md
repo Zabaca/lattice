@@ -83,5 +83,5 @@ Recorded here so the deviations are not found later by surprise (see CLAUDE.md,
   them.
 - `lattice search` no longer takes `--trust` or shows a trust label: a note has
   no checked state of its own, only its sections do, and `recall` reports those.
-- The optional copy off the machine (James, 2026-11-01: "Copy to ryzen-9 daily")
-  is in the build, though the option listed it as out of scope.
+- The copy off the machine (James, 2026-11-01: "Copy to ryzen-9 daily", decision
+  h) is in the build. The option first listed it as out of scope and was updated.

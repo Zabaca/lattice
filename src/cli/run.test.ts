@@ -93,6 +93,38 @@ describe("runCli argument handling", () => {
 	});
 });
 
+describe("flags", () => {
+	test("a flag the command does not read is refused, not ignored", async () => {
+		const result = await invoke([
+			"search",
+			"anything",
+			"--trust",
+			"human-reviewed",
+		]);
+
+		expect(result.code).not.toBe(0);
+		expect(result.stderr).toContain("Unknown flag: --trust");
+		expect(result.stderr).toContain("Usage: lattice search <query>");
+		expect(result.stdout).toBe("");
+	});
+
+	test("a flag from another command is refused too", async () => {
+		const result = await invoke(["status", "--remote"]);
+
+		expect(result.code).not.toBe(0);
+		expect(result.stderr).toContain("Unknown flag: --remote");
+	});
+
+	test("search --json carries no trust, which a note does not have", async () => {
+		const home = await searchableHome();
+
+		const { hits } = await search(home, ["user_id"]);
+
+		expect(hits).not.toHaveLength(0);
+		expect(hits[0]).not.toHaveProperty("trust");
+	});
+});
+
 describe("lattice init", () => {
 	test("creates the home directory and an empty store, and reports them", async () => {
 		const home = join(freshHome(), "nested");
@@ -1310,7 +1342,7 @@ describe("lattice search", () => {
 });
 
 describe("the embedding phase", () => {
-	test("sync gives every chunk a vector of the provider's dimension", async () => {
+	test("import gives every chunk a vector of the provider's dimension", async () => {
 		const home = await bundledHome();
 
 		const result = await imported(home);

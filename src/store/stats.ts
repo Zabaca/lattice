@@ -10,6 +10,7 @@ import {
 	sameSpace,
 	type VectorSpace,
 } from "../embed/state.js";
+import type { LatticePaths } from "../utils/paths.js";
 import { lastBackup } from "./backup.js";
 import { readRemoteCopy } from "./remote.js";
 
@@ -119,6 +120,8 @@ export interface Stats {
 		target: string | null;
 		/** When a copy last arrived; null when none has. */
 		last_ok: string | null;
+		/** How long ago that was, in words ("3 h"); null when none has arrived. */
+		last_ok_age: string | null;
 		/** When the last attempt was made; null when none was. */
 		last_attempt: string | null;
 		/** Why the last attempt failed, when it did. */
@@ -126,14 +129,33 @@ export interface Stats {
 	};
 }
 
-export function collectStats(
-	db: Database,
-	configured: VectorSpace | undefined,
-	configuredProblem: string | undefined,
-	backups: string,
-	now: Date = new Date(),
-	remote: string | null = null,
-): Stats {
+export interface StatsInput {
+	/** The model this process would embed with. */
+	configured?: VectorSpace;
+	/** Why it cannot be used, when it cannot. */
+	configuredProblem?: string;
+	paths: Pick<LatticePaths, "backups" | "remoteCopy">;
+	/** The place the snapshots are copied to (host:folder), if one is set, and what is wrong with the setting. */
+	remote?: { label: string | null; problem?: string };
+	now?: Date;
+}
+
+/** How long ago, in words: "just now", "5 min", "3 h", "2 d". */
+export function ageText(ms: number): string {
+	const minutes = Math.floor(Math.max(0, ms) / 60_000);
+	if (minutes < 1) {
+		return "just now";
+	}
+	if (minutes < 60) {
+		return `${minutes} min`;
+	}
+	const hours = Math.floor(minutes / 60);
+	return hours < 48 ? `${hours} h` : `${Math.floor(hours / 24)} d`;
+}
+
+export function collectStats(db: Database, input: StatsInput): Stats {
+	const { configured, configuredProblem, paths } = input;
+	const now = input.now ?? new Date();
 	const one = <Row>(sql: string, ...values: (string | number)[]): Row | null =>
 		db.query<Row, (string | number)[]>(sql).get(...values);
 	const weekAgo = new Date(now.getTime() - 7 * 86_400_000).toISOString();
@@ -225,22 +247,31 @@ export function collectStats(
 				)?.n ?? 0,
 			last: lastQuestion?.at ?? null,
 		},
-		last_backup: lastBackup(backups),
-		remote_copy: remoteCopy(backups, remote),
+		last_backup: lastBackup(paths.backups),
+		remote_copy: remoteCopy(paths, input.remote, now),
 	};
 }
 
 function remoteCopy(
-	backups: string,
-	target: string | null,
+	paths: Pick<LatticePaths, "backups" | "remoteCopy">,
+	remote: StatsInput["remote"],
+	now: Date,
 ): Stats["remote_copy"] {
-	const record = readRemoteCopy(backups);
+	const target = remote?.label ?? null;
+	const record = readRemoteCopy(paths);
 	// A marker left by an earlier setting says nothing about this one.
 	const mine = record !== null && record.target === target ? record : null;
+	const lastOk = mine?.last_ok_at ?? null;
+	const lastOkMs = lastOk === null ? Number.NaN : Date.parse(lastOk);
 	return {
 		target,
-		last_ok: mine?.last_ok_at ?? null,
+		last_ok: lastOk,
+		last_ok_age: Number.isNaN(lastOkMs)
+			? null
+			: ageText(now.getTime() - lastOkMs),
 		last_attempt: mine?.attempted_at ?? null,
-		error: mine !== null && !mine.ok ? (mine.error ?? "failed") : null,
+		error:
+			remote?.problem ??
+			(mine !== null && !mine.ok ? (mine.error ?? "failed") : null),
 	};
 }

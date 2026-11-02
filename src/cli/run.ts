@@ -69,6 +69,8 @@ interface CommandSpec {
 	summary: string;
 	/** Names of the required positional arguments, in order. */
 	requiredArgs: string[];
+	/** The flags the command reads; any other is refused rather than ignored. */
+	flags: string[];
 	run(context: CommandContext): Promise<CommandOutput> | CommandOutput;
 }
 
@@ -78,18 +80,21 @@ const COMMANDS: Record<string, CommandSpec> = {
 		summary:
 			"Create the Lattice home, an empty note store, and fetch the embedding model",
 		requiredArgs: [],
+		flags: [],
 		run: runInit,
 	},
 	status: {
 		usage: "lattice status",
 		summary: "Show what the note store holds and how search is doing",
 		requiredArgs: [],
+		flags: ["json"],
 		run: runStatus,
 	},
 	mcp: {
 		usage: "lattice mcp",
 		summary: "Serve the note store's tools to an agent over stdio",
 		requiredArgs: [],
+		flags: [],
 		run: runMcp,
 	},
 	import: {
@@ -99,6 +104,7 @@ const COMMANDS: Record<string, CommandSpec> = {
 		summary:
 			"Build the note store from Lattice 2's markdown files and Lattice 1's library, and prove nothing was lost",
 		requiredArgs: [],
+		flags: ["docs", "library", "no-docs", "no-library", "questions", "json"],
 		run: runImport,
 	},
 	history: {
@@ -106,6 +112,7 @@ const COMMANDS: Record<string, CommandSpec> = {
 			"lattice history [note] [--change id] [--who text] [--since date] [--limit n]",
 		summary: "List the note store's changes, or show one change in full",
 		requiredArgs: [],
+		flags: ["change", "who", "since", "limit"],
 		run: runHistory,
 	},
 	revert: {
@@ -114,6 +121,7 @@ const COMMANDS: Record<string, CommandSpec> = {
 			"       lattice revert <note> --version n --current m [--reason text] [--by name]",
 		summary: "Undo one change, or put a note back as at an earlier version",
 		requiredArgs: [],
+		flags: ["version", "current", "reason", "by"],
 		run: runRevert,
 	},
 	export: {
@@ -121,6 +129,7 @@ const COMMANDS: Record<string, CommandSpec> = {
 		summary:
 			"Write the note store out as markdown files (a copy, never read back)",
 		requiredArgs: [],
+		flags: [],
 		run: runExport,
 	},
 	backup: {
@@ -128,24 +137,28 @@ const COMMANDS: Record<string, CommandSpec> = {
 		summary:
 			"Take a snapshot of the note store now, and copy it to another machine when LATTICE_BACKUP_REMOTE or --remote names one",
 		requiredArgs: [],
+		flags: ["remote"],
 		run: runBackup,
 	},
 	embed: {
 		usage: "lattice embed [--retry-failed] [--reembed]",
 		summary: "Embed whatever in the note store is still waiting for a vector",
 		requiredArgs: [],
+		flags: ["retry-failed", "reembed"],
 		run: runEmbed,
 	},
 	rels: {
 		usage: "lattice rels <note> [--json]",
 		summary: "Show what a note links to, what links back, and what is missing",
 		requiredArgs: ["note"],
+		flags: ["json"],
 		run: runRels,
 	},
 	sql: {
 		usage: "lattice sql <query>",
 		summary: "Run a read-only SQL query against the note store",
 		requiredArgs: ["query"],
+		flags: [],
 		run: runSql,
 	},
 	search: {
@@ -157,6 +170,24 @@ const COMMANDS: Record<string, CommandSpec> = {
 			"       [--include-deprecated] [--as-of date]",
 		summary: "Search the note store by keyword and by meaning at once",
 		requiredArgs: ["query"],
+		flags: [
+			"json",
+			"limit",
+			"chunks",
+			"chunks-per-concept",
+			"concepts",
+			"expand",
+			"no-expand",
+			"require-embeddings",
+			"candidates",
+			"require-rerank",
+			"type",
+			"tag",
+			"dir",
+			"status",
+			"as-of",
+			"include-deprecated",
+		],
 		run: runSearch,
 	},
 };
@@ -197,6 +228,18 @@ export async function runCli(options: CliOptions): Promise<CliResult> {
 			code: 1,
 			stdout: "",
 			stderr: `Missing required argument: <${missing}>\n\n${commandUsageText(spec)}`,
+			progress: [],
+		};
+	}
+
+	const unknown = Object.keys(flags).filter(
+		(flag) => !spec.flags.includes(flag),
+	);
+	if (unknown.length > 0) {
+		return {
+			code: 1,
+			stdout: "",
+			stderr: `Unknown flag${unknown.length > 1 ? "s" : ""}: ${unknown.map((flag) => `--${flag}`).join(", ")}\n\n${commandUsageText(spec)}`,
 			progress: [],
 		};
 	}

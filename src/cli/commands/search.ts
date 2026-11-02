@@ -159,7 +159,9 @@ export async function runSearch(
 					reranked: result.reranked,
 					rerank: result.rerank,
 					rerankReason: result.rerankReason ?? null,
-					hits: result.hits,
+					// The notes table's trust is never set by the store; a note is checked
+					// section by section, which `recall` reports.
+					hits: result.hits.map(({ trust: _trust, ...hit }) => hit),
 				})}\n`,
 			};
 		}

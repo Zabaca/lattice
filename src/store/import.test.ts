@@ -18,6 +18,7 @@ import {
 	HASH_ENV,
 	LIBRARY,
 	note,
+	writeFileIndex,
 	writeFiles,
 	writeLibrary,
 } from "./testing.js";
@@ -50,7 +51,7 @@ async function importJson(home: string, argv: string[] = [], env = {}) {
 }
 
 async function rows<Row>(home: string, query: string): Promise<Row[]> {
-	const result = await cli(home, ["sql", "--store", query]);
+	const result = await cli(home, ["sql", query]);
 	expect(result.stderr).toBe("");
 	return JSON.parse(result.stdout);
 }
@@ -567,27 +568,22 @@ describe("lattice import: Lattice 1's library", () => {
 	});
 });
 
-describe("lattice import: today's index", () => {
+describe("lattice import: Lattice 2's file index", () => {
 	async function indexedHome(library: boolean): Promise<string> {
 		const home = bundleHome();
 		if (library) {
 			writeLibrary(home);
 		}
-		expect((await cli(home, ["init"])).code).toBe(0);
-		expect((await cli(home, ["sync"])).code).toBe(0);
+		writeFileIndex(home);
 		return home;
 	}
 
 	test("copies every vector from the index it can, and embeds nothing for the bundle", async () => {
 		const home = await indexedHome(false);
-		const passages = (
-			await cli(home, ["sql", "SELECT count(*) AS n FROM chunk_embeddings"])
-		).stdout;
 
 		const { code, report } = await importJson(home);
 
 		expect(code).toBe(0);
-		expect(JSON.parse(passages)[0].n).toBe(report.bundle.passages);
 		expect(report.copied).toEqual({
 			passages: report.bundle.passages,
 			notes: 4,
@@ -682,16 +678,12 @@ describe("lattice import: embedding trouble", () => {
 });
 
 describe("the store from the command line", () => {
-	test("sql --store reads the store and refuses to write it", async () => {
+	test("sql reads the store and refuses to write it", async () => {
 		const home = bundleHome();
 		await importJson(home);
 
-		const read = await cli(home, [
-			"sql",
-			"--store",
-			"SELECT count(*) AS n FROM sections",
-		]);
-		const write = await cli(home, ["sql", "--store", "DELETE FROM sections"]);
+		const read = await cli(home, ["sql", "SELECT count(*) AS n FROM sections"]);
+		const write = await cli(home, ["sql", "DELETE FROM sections"]);
 
 		expect(JSON.parse(read.stdout)).toEqual([{ n: 10 }]);
 		expect(write.code).toBe(1);
@@ -700,42 +692,45 @@ describe("the store from the command line", () => {
 		);
 		expect(
 			JSON.parse(
-				(
-					await cli(home, [
-						"sql",
-						"--store",
-						"SELECT count(*) AS n FROM sections",
-					])
-				).stdout,
+				(await cli(home, ["sql", "SELECT count(*) AS n FROM sections"])).stdout,
 			),
 		).toEqual([{ n: 10 }]);
 	});
 
-	test("without --store the sql command still reads the file index, and says when there is none", async () => {
-		const home = bundleHome();
-		await importJson(home);
+	test("with no store every command says what to run", async () => {
+		const home = freshHome();
+		for (const argv of [
+			["sql", "SELECT 1"],
+			["search", "anything"],
+			["rels", "topic/jev"],
+			["embed"],
+			["history"],
+			["backup"],
+		]) {
+			const result = await cli(home, argv);
 
-		const result = await cli(home, ["sql", "SELECT 1"]);
-
-		expect(result.code).toBe(1);
-		expect(result.stderr).toContain("No Lattice index at");
+			expect(result.code).toBe(1);
+			expect(result.stdout).toBe("");
+			expect(result.stderr).toContain("No note store at");
+			expect(result.stderr).toContain("lattice init");
+			expect(result.stderr).toContain("lattice import");
+		}
 	});
 
-	test("with --store and no store it says to run import", async () => {
-		const result = await cli(freshHome(), ["sql", "--store", "SELECT 1"]);
+	test("a command that no longer exists is refused as unknown", async () => {
+		const result = await cli(freshHome(), ["sync"]);
 
 		expect(result.code).toBe(1);
-		expect(result.stderr).toContain("Run `lattice import` first.");
+		expect(result.stderr).toContain("Unknown command: sync");
 	});
 
-	test("search --store asks the store, with the same engine", async () => {
+	test("search asks the store, with the same engine", async () => {
 		const home = bundleHome();
 		await importJson(home);
 
 		const result = await cli(home, [
 			"search",
 			"reciprocal rank fusion",
-			"--store",
 			"--json",
 		]);
 
@@ -744,11 +739,11 @@ describe("the store from the command line", () => {
 		expect(answer.hits[0].identifier).toBe("research/jev-reranker");
 	});
 
-	test("rels --store shows a note's links", async () => {
+	test("rels shows a note's links", async () => {
 		const home = bundleHome();
 		await importJson(home);
 
-		const result = await cli(home, ["rels", "topic/jev", "--store", "--json"]);
+		const result = await cli(home, ["rels", "topic/jev", "--json"]);
 
 		const rels = JSON.parse(result.stdout);
 		expect(rels.outlinks.map((l: { path: string }) => l.path)).toEqual([
@@ -759,11 +754,21 @@ describe("the store from the command line", () => {
 		).toEqual(["research/jev-costs.md"]);
 	});
 
-	test("status --store gives the counts and says whether search is healthy", async () => {
+	test("rels says so for a note that is not there", async () => {
 		const home = bundleHome();
 		await importJson(home);
 
-		const result = await cli(home, ["status", "--store"]);
+		const result = await cli(home, ["rels", "topic/nowhere"]);
+
+		expect(result.code).toBe(1);
+		expect(result.stderr).toContain("No note matches topic/nowhere");
+	});
+
+	test("status gives the counts and says whether search is healthy", async () => {
+		const home = bundleHome();
+		await importJson(home);
+
+		const result = await cli(home, ["status"]);
 
 		expect(result.code).toBe(0);
 		expect(result.stdout).toContain(
@@ -773,12 +778,12 @@ describe("the store from the command line", () => {
 		expect(result.stdout).toContain("Search:    full");
 	});
 
-	test("status --store says why search is degraded", async () => {
+	test("status says why search is degraded", async () => {
 		const home = bundleHome();
 		await importJson(home);
 
 		const result = await runCli({
-			argv: ["status", "--store"],
+			argv: ["status"],
 			env: {
 				...HASH_ENV,
 				LATTICE_EMBED_PROVIDER: "hash",
@@ -790,5 +795,44 @@ describe("the store from the command line", () => {
 		expect(result.stdout).toContain(
 			"degraded: the store is embedded with hash-512 (512) but this server would use hash-64 (64)",
 		);
+	});
+});
+
+describe("lattice init and import together", () => {
+	test("init makes an empty store that import then replaces", async () => {
+		const home = bundleHome();
+
+		const init = await cli(home, ["init"]);
+		const empty = await cli(home, ["status"]);
+		const { code, report } = await importJson(home);
+
+		expect(init.code).toBe(0);
+		expect(init.stdout).toContain(`Created ${join(home, "store.db")}`);
+		expect(empty.stdout).toContain("Notes:     0");
+		expect(code).toBe(0);
+		expect(report.bundle.notes).toBe(4);
+		expect((await cli(home, ["status"])).stdout).toContain("Notes:     4");
+	});
+
+	test("a second init leaves the store alone", async () => {
+		const home = freshHome();
+		await cli(home, ["init"]);
+
+		const again = await cli(home, ["init"]);
+
+		expect(again.code).toBe(0);
+		expect(again.stdout).toContain(`Exists  ${join(home, "store.db")}`);
+		expect(again.stdout).not.toContain("Created");
+	});
+
+	test("import does not replace a store that holds notes", async () => {
+		const home = bundleHome();
+		await importJson(home);
+
+		const again = await cli(home, ["import"]);
+
+		expect(again.code).toBe(1);
+		expect(again.stderr).toContain("A store already exists");
+		expect((await cli(home, ["status"])).stdout).toContain("Notes:     4");
 	});
 });

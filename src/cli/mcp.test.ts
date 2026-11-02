@@ -49,7 +49,7 @@ test("lattice mcp serves the tools over stdio and records the folder it was star
 	}
 
 	const recorded = await runCli({
-		argv: ["sql", "--store", "SELECT project, client FROM recall_log"],
+		argv: ["sql", "SELECT project, client FROM recall_log"],
 		env: { LATTICE_HOME: home },
 	});
 	expect(JSON.parse(recorded.stdout)).toEqual([

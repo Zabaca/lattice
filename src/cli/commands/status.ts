@@ -1,204 +1,90 @@
-import { existsSync, readFileSync } from "node:fs";
-import { openDatabase } from "../../db/open.js";
 import { selectProvider } from "../../embed/provider.js";
-import { pendingChunkCount } from "../../embed/run.js";
-import {
-	describeSpace,
-	embeddedChunkCount,
-	readActiveSpace,
-	sameSpace,
-	type VectorSpace,
-} from "../../embed/state.js";
-import { planSync } from "../../sync/index.js";
-import { conceptProblem, parseConcept } from "../../sync/okf.js";
-import type { BundleFile } from "../../sync/scan.js";
+import type { VectorSpace } from "../../embed/state.js";
+import { remoteSetting } from "../../store/remote.js";
+import { collectStats, type Stats } from "../../store/stats.js";
 import { resolvePaths } from "../../utils/paths.js";
+import { openNoteStore } from "../database.js";
 import type { CommandContext, CommandOutput } from "../run.js";
-import { runStoreStatus } from "./store-status.js";
 
 /**
- * Report what the index holds, what a sync would change, and which files
- * Lattice could not read as OKF.
+ * `lattice status`: what the note store holds and how its search is doing. The
+ * same numbers the `stats` tool gives an agent, for a person.
  */
 export function runStatus(context: CommandContext): CommandOutput {
-	if (context.flags.store !== undefined) {
-		return runStoreStatus(context);
-	}
 	const paths = resolvePaths(context.env);
-
-	if (!existsSync(paths.database)) {
-		return {
-			code: 1,
-			stderr: `No Lattice index at ${paths.database}. Run \`lattice init\` first.`,
-		};
-	}
-
-	const db = openDatabase(paths.database);
+	const db = openNoteStore(paths);
 	try {
-		// `status` is the command someone runs when something is wrong, so a
-		// provider that cannot be built is reported rather than thrown: every
-		// count below is still worth reading without it.
 		let configured: VectorSpace | undefined;
-		let source = "";
 		let problem: string | undefined;
 		try {
 			const provider = selectProvider(context.env);
 			configured = { model: provider.model, dim: provider.dim };
-			source = provider.source;
 		} catch (error) {
 			problem = error instanceof Error ? error.message : String(error);
 		}
+		const setting = remoteSetting(context.env);
+		const stats = collectStats(db, {
+			configured,
+			configuredProblem: problem,
+			paths,
+			remote: { label: setting.label, problem: setting.problem },
+		});
 
-		// The space the index is IN, which is not always the one configured.
-		const active = readActiveSpace(db) ?? configured;
+		if (context.flags.json !== undefined) {
+			return { code: 0, stdout: `${JSON.stringify(stats, null, 2)}\n` };
+		}
 
-		const concepts = tableCount(db, "concepts");
-
-		// Embeddings are counted in the active space alone: a re-embed in
-		// flight has two spaces on disk, and their sum is not a number that
-		// means anything.
-		const counts = [
-			{ label: "Concepts", n: concepts },
-			{ label: "Chunks", n: tableCount(db, "chunks") },
-			{
-				label: "Embeddings",
-				n: active === undefined ? 0 : embeddedChunkCount(db, active),
-			},
-			{ label: "Links", n: tableCount(db, "links") },
+		const types = Object.entries(stats.notes.by_type)
+			.map(([type, n]) => `${n} ${type}`)
+			.join(", ");
+		const lines = [
+			`Store: ${paths.store}`,
+			"",
+			`Notes:     ${stats.notes.total} (${types}); ${stats.notes.old} old, ${stats.notes.archived} archived`,
+			`Sections:  ${stats.sections.total}; ${stats.sections.unchecked} unchecked, ${stats.sections.by_agent} checked by an agent, ${stats.sections.by_james} by James`,
+			`Changes:   ${stats.changes.last_7_days} in the last 7 days${
+				stats.changes.last === null
+					? ""
+					: `; last ${stats.changes.last.kind} of ${stats.changes.last.note} at ${stats.changes.last.at}`
+			}`,
+			`Questions: ${stats.questions.last_7_days} in the last 7 days from ${stats.questions.projects} projects`,
+			`Backup:    ${stats.last_backup === null ? "none yet (lattice backup takes one)" : `last at ${stats.last_backup}`}`,
+			`Off Mac:   ${offMac(stats.remote_copy)}`,
+			"",
+			stats.search.model === null
+				? "Model:    unavailable"
+				: `Model:    ${stats.search.model} (${stats.search.dim} dimensions)`,
+			`Passages:  ${stats.search.passages}; ${stats.search.vectors} with vectors, ${stats.search.waiting} waiting, ${stats.search.failed} failed`,
+			stats.search.ok
+				? "Search:    full"
+				: `Search:    degraded: ${stats.search.problem}`,
 		];
-
-		const width = Math.max(...counts.map((entry) => entry.label.length)) + 1;
-		const lines = [`Index: ${paths.database}`, ""];
-		for (const { label, n } of counts) {
-			lines.push(`${`${label}:`.padEnd(width)} ${n}`);
-		}
-
-		// The model and its dimensions, plus the backlog, are what separate a
-		// partial index from a complete one at a glance.
-		lines.push("");
-		if (active === undefined) {
-			lines.push("Model:  unavailable");
-		} else {
-			lines.push(`Model:  ${active.model} (${active.dim} dimensions)`);
-			if (configured !== undefined && !sameSpace(active, configured)) {
-				lines.push(
-					`Configured: ${describeSpace(configured)} (from ${source})` +
-						" — run `lattice embed --reembed` to rebuild the index with it.",
-				);
-			}
-			lines.push(`Awaiting vectors: ${pendingChunkCount(db, active)}`);
-		}
-		if (problem !== undefined) {
-			lines.push(`Embeddings are not ready yet: ${problem}`);
-		}
-
-		// Permanently failed targets are not in the backlog — nothing will pick
-		// them up again on its own — so they are counted where they cannot be
-		// mistaken for work still queued.
-		const permanent = active === undefined ? 0 : permanentFailures(db, active);
-		if (permanent > 0) {
-			lines.push(
-				`Permanently failed: ${permanent} (run \`lattice embed --retry-failed\` to try again)`,
-			);
-		}
-
-		const plan = planSync(db, paths.docs);
-		const pending =
-			plan.added.length +
-			plan.changed.length +
-			plan.renamed.length +
-			plan.deleted.length;
-
-		lines.push("");
-		lines.push(`Bundle: ${paths.docs}`);
-		if (pending === 0) {
-			lines.push(
-				concepts === 0
-					? "Nothing indexed yet. Put markdown in the bundle and run `lattice sync`."
-					: "Up to date.",
-			);
-		} else {
-			lines.push(`New:     ${plan.added.length}`);
-			lines.push(`Changed: ${plan.changed.length}`);
-			lines.push(`Renamed: ${plan.renamed.length}`);
-			lines.push(`Deleted: ${plan.deleted.length}`);
-			lines.push("Run `lattice sync` to apply.");
-		}
-
-		const problems = frontmatterProblems(db, plan);
-		if (problems.length > 0) {
-			lines.push("");
-			lines.push(`Frontmatter problems (${problems.length}):`);
-			for (const problem of problems) {
-				lines.push(`  ${problem.path}: ${problem.problem}`);
+		if (stats.wanted.length > 0) {
+			lines.push("", "Most wanted (linked to, not written):");
+			for (const entry of stats.wanted) {
+				lines.push(`  ${entry.note} (${entry.wanted_by})`);
 			}
 		}
-
 		return { code: 0, stdout: `${lines.join("\n")}\n` };
 	} finally {
 		db.close();
 	}
 }
 
-function tableCount(
-	db: ReturnType<typeof openDatabase>,
-	table: string,
-): number {
-	return (
-		db.query<{ n: number }, []>(`SELECT count(*) AS n FROM ${table}`).get()
-			?.n ?? 0
-	);
+/** "3 h" as "3 h ago", and "just now" as it is. */
+function ago(age: string | null): string {
+	return age === "just now" || age === null ? (age ?? "") : `${age} ago`;
 }
 
-/**
- * Problems already recorded in the index, plus the ones a file not yet
- * indexed would produce — so a first `status` warns before the first sync.
- */
-function frontmatterProblems(
-	db: ReturnType<typeof openDatabase>,
-	plan: ReturnType<typeof planSync>,
-): Array<{ path: string; problem: string }> {
-	const problems = db
-		.query<{ path: string; problem: string }, []>(
-			"SELECT path, frontmatter_error AS problem FROM concepts WHERE frontmatter_error IS NOT NULL",
-		)
-		.all();
-
-	const known = new Set(problems.map((problem) => problem.path));
-	for (const file of [...plan.added, ...plan.changed]) {
-		if (known.has(file.path)) {
-			continue;
-		}
-		const problem = readProblem(file);
-		if (problem !== undefined) {
-			problems.push({ path: file.path, problem });
-		}
+/** The copy of the snapshots on another machine, in a line. */
+function offMac(copy: Stats["remote_copy"]): string {
+	if (copy.error !== null) {
+		return `${copy.target ?? "not set up"}: ${copy.error}${copy.last_ok === null ? "" : ` (last good copy ${copy.last_ok}, ${ago(copy.last_ok_age)})`}`;
 	}
-
-	return problems.sort((a, b) => (a.path < b.path ? -1 : 1));
-}
-
-/** Chunks and concepts recorded as failing in a way a retry will not fix. */
-function permanentFailures(
-	db: ReturnType<typeof openDatabase>,
-	space: VectorSpace,
-): number {
-	return (
-		db
-			.query<{ n: number }, [string, number, string, number]>(
-				"SELECT (SELECT count(*) FROM chunk_embed_failures" +
-					" WHERE retryable = 0 AND model = ? AND dim = ?)" +
-					" + (SELECT count(*) FROM concept_embed_failures" +
-					" WHERE retryable = 0 AND model = ? AND dim = ?) AS n",
-			)
-			.get(space.model, space.dim, space.model, space.dim)?.n ?? 0
-	);
-}
-
-/** The same judgement a sync would record, so the warning does not change once the file is indexed. */
-function readProblem(file: BundleFile): string | undefined {
-	return conceptProblem(
-		file.path,
-		parseConcept(readFileSync(file.absolutePath, "utf8")),
-	);
+	if (copy.target === null) {
+		return "not set up (LATTICE_BACKUP_REMOTE=user@host:folder copies each day's snapshot there)";
+	}
+	return copy.last_ok === null
+		? `${copy.target}, nothing copied yet (the first write of the day sends one)`
+		: `last copy ${copy.last_ok} (${ago(copy.last_ok_age)}) to ${copy.target}`;
 }

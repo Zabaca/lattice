@@ -22,7 +22,7 @@ import {
 } from "node:fs";
 import { dirname, join, posix } from "node:path";
 import matter from "gray-matter";
-import { isExternal } from "../sync/links.js";
+import { isExternal } from "../markdown/links.js";
 import { currentState } from "./read.js";
 import { rewriteLinks, writeTarget } from "./relink.js";
 import { directoryOf } from "./store.js";

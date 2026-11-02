@@ -3,7 +3,7 @@
  *
  * SciFact (BEIR) is a corpus of scientific abstracts with human relevance
  * judgments per query. This script samples it, files each abstract as a
- * Lattice document, syncs it with the real embedding model and scores
+ * Lattice document, imports them into a store with the real embedding model and scores
  * `lattice search` against the judgments — hit@k and MRR@10 at document
  * level. Every Lattice command goes through `runCli`, the seam the tests use.
  *
@@ -74,7 +74,7 @@ async function main(): Promise<void> {
 		if (!options.json) console.error(line);
 	};
 
-	// A missing key fails here, before any search or sync has cost time.
+	// A missing key fails here, before any search or import has cost time.
 	const apiKey = options.rerank === "jev" ? resolveApiKey() : undefined;
 
 	await ensureDataset(log);
@@ -104,18 +104,15 @@ async function main(): Promise<void> {
 	if (options.fresh && existsSync(paths.home)) {
 		rmSync(paths.home, { recursive: true, force: true });
 	}
-	if (!existsSync(paths.database)) {
+	if (!existsSync(paths.store)) {
 		await buildHome(env, paths.docs, sampledDocs, log);
 	}
 
 	const status = await runCli({ argv: ["status"], env });
 	if (status.code !== 0)
 		throw new Error(`lattice status failed: ${status.stderr}`);
-	if (!status.stdout.includes("Up to date.")) {
-		throw new Error(`Eval home is not synced:\n${status.stdout}`);
-	}
-	if (status.stdout.includes("Frontmatter problems")) {
-		throw new Error(`Eval home has frontmatter problems:\n${status.stdout}`);
+	if (!status.stdout.includes("Search:    full")) {
+		throw new Error(`Eval store is not fully embedded:\n${status.stdout}`);
 	}
 	const model = /^Model:\s+(.+)$/m.exec(status.stdout)?.[1] ?? "unknown";
 
@@ -392,7 +389,7 @@ async function buildHome(
 	sampled: CorpusDoc[],
 	log: (line: string) => void,
 ): Promise<void> {
-	// A previous home with the same parameters is the cheapest model cache.
+	// The model is fetched once, here, rather than in the middle of the import.
 	const init = await runCli({ argv: ["init"], env, onProgress: log });
 	if (init.code !== 0) throw new Error(`lattice init failed: ${init.stderr}`);
 
@@ -401,11 +398,19 @@ async function buildHome(
 	for (const doc of sampled) {
 		writeFileSync(join(dir, `${doc.id}.md`), renderDoc(doc));
 	}
-	log(`Wrote ${sampled.length} abstracts to ${dir}. Syncing...`);
+	log(`Wrote ${sampled.length} abstracts to ${dir}. Importing...`);
 
-	const sync = await runCli({ argv: ["sync"], env, onProgress: log });
-	if (sync.code !== 0) throw new Error(`lattice sync failed: ${sync.stderr}`);
-	log(sync.stdout.trim());
+	const imported = await runCli({
+		argv: ["import", "--no-library"],
+		env,
+		onProgress: log,
+	});
+	if (imported.code !== 0) {
+		throw new Error(
+			`lattice import failed: ${imported.stdout}${imported.stderr}`,
+		);
+	}
+	log(imported.stdout.trim());
 }
 
 function renderDoc(doc: CorpusDoc): string {

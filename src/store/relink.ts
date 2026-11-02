@@ -13,7 +13,7 @@ import {
 	type AuthoredLink,
 	extractBodyLinks,
 	isExternal,
-} from "../sync/links.js";
+} from "../markdown/links.js";
 
 /**
  * `text` with the target of some of its links replaced. `decide` is given each

@@ -1,8 +1,8 @@
 /**
- * Turning what is indexed into vectors.
+ * Turning what is stored into vectors.
  *
- * This is the second phase of a sync and the whole of `lattice embed`: one
- * code path, so there is one thing to reason about and one thing to test.
+ * This is the whole of `lattice embed` and the last step of `lattice import`:
+ * one code path, so there is one thing to reason about and one thing to test.
  *
  * A chunk with no vector is simply a row missing from `chunk_embeddings` for
  * the active space, so an interrupted run leaves a backlog rather than a
@@ -278,7 +278,19 @@ async function embedKind(
 			continue;
 		}
 
-		db.transaction(() => {
+		const wrote = db.transaction((): boolean => {
+			// A session may have rewritten the passage while it was being embedded
+			// (the store takes writes all the while). A vector made from the old
+			// text must not be filed under what stands there now; the write that
+			// changed it made its own.
+			const now = db
+				.query<{ text: string }, [number]>(
+					`SELECT ${text(kind)} AS text FROM ${kind.table} t WHERE t.id = ?`,
+				)
+				.get(target.id);
+			if (now === null || now.text !== target.text) {
+				return false;
+			}
 			db.query(
 				`INSERT INTO ${kind.embeddings} (${kind.key}, model, dim, vector)
 				VALUES (?, ?, ?, ?)
@@ -288,8 +300,11 @@ async function embedKind(
 			db.query(
 				`DELETE FROM ${kind.failures} WHERE ${kind.key} = ? AND model = ? AND dim = ?`,
 			).run(target.id, space.model, space.dim);
+			return true;
 		})();
-		written++;
+		if (wrote) {
+			written++;
+		}
 	}
 
 	report.skipped += countPermanent(db, kind, space);

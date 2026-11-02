@@ -1,10 +1,10 @@
 /**
- * The sync lock.
+ * The embed lock.
  *
- * Two syncs over one index would interleave their deletes and inserts, so the
- * second refuses. The lock carries the holder's process id, which is what
- * stops a crashed sync from blocking every later one: a lock naming a process
- * that is gone is taken over rather than honoured.
+ * Two `lattice embed` runs over one store would embed the same backlog twice,
+ * so the second refuses. The lock carries the holder's process id, which is
+ * what stops a crashed run from blocking every later one: a lock naming a
+ * process that is gone is taken over rather than honoured.
  */
 
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -12,8 +12,8 @@ import { readFileSync, rmSync, writeFileSync } from "node:fs";
 export class LockHeldError extends Error {
 	constructor(readonly pid: number) {
 		super(
-			`Another sync is already running (process ${pid}). ` +
-				"Wait for it to finish, or stop it and run `lattice sync` again.",
+			`Another embed is already running (process ${pid}). ` +
+				"Wait for it to finish, or stop it and run `lattice embed` again.",
 		);
 		this.name = "LockHeldError";
 	}
@@ -46,9 +46,9 @@ export function acquireLock(path: string, pid: number = process.pid): Lock {
 		rmSync(path, { force: true });
 	};
 
-	// An interrupted sync must not leave its own lock behind. Listening for the
+	// An interrupted embed must not leave its own lock behind. Listening for the
 	// signal suppresses the default exit, so the exit has to be made here —
-	// otherwise the sync would carry on with no lock at all.
+	// otherwise the embed would carry on with no lock at all.
 	const onSignal = () => {
 		release();
 		process.exit(130);
@@ -67,7 +67,7 @@ function readHolder(path: string): number | undefined {
 		return undefined;
 	}
 	const pid = Number.parseInt(contents.trim(), 10);
-	// An unreadable lock tells us nothing, so it is not allowed to block a sync.
+	// An unreadable lock tells us nothing, so it is not allowed to block an embed.
 	return Number.isInteger(pid) && pid > 0 ? pid : undefined;
 }
 

@@ -1,7 +1,7 @@
 /**
  * Where vectors come from.
  *
- * Everything downstream — the embed phase, `sync`, `status` — talks to this
+ * Everything downstream (the embed phase, the writes, `recall`) talks to this
  * interface, so swapping the deterministic hash provider for a real local
  * model later is one module, not a rewrite.
  *

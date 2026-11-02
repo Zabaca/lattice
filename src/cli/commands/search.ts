@@ -7,7 +7,7 @@ import {
 import { embedQuery } from "../../search/embed-query.js";
 import { type SearchHit, search, searchConcepts } from "../../search/search.js";
 import { resolvePaths } from "../../utils/paths.js";
-import { openTarget, targetProblem } from "../database.js";
+import { openNoteStore, storeProblem } from "../database.js";
 import { count, text } from "../flags.js";
 import type { CommandContext, CommandOutput } from "../run.js";
 
@@ -31,7 +31,7 @@ export async function runSearch(
 ): Promise<CommandOutput> {
 	const paths = resolvePaths(context.env);
 
-	const problem = targetProblem(paths, context.flags);
+	const problem = storeProblem(paths);
 	if (problem !== undefined) {
 		return { code: 1, stderr: problem };
 	}
@@ -78,7 +78,7 @@ export async function runSearch(
 		context.report,
 	);
 
-	const db = openTarget(paths, context.flags);
+	const db = openNoteStore(paths);
 	try {
 		// A query embedded by one model cannot be compared against vectors
 		// written by another, and answering anyway would be worse than not
@@ -115,7 +115,6 @@ export async function runSearch(
 				tag: text(context.flags.tag),
 				dir: text(context.flags.dir),
 				status: text(context.flags.status),
-				trust: text(context.flags.trust),
 				includeDeprecated: context.flags["include-deprecated"] !== undefined,
 			});
 		} catch (error) {
@@ -160,7 +159,9 @@ export async function runSearch(
 					reranked: result.reranked,
 					rerank: result.rerank,
 					rerankReason: result.rerankReason ?? null,
-					hits: result.hits,
+					// The notes table's trust is never set by the store; a note is checked
+					// section by section, which `recall` reports.
+					hits: result.hits.map(({ trust: _trust, ...hit }) => hit),
 				})}\n`,
 			};
 		}
@@ -198,7 +199,7 @@ function render(hits: SearchHit[]): string {
 
 	const lines: string[] = [];
 	hits.forEach((hit, index) => {
-		const labels = [hit.type, hit.status, hit.trust].filter(
+		const labels = [hit.type, hit.status].filter(
 			(label): label is string => label !== null,
 		);
 		if (hit.stale) {

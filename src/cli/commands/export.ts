@@ -1,7 +1,7 @@
 import { resolve, sep } from "node:path";
 import { exportStore } from "../../store/export.js";
 import { resolvePaths } from "../../utils/paths.js";
-import { openTarget } from "../database.js";
+import { openNoteStore } from "../database.js";
 import type { CommandContext, CommandOutput } from "../run.js";
 
 /**
@@ -13,18 +13,18 @@ import type { CommandContext, CommandOutput } from "../run.js";
  */
 export function runExport(context: CommandContext): CommandOutput {
 	const paths = resolvePaths(context.env);
-	const db = openTarget(paths, { store: true });
+	const db = openNoteStore(paths);
 	try {
 		const dir = resolve(context.positionals[0] ?? paths.export);
-		// Until the cutover the bundle is the live library, and a copy written
-		// into it (or over it) would be read as notes.
+		// `lattice import` looks for Lattice 2's files in the home's `docs`, and a
+		// copy written there would look like a second source of notes.
 		const docs = resolve(paths.docs);
 		const within = (inner: string, outer: string): boolean =>
 			inner === outer || inner.startsWith(outer + sep);
 		if (within(dir, docs) || within(docs, dir)) {
 			return {
 				code: 1,
-				stderr: `${dir} is, or holds, the live bundle at ${docs}. Name another folder for the export.`,
+				stderr: `${dir} is, or holds, the folder ${docs}, where \`lattice import\` looks for Lattice 2's files. Name another folder for the export.`,
 			};
 		}
 		const done = exportStore(db, dir);

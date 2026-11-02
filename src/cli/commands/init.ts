@@ -1,35 +1,35 @@
 import { existsSync, mkdirSync } from "node:fs";
-import { openDatabase } from "../../db/open.js";
 import { selectProvider } from "../../embed/provider.js";
+import { openStore } from "../../store/open.js";
 import { resolvePaths } from "../../utils/paths.js";
 import type { CommandContext, CommandOutput } from "../run.js";
 
 /**
- * Create the Lattice home directory and index.
+ * Create the Lattice home directory and an empty note store, and fetch the
+ * embedding model.
  *
  * Safe to run repeatedly: anything already in place is reported as such and
- * left alone.
+ * left alone. A store that is still empty is replaced by `lattice import`, so
+ * running `init` first does not stand in the way of bringing notes in.
  */
 export async function runInit(context: CommandContext): Promise<CommandOutput> {
 	const paths = resolvePaths(context.env);
 	const lines: string[] = [];
 
-	for (const directory of [paths.home, paths.docs]) {
-		if (existsSync(directory)) {
-			lines.push(`Exists  ${directory}`);
-		} else {
-			mkdirSync(directory, { recursive: true });
-			lines.push(`Created ${directory}`);
-		}
+	if (existsSync(paths.home)) {
+		lines.push(`Exists  ${paths.home}`);
+	} else {
+		mkdirSync(paths.home, { recursive: true });
+		lines.push(`Created ${paths.home}`);
 	}
 
-	const databaseExisted = existsSync(paths.database);
-	openDatabase(paths.database, { create: true }).close();
-	lines.push(`${databaseExisted ? "Exists " : "Created"} ${paths.database}`);
+	const storeExisted = existsSync(paths.store);
+	openStore(paths.store, { create: true }).close();
+	lines.push(`${storeExisted ? "Exists " : "Created"} ${paths.store}`);
 
 	// The model is fetched here, once, rather than in the middle of the first
-	// sync. A machine that cannot download is not a failed init: the directory
-	// and index are real, and the user is told exactly what is missing.
+	// write. A machine that cannot download is not a failed init: the directory
+	// and store are real, and the user is told exactly what is missing.
 	const modelProblem = await prepareProvider(context);
 	if (modelProblem !== undefined) {
 		lines.push("");
@@ -38,9 +38,9 @@ export async function runInit(context: CommandContext): Promise<CommandOutput> {
 
 	lines.push("");
 	lines.push(
-		databaseExisted
+		storeExisted
 			? "Lattice is already initialized."
-			: "Lattice is ready. Put markdown in the docs directory and run `lattice sync`.",
+			: "Lattice is ready. Register `lattice mcp` with your agent (see the README); to bring in Lattice 2's markdown files, run `lattice import`.",
 	);
 
 	return { code: 0, stdout: `${lines.join("\n")}\n` };

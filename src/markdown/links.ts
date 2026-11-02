@@ -7,8 +7,8 @@
  * the reader is already on — none of the three says anything about how the
  * bundle's documents relate, so none of them is recorded.
  *
- * This is a line scan rather than a markdown parse: sync runs over the whole
- * bundle on every invocation, and the shapes below are what authors actually
+ * This is a line scan rather than a markdown parse: an import runs over every
+ * file, and every write over a whole note, and the shapes below are what authors actually
  * write.
  */
 

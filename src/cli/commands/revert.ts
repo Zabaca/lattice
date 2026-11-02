@@ -3,7 +3,7 @@ import { dailyBackup } from "../../store/backup.js";
 import { isRefusal } from "../../store/read.js";
 import { revert } from "../../store/undo.js";
 import { resolvePaths } from "../../utils/paths.js";
-import { openTarget } from "../database.js";
+import { openNoteStore } from "../database.js";
 import { count, text } from "../flags.js";
 import type { CommandContext, CommandOutput } from "../run.js";
 
@@ -16,7 +16,7 @@ export async function runRevert(
 	context: CommandContext,
 ): Promise<CommandOutput> {
 	const paths = resolvePaths(context.env);
-	const db = openTarget(paths, { store: true });
+	const db = openNoteStore(paths);
 	try {
 		const first = context.positionals[0];
 		const version = text(context.flags.version);

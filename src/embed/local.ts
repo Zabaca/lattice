@@ -63,7 +63,7 @@ export type ProgressReporter = (line: string) => void;
  * The rule is deliberately blunt: if the files are already there, the network
  * is not consulted at all — not for an etag, not for a revision check. That
  * is what makes a pre-placed model directory work for someone who cannot
- * download, and what makes the second run of `sync` the same offline as on.
+ * download, and what makes the second run of `embed` the same offline as on.
  */
 export function resolveModelSource(
 	env: Record<string, string | undefined>,

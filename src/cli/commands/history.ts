@@ -1,6 +1,6 @@
 import { history, isRefusal } from "../../store/read.js";
 import { resolvePaths } from "../../utils/paths.js";
-import { openTarget } from "../database.js";
+import { openNoteStore } from "../database.js";
 import { count, text } from "../flags.js";
 import type { CommandContext, CommandOutput } from "../run.js";
 
@@ -10,7 +10,7 @@ import type { CommandContext, CommandOutput } from "../run.js";
  * change in full; `--who`, `--since` and `--limit` narrow the list.
  */
 export function runHistory(context: CommandContext): CommandOutput {
-	const db = openTarget(resolvePaths(context.env), { store: true });
+	const db = openNoteStore(resolvePaths(context.env));
 	try {
 		const change = text(context.flags.change);
 		const answer = history(db, {

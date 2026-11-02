@@ -19,6 +19,7 @@
 import type { Database } from "bun:sqlite";
 import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
@@ -31,7 +32,7 @@ import {
 	RerankConfigurationError,
 	selectReranker,
 } from "../rerank/provider.js";
-import { dailyBackup, localDay } from "../store/backup.js";
+import { dailyBackup, dailyName, localDay } from "../store/backup.js";
 import { openStore } from "../store/open.js";
 import {
 	history,
@@ -42,6 +43,7 @@ import {
 	readNote,
 } from "../store/read.js";
 import { recall } from "../store/recall.js";
+import { copyDue, copySnapshot, remoteSetting } from "../store/remote.js";
 import { STORE_SCHEMA_VERSION } from "../store/schema.js";
 import { collectStats } from "../store/stats.js";
 import { revert } from "../store/undo.js";
@@ -150,9 +152,40 @@ export function createLatticeServer(options: ServerOptions): LatticeServer {
 			const message = error instanceof Error ? error.message : String(error);
 			return refusal({
 				refused: `Lattice failed: ${message}`,
-				next: "Try again; if it keeps failing, run `lattice status --store` in a terminal.",
+				next: "Try again; if it keeps failing, run `lattice status` in a terminal.",
 			});
 		}
+	};
+
+	// Where the day's snapshot is copied off this Mac, when the environment says.
+	const setting = remoteSetting(options.env);
+	const remote = setting.target;
+	// Stops a copy still running when this server goes away.
+	const stopCopies = new AbortController();
+	/**
+	 * Start copying today's snapshot off the Mac if it has not arrived, no other
+	 * server is already copying it, and the last attempt was a while ago. Never
+	 * awaited and never throws: a host that is down costs a write nothing (the
+	 * outcome is recorded for `stats`).
+	 */
+	const copyOffMac = (): void => {
+		if (remote === undefined) {
+			return;
+		}
+		const name = dailyName();
+		if (
+			!existsSync(join(paths.backups, name)) ||
+			!copyDue(paths, name, remote)
+		) {
+			return;
+		}
+		void copySnapshot(
+			paths,
+			join(paths.backups, name),
+			remote,
+			options.env,
+			stopCopies.signal,
+		);
 	};
 
 	let backedUpOn = "";
@@ -171,6 +204,7 @@ export function createLatticeServer(options: ServerOptions): LatticeServer {
 					backup = `no snapshot today: ${error instanceof Error ? error.message : String(error)}`;
 				}
 			}
+			copyOffMac();
 			const client = store.clientOf(mcp);
 			const out = await work({
 				db,
@@ -303,14 +337,16 @@ export function createLatticeServer(options: ServerOptions): LatticeServer {
 		() =>
 			answer((db) => {
 				const configured = embedding();
-				return collectStats(
-					db,
-					"unavailable" in configured
-						? undefined
-						: { model: configured.model, dim: configured.dim },
-					"unavailable" in configured ? configured.unavailable : undefined,
-					paths.backups,
-				);
+				return collectStats(db, {
+					configured:
+						"unavailable" in configured
+							? undefined
+							: { model: configured.model, dim: configured.dim },
+					configuredProblem:
+						"unavailable" in configured ? configured.unavailable : undefined,
+					paths,
+					remote: { label: setting.label, problem: setting.problem },
+				});
 			}),
 		true,
 	);
@@ -484,7 +520,13 @@ export function createLatticeServer(options: ServerOptions): LatticeServer {
 		})),
 	}));
 
-	return { server: mcp, close: () => store.close() };
+	return {
+		server: mcp,
+		close: () => {
+			stopCopies.abort();
+			store.close();
+		},
+	};
 }
 
 /** A tool's input as plain JSON Schema, without the boilerplate. */
@@ -585,7 +627,7 @@ class StoreHandle {
 		if (!existsSync(this.paths.store)) {
 			throw new Refused({
 				refused: `There is no store at ${this.paths.store}.`,
-				next: "Run `lattice import` in a terminal to build it.",
+				next: "Run `lattice init`, or `lattice import` to bring in notes, in a terminal.",
 			});
 		}
 

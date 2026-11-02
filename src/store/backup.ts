@@ -52,6 +52,11 @@ function localClock(now: Date): string {
 	return `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
 }
 
+/** The name of the day's snapshot: `store-2026-11-01.db`. */
+export function dailyName(now: Date = new Date()): string {
+	return `${PREFIX}${localDay(now)}${SUFFIX}`;
+}
+
 /** The snapshots in a folder, oldest first. */
 export function snapshotsIn(dir: string): string[] {
 	try {
@@ -137,11 +142,10 @@ export function dailyBackup(
 	dir: string,
 	now: Date = new Date(),
 ): Snapshot | null {
-	const day = localDay(now);
-	if (dailyIn(dir).includes(`${PREFIX}${day}${SUFFIX}`)) {
+	if (dailyIn(dir).includes(dailyName(now))) {
 		return null;
 	}
-	const made = snapshot(db, dir, `${PREFIX}${day}${SUFFIX}`);
+	const made = snapshot(db, dir, dailyName(now));
 	prune(dir);
 	return made;
 }

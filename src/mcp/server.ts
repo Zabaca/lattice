@@ -19,6 +19,7 @@
 import type { Database } from "bun:sqlite";
 import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
@@ -42,6 +43,13 @@ import {
 	readNote,
 } from "../store/read.js";
 import { recall } from "../store/recall.js";
+import {
+	copyDue,
+	copySnapshot,
+	describeRemote,
+	type RemoteTarget,
+	remoteFrom,
+} from "../store/remote.js";
 import { STORE_SCHEMA_VERSION } from "../store/schema.js";
 import { collectStats } from "../store/stats.js";
 import { revert } from "../store/undo.js";
@@ -155,6 +163,37 @@ export function createLatticeServer(options: ServerOptions): LatticeServer {
 		}
 	};
 
+	// Where the day's snapshot is copied off this Mac, when the environment says.
+	let remote: RemoteTarget | undefined;
+	let remoteProblem: string | undefined;
+	try {
+		remote = remoteFrom(options.env);
+	} catch (error) {
+		remoteProblem = error instanceof Error ? error.message : String(error);
+	}
+	let copying = false;
+	/**
+	 * Start copying today's snapshot off the Mac if it has not arrived and the
+	 * last attempt was a while ago. Never awaited and never throws: a host that
+	 * is down costs a write nothing (the outcome is recorded for `stats`).
+	 */
+	const copyOffMac = (): void => {
+		if (remote === undefined || copying) {
+			return;
+		}
+		const file = join(paths.backups, `store-${localDay(new Date())}.db`);
+		if (
+			!existsSync(file) ||
+			!copyDue(paths.backups, file.split("/").at(-1) ?? file, remote)
+		) {
+			return;
+		}
+		copying = true;
+		void copySnapshot(paths.backups, file, remote, options.env).finally(() => {
+			copying = false;
+		});
+	};
+
 	let backedUpOn = "";
 	/** A write: the day's first one takes the day's snapshot before it changes anything. */
 	const write = (
@@ -171,6 +210,7 @@ export function createLatticeServer(options: ServerOptions): LatticeServer {
 					backup = `no snapshot today: ${error instanceof Error ? error.message : String(error)}`;
 				}
 			}
+			copyOffMac();
 			const client = store.clientOf(mcp);
 			const out = await work({
 				db,
@@ -303,14 +343,20 @@ export function createLatticeServer(options: ServerOptions): LatticeServer {
 		() =>
 			answer((db) => {
 				const configured = embedding();
-				return collectStats(
+				const stats = collectStats(
 					db,
 					"unavailable" in configured
 						? undefined
 						: { model: configured.model, dim: configured.dim },
 					"unavailable" in configured ? configured.unavailable : undefined,
 					paths.backups,
+					new Date(),
+					remote === undefined ? null : describeRemote(remote),
 				);
+				if (remoteProblem !== undefined) {
+					stats.remote_copy.error = remoteProblem;
+				}
+				return stats;
 			}),
 		true,
 	);
@@ -585,7 +631,7 @@ class StoreHandle {
 		if (!existsSync(this.paths.store)) {
 			throw new Refused({
 				refused: `There is no store at ${this.paths.store}.`,
-				next: "Run `lattice import` in a terminal to build it.",
+				next: "Run `lattice init`, or `lattice import` to bring in notes, in a terminal.",
 			});
 		}
 

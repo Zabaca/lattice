@@ -1,18 +1,17 @@
 import { resolvePaths } from "../../utils/paths.js";
-import { openTarget } from "../database.js";
+import { openNoteStore } from "../database.js";
 import type { CommandContext, CommandOutput } from "../run.js";
 
 /**
- * Run a read-only query against the index, or with `--store` the note store,
- * and print the rows as JSON.
+ * Run a read-only query against the note store and print the rows as JSON.
  *
  * `query_only` is what makes this safe: SQLite itself rejects any statement
  * that would write, so there is no pattern matching over SQL text to be
- * fooled by. It matters most on the store, whose only writers are the store
- * module's operations.
+ * fooled by. It matters because the store's only writers are the store
+ * module's operations, which is what keeps every change in the history.
  */
 export function runSql(context: CommandContext): CommandOutput {
-	const db = openTarget(resolvePaths(context.env), context.flags);
+	const db = openNoteStore(resolvePaths(context.env));
 	try {
 		db.exec("PRAGMA query_only = ON");
 		let rows: unknown[];

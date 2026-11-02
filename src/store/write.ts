@@ -23,7 +23,7 @@ import {
 	recordConceptFailure,
 } from "../embed/run.js";
 import { readActiveSpace, sameSpace } from "../embed/state.js";
-import { chunkDocument } from "../sync/chunk.js";
+import { chunkDocument } from "../markdown/chunk.js";
 import {
 	carryFrom,
 	carryKey,

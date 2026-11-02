@@ -36,8 +36,8 @@ import { openDatabase } from "../db/open.js";
 import type { EmbeddingProvider } from "../embed/provider.js";
 import { CONCEPTS, embedPending } from "../embed/run.js";
 import { readActiveSpace, writeActiveSpace } from "../embed/state.js";
-import { NO_TYPE, normalizeDates, parseConcept } from "../sync/okf.js";
-import { scanBundle } from "../sync/scan.js";
+import { NO_TYPE, normalizeDates, parseConcept } from "../markdown/okf.js";
+import { scanBundle } from "../markdown/scan.js";
 import { workPath } from "../utils/paths.js";
 import { carryKey, resolveLinks, type StoredVector } from "./derive.js";
 import { EXPORT_MARK } from "./export.js";
@@ -103,9 +103,13 @@ export interface Prepared {
 
 export async function importNotes(input: ImportInput): Promise<ImportReport> {
 	if (existsSync(input.storePath)) {
-		throw new Error(
-			`A store already exists at ${input.storePath}. Import builds a fresh one: move it aside first.`,
-		);
+		// `lattice init` leaves an empty store; that is not one to protect.
+		if (holdsNotes(input.storePath)) {
+			throw new Error(
+				`A store already exists at ${input.storePath}. Import builds a fresh one: move it aside first.`,
+			);
+		}
+		removeStore(input.storePath);
 	}
 	if (input.docs === undefined && input.library === undefined) {
 		throw new Error("Nothing to import: give a bundle, a library, or both.");
@@ -251,6 +255,23 @@ export async function importNotes(input: ImportInput): Promise<ImportReport> {
 		rmSync(finished, { force: true });
 	}
 	return report;
+}
+
+/** Whether the store at `path` has a note or a change in it; one that cannot be opened is treated as holding something. */
+function holdsNotes(path: string): boolean {
+	try {
+		const db = openStore(path);
+		try {
+			const count = (table: string): number =>
+				db.query<{ n: number }, []>(`SELECT count(*) AS n FROM ${table}`).get()
+					?.n ?? 0;
+			return count("concepts") > 0 || count("changes") > 0;
+		} finally {
+			db.close();
+		}
+	} catch {
+		return true;
+	}
 }
 
 /** An export is a copy of the store; reading it back would make two sources of truth. */

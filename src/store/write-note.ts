@@ -7,8 +7,8 @@
 import type { Database } from "bun:sqlite";
 import { posix } from "node:path";
 import { conceptText } from "../embed/run.js";
-import { isExternal } from "../sync/links.js";
-import { typeDirectory } from "../sync/okf.js";
+import { isExternal } from "../markdown/links.js";
+import { typeDirectory } from "../markdown/okf.js";
 import { isRefusal, type Refusal, resolveNote } from "./read.js";
 import { moveSource, rewriteLinks, writeTarget } from "./relink.js";
 import { splitSections } from "./sections.js";

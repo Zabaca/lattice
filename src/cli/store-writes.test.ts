@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import matter from "gray-matter";
+import { normalizeDates, parseConcept } from "../markdown/okf.js";
 import {
 	backupNow,
 	dailyBackup,
@@ -20,7 +21,6 @@ import {
 	freshHome,
 	storeHome,
 } from "../store/testing.js";
-import { normalizeDates, parseConcept } from "../sync/okf.js";
 
 /**
  * The commands that go with the writing tools, through the CLI's one entry
@@ -84,7 +84,7 @@ describe("lattice history", () => {
 		const result = await cli(freshHome(), ["history"]);
 
 		expect(result.code).toBe(1);
-		expect(result.stderr).toContain("Run `lattice import` first.");
+		expect(result.stderr).toContain("`lattice import`");
 	});
 });
 
@@ -190,9 +190,9 @@ describe("lattice backup", () => {
 		expect(first.stdout).toContain(join(home, "backups", "store-"));
 		expect(second.code).toBe(0);
 		expect(readdirSync(join(home, "backups"))).toHaveLength(2);
-		const status = await cli(home, ["status", "--store"]);
+		const status = await cli(home, ["status"]);
 		expect(status.stdout).toMatch(/Backup: +last at \d{4}-/);
-		const none = await cli(await storeHome(), ["status", "--store"]);
+		const none = await cli(await storeHome(), ["status"]);
 		expect(none.stdout).toContain("none yet");
 	});
 
@@ -382,7 +382,7 @@ describe("lattice export", () => {
 		expect(readdirSync(out)).toEqual(["mine.txt"]);
 	});
 
-	test("the live bundle is never an export folder, nor a folder that holds it", async () => {
+	test("the folder import reads Lattice 2's files from is never an export folder, nor a folder that holds it", async () => {
 		const home = await storeHome();
 
 		const into = await cli(home, ["export", join(home, "docs")]);
@@ -391,7 +391,7 @@ describe("lattice export", () => {
 
 		for (const result of [into, inside, above]) {
 			expect(result.code).toBe(1);
-			expect(result.stderr).toContain("live bundle");
+			expect(result.stderr).toContain("where `lattice import` looks");
 		}
 		expect(existsSync(join(home, "docs", "sub"))).toBe(false);
 	});
@@ -428,6 +428,6 @@ describe("lattice export", () => {
 		expect(existsSync(join(home, "export", "topic", "jev.md"))).toBe(true);
 		// Writing a file beside the store never makes it a source.
 		writeFileSync(join(home, "export", "topic", "extra.md"), "x");
-		expect((await cli(home, ["status", "--store"])).code).toBe(0);
+		expect((await cli(home, ["status"])).code).toBe(0);
 	});
 });

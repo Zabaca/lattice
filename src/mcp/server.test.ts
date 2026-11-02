@@ -114,7 +114,7 @@ describe("the tools", () => {
 
 		expect(result.isError).toBe(true);
 		expect(result.body.next).toBe(
-			"Run `lattice import` in a terminal to build it.",
+			"Run `lattice init`, or `lattice import` to bring in notes, in a terminal.",
 		);
 	});
 

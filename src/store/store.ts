@@ -13,7 +13,7 @@
 
 import type { Database } from "bun:sqlite";
 import { posix } from "node:path";
-import { hashContent } from "../sync/scan.js";
+import { hashContent } from "../markdown/scan.js";
 import {
 	carryFrom,
 	refreshDerived,

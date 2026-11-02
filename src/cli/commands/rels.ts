@@ -1,14 +1,14 @@
 import type { Database } from "bun:sqlite";
 import { resolvePaths } from "../../utils/paths.js";
-import { openTarget, targetProblem } from "../database.js";
+import { openNoteStore, storeProblem } from "../database.js";
 import type { CommandContext, CommandOutput } from "../run.js";
 
 /**
- * What one concept is connected to: the documents it links to, the documents
- * linking back at it, and the links it makes that nothing answers yet.
+ * What one note is connected to: the notes it links to, the notes linking back
+ * at it, and the links it makes that nothing answers yet.
  *
- * The unresolved list is the point of the last of those: it is the bundle
- * telling its author which documents they have promised and not written.
+ * The unresolved list is the point of the last of those: it is the store
+ * telling its authors which notes they have promised and not written.
  */
 
 interface ConceptRow {
@@ -44,19 +44,19 @@ const EDGE_COLUMNS =
 export function runRels(context: CommandContext): CommandOutput {
 	const paths = resolvePaths(context.env);
 
-	const problem = targetProblem(paths, context.flags);
+	const problem = storeProblem(paths);
 	if (problem !== undefined) {
 		return { code: 1, stderr: problem };
 	}
 
 	const wanted = context.positionals[0];
-	const db = openTarget(paths, context.flags);
+	const db = openNoteStore(paths);
 	try {
 		const concept = findConcept(db, wanted);
 		if (concept === undefined) {
 			return {
 				code: 1,
-				stderr: `No indexed concept matches ${wanted}. Run \`lattice sync\`, or check the path.`,
+				stderr: `No note matches ${wanted}. Check the name; \`lattice sql "SELECT identifier FROM concepts"\` lists them.`,
 			};
 		}
 

@@ -12,8 +12,8 @@ import type { Database } from "bun:sqlite";
 import { openDatabase } from "../db/open.js";
 import type { EmbeddingProvider } from "../embed/provider.js";
 import type { EmbedReport } from "../embed/run.js";
+import { INVALID_YAML } from "../markdown/okf.js";
 import { search } from "../search/search.js";
-import { INVALID_YAML } from "../sync/okf.js";
 import type { Prepared } from "./import.js";
 
 /** What one source contributed, counted in the store. */

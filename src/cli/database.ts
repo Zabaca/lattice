@@ -1,38 +1,24 @@
 /**
- * Which database a command reads: the file index, or with `--store` the note
- * store. Until the cutover both exist, and the file index stays the default.
+ * The database every command reads: the note store.
  */
 
 import type { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
-import { openDatabase } from "../db/open.js";
 import { openStore } from "../store/open.js";
 import type { LatticePaths } from "../utils/paths.js";
 
-type Flags = Record<string, string | true>;
-
-/** What is missing and what to run, or undefined when the database is there. */
-export function targetProblem(
-	paths: LatticePaths,
-	flags: Flags,
-): string | undefined {
-	if (flags.store !== undefined) {
-		return existsSync(paths.store)
-			? undefined
-			: `No note store at ${paths.store}. Run \`lattice import\` first.`;
-	}
-	return existsSync(paths.database)
+/** What is missing and what to run, or undefined when the store is there. */
+export function storeProblem(paths: LatticePaths): string | undefined {
+	return existsSync(paths.store)
 		? undefined
-		: `No Lattice index at ${paths.database}. Run \`lattice init\` first.`;
+		: `No note store at ${paths.store}. Run \`lattice init\` for an empty one, or \`lattice import\` to bring in notes.`;
 }
 
-/** Open the database the flags name, or throw what is missing and what to run. */
-export function openTarget(paths: LatticePaths, flags: Flags): Database {
-	const problem = targetProblem(paths, flags);
+/** Open the store, or throw what is missing and what to run. */
+export function openNoteStore(paths: LatticePaths): Database {
+	const problem = storeProblem(paths);
 	if (problem !== undefined) {
 		throw new Error(problem);
 	}
-	return flags.store !== undefined
-		? openStore(paths.store)
-		: openDatabase(paths.database);
+	return openStore(paths.store);
 }

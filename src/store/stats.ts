@@ -11,6 +11,7 @@ import {
 	type VectorSpace,
 } from "../embed/state.js";
 import { lastBackup } from "./backup.js";
+import { readRemoteCopy } from "./remote.js";
 
 export interface SearchHealth {
 	/** True when search can run fully: a model, and a vector for every passage. */
@@ -112,6 +113,17 @@ export interface Stats {
 	questions: { last_7_days: number; projects: number; last: string | null };
 	/** When the newest snapshot was made; null when there is none. */
 	last_backup: string | null;
+	/** The copy of the snapshots on another machine, if one is asked for. */
+	remote_copy: {
+		/** Where it goes (host:folder); null when none is configured. */
+		target: string | null;
+		/** When a copy last arrived; null when none has. */
+		last_ok: string | null;
+		/** When the last attempt was made; null when none was. */
+		last_attempt: string | null;
+		/** Why the last attempt failed, when it did. */
+		error: string | null;
+	};
 }
 
 export function collectStats(
@@ -120,6 +132,7 @@ export function collectStats(
 	configuredProblem: string | undefined,
 	backups: string,
 	now: Date = new Date(),
+	remote: string | null = null,
 ): Stats {
 	const one = <Row>(sql: string, ...values: (string | number)[]): Row | null =>
 		db.query<Row, (string | number)[]>(sql).get(...values);
@@ -213,5 +226,21 @@ export function collectStats(
 			last: lastQuestion?.at ?? null,
 		},
 		last_backup: lastBackup(backups),
+		remote_copy: remoteCopy(backups, remote),
+	};
+}
+
+function remoteCopy(
+	backups: string,
+	target: string | null,
+): Stats["remote_copy"] {
+	const record = readRemoteCopy(backups);
+	// A marker left by an earlier setting says nothing about this one.
+	const mine = record !== null && record.target === target ? record : null;
+	return {
+		target,
+		last_ok: mine?.last_ok_at ?? null,
+		last_attempt: mine?.attempted_at ?? null,
+		error: mine !== null && !mine.ok ? (mine.error ?? "failed") : null,
 	};
 }

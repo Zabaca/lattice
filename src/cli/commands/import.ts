@@ -53,7 +53,7 @@ export async function runImport(
 		storePath: paths.store,
 		docs,
 		library,
-		oldIndex: existsSync(paths.database) ? paths.database : undefined,
+		oldIndex: existsSync(paths.fileIndex) ? paths.fileIndex : undefined,
 		provider: selectProvider(context.env, context.report),
 		report: context.report,
 		questions,

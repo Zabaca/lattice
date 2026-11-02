@@ -1932,13 +1932,8 @@ describe("guards on removing and putting back", () => {
 describe("the note's own vector", () => {
 	const vectors = async (home: string) =>
 		JSON.parse(
-			(
-				await cli(home, [
-					"sql",
-					"--store",
-					"SELECT count(*) AS n FROM concept_embeddings",
-				])
-			).stdout,
+			(await cli(home, ["sql", "SELECT count(*) AS n FROM concept_embeddings"]))
+				.stdout,
 		)[0].n as number;
 
 	test("a title change lands with the new vector in the same transaction, so there is never a note without one", async () => {
@@ -1983,7 +1978,6 @@ describe("the note's own vector", () => {
 		expect(await vectors(home)).toBe(3);
 		const failures = await cli(home, [
 			"sql",
-			"--store",
 			"SELECT count(*) AS n FROM concept_embed_failures",
 		]);
 		expect(JSON.parse(failures.stdout)[0].n).toBe(1);

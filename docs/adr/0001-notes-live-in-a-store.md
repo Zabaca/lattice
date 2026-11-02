@@ -1,6 +1,6 @@
 # 1. Notes live in a store, not in files
 
-Status: accepted, 2026-11-01. Slices 2 and 3 of 5 build the store, the import and the tools (reading, writing, history and undo, snapshots, export); the cutover is slice 4.
+Status: accepted, 2026-11-01. Built in slices: the store, the import and the tools (reading, writing, history and undo, snapshots, export), then the cutover (slice 4: the files retired as the source, `sync` removed, the plugin removed, a daily copy of the snapshot off the machine).
 
 ## Context
 
@@ -47,7 +47,9 @@ file in a new schema version, and a build refuses a schema it does not know.
 - A wrong write counts until someone undoes it, and its sections show as
   unchecked meanwhile.
 - The database is the only copy. Daily snapshots guard against a bad day, not
-  against losing the machine.
+  against losing the machine; so the server also copies the day's snapshot to
+  another machine over ssh when `LATTICE_BACKUP_REMOTE` names one (a failed copy
+  never affects a write and is reported by `stats`).
 - Lattice 2.x stays on npm unchanged. The store ships as 3.0.0.
 
 ## Alternatives considered
@@ -70,3 +72,16 @@ Recorded here so the deviations are not found later by surprise (see CLAUDE.md,
   a folder that is not its own or into the live bundle.
 - The export's "this is a copy" line is the first line inside the frontmatter, not
   above it, so the file still parses as a note's frontmatter would.
+
+## Where the cutover differs from the option
+
+- `lattice init` makes an empty store, and `lattice import` replaces a store that
+  holds no notes, so a new user can start either way.
+- The file index (`lattice.db`) is not deleted; `lattice import` reads it to copy
+  vectors and to check search, and nothing else does. The 46 markdown files move
+  to `archive/v2` (beside Lattice 1's `archive/v1`); only `lattice import` reads
+  them.
+- `lattice search` no longer takes `--trust` or shows a trust label: a note has
+  no checked state of its own, only its sections do, and `recall` reports those.
+- The optional copy off the machine (James, 2026-11-01: "Copy to ryzen-9 daily")
+  is in the build, though the option listed it as out of scope.

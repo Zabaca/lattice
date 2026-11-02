@@ -8,14 +8,13 @@
  * vectors keyed by the text they were made from, and every new passage with
  * the same text takes its vector from there.
  *
- * It repeats the insert statements `sync/index.ts` uses for files. That module
- * goes at the cutover, and sharing the statements would mean teaching the
- * file index about a column it does not have.
+ * The statements are the ones the file index used before the cutover, with the
+ * columns the store added.
  */
 
 import type { Database } from "bun:sqlite";
-import { chunkDocument } from "../sync/chunk.js";
-import { extractBodyLinks, extractSourceLinks } from "../sync/links.js";
+import { chunkDocument } from "../markdown/chunk.js";
+import { extractBodyLinks, extractSourceLinks } from "../markdown/links.js";
 
 /** One vector as stored: the space it is in and its bytes. */
 export interface StoredVector {

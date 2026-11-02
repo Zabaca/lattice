@@ -2,13 +2,12 @@
  * @fileoverview Path resolution for Lattice.
  *
  * All Lattice data lives under a single home directory:
- * - docs/        Markdown documentation
- * - lattice.db   SQLite index (concepts, chunks, links, embeddings)
- * - store.db     The note store (notes, sections, changes, and the same index tables)
+ * - store.db     The note store: the only copy of the notes, their changes, and the search index derived from them
  * - backups/     Snapshots of store.db: one a day, the last 30
  * - export/      The default home of `lattice export`, a copy never read back
- * - archive/     What `lattice import` may be asked to read; nothing watches it
+ * - archive/     Notes kept outside the store (Lattice 1's library, Lattice 2's files); only `lattice import` reads them
  * - models/      Cached embedding model weights (`LATTICE_MODEL_DIR` moves it)
+ * - docs/, lattice.db   Lattice 2's file bundle and its index: read by `lattice import` once, to bring them in
  * - .env         Reserved for local configuration; nothing reads it yet
  *
  * The home directory is resolved from an explicit environment rather than a
@@ -21,17 +20,17 @@ import { join } from "node:path";
 export interface LatticePaths {
 	/** The Lattice home directory. */
 	home: string;
-	/** The markdown documentation directory. */
+	/** Lattice 2's markdown bundle, which `lattice import` reads when it is there. */
 	docs: string;
-	/** The SQLite index. */
-	database: string;
+	/** Lattice 2's file index, whose vectors `lattice import` copies when it is there. */
+	fileIndex: string;
 	/** The note store: the notes themselves, their changes, and an index derived from them. */
 	store: string;
 	/** Snapshots of the note store: one a day, the last 30. */
 	backups: string;
 	/** Where `lattice export` writes by default: a copy of the notes as markdown. */
 	export: string;
-	/** Folders of notes kept outside the bundle, such as `archive/v1`. */
+	/** Folders of notes kept outside the store, such as `archive/v1` and `archive/v2`. */
 	archive: string;
 	/** Lattice 1's archived library: `docs/` and `lost/` under it. */
 	library: string;
@@ -39,8 +38,8 @@ export interface LatticePaths {
 	env: string;
 	/** Cached embedding model weights, one directory per hub repository. */
 	models: string;
-	/** The lock a running sync holds. */
-	syncLock: string;
+	/** The lock a running `lattice embed` holds. */
+	embedLock: string;
 }
 
 /**
@@ -57,7 +56,7 @@ export function resolvePaths(
 	return {
 		home,
 		docs: join(home, "docs"),
-		database: join(home, "lattice.db"),
+		fileIndex: join(home, "lattice.db"),
 		store: join(home, "store.db"),
 		backups: join(home, "backups"),
 		export: join(home, "export"),
@@ -65,7 +64,7 @@ export function resolvePaths(
 		library: join(home, "archive", "v1"),
 		env: join(home, ".env"),
 		models: env.LATTICE_MODEL_DIR?.trim() || join(home, "models"),
-		syncLock: join(home, ".sync.lock"),
+		embedLock: join(home, ".embed.lock"),
 	};
 }
 

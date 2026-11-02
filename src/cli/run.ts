@@ -20,7 +20,6 @@ import { runRevert } from "./commands/revert.js";
 import { runSearch } from "./commands/search.js";
 import { runSql } from "./commands/sql.js";
 import { runStatus } from "./commands/status.js";
-import { runSync } from "./commands/sync.js";
 
 export interface CliOptions {
 	/** The argv tail: no executable, no script path. */
@@ -76,21 +75,16 @@ interface CommandSpec {
 const COMMANDS: Record<string, CommandSpec> = {
 	init: {
 		usage: "lattice init",
-		summary: "Create the Lattice home directory and database",
+		summary:
+			"Create the Lattice home, an empty note store, and fetch the embedding model",
 		requiredArgs: [],
 		run: runInit,
 	},
 	status: {
 		usage: "lattice status",
-		summary: "Show what is indexed",
+		summary: "Show what the note store holds and how search is doing",
 		requiredArgs: [],
 		run: runStatus,
-	},
-	sync: {
-		usage: "lattice sync",
-		summary: "Index the OKF bundle",
-		requiredArgs: [],
-		run: runSync,
 	},
 	mcp: {
 		usage: "lattice mcp",
@@ -103,7 +97,7 @@ const COMMANDS: Record<string, CommandSpec> = {
 			"lattice import [--docs dir] [--library dir] [--no-docs] [--no-library]\n" +
 			"       [--questions file] [--json]",
 		summary:
-			"Build the note store from the bundle and Lattice 1's library, and prove nothing was lost",
+			"Build the note store from Lattice 2's markdown files and Lattice 1's library, and prove nothing was lost",
 		requiredArgs: [],
 		run: runImport,
 	},
@@ -130,27 +124,27 @@ const COMMANDS: Record<string, CommandSpec> = {
 		run: runExport,
 	},
 	backup: {
-		usage: "lattice backup",
-		summary: "Take a snapshot of the note store now",
+		usage: "lattice backup [--remote [host:folder]]",
+		summary:
+			"Take a snapshot of the note store now; --remote also copies it to another machine",
 		requiredArgs: [],
 		run: runBackup,
 	},
 	embed: {
 		usage: "lattice embed [--retry-failed] [--reembed]",
-		summary: "Embed whatever is still waiting for a vector",
+		summary: "Embed whatever in the note store is still waiting for a vector",
 		requiredArgs: [],
 		run: runEmbed,
 	},
 	rels: {
-		usage: "lattice rels <concept> [--json]",
-		summary:
-			"Show what a concept links to, what links back, and what is missing",
-		requiredArgs: ["concept"],
+		usage: "lattice rels <note> [--json]",
+		summary: "Show what a note links to, what links back, and what is missing",
+		requiredArgs: ["note"],
 		run: runRels,
 	},
 	sql: {
 		usage: "lattice sql <query>",
-		summary: "Run a read-only SQL query against the index",
+		summary: "Run a read-only SQL query against the note store",
 		requiredArgs: ["query"],
 		run: runSql,
 	},
@@ -159,9 +153,9 @@ const COMMANDS: Record<string, CommandSpec> = {
 			"lattice search <query> [--json] [--limit n] [--chunks n]\n" +
 			"       [--concepts] [--expand n | --no-expand] [--require-embeddings]\n" +
 			"       [--candidates n] [--require-rerank]\n" +
-			"       [--type t] [--tag t] [--dir d] [--status s] [--trust t]\n" +
+			"       [--type t] [--tag t] [--dir d] [--status s]\n" +
 			"       [--include-deprecated] [--as-of date]",
-		summary: "Search the index by keyword and by meaning at once",
+		summary: "Search the note store by keyword and by meaning at once",
 		requiredArgs: ["query"],
 		run: runSearch,
 	},

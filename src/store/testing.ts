@@ -5,7 +5,7 @@
  */
 
 import { expect } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -90,6 +90,28 @@ export const BUNDLE: Record<string, string> = {
 		`# A long note\n\nOpening.\n\n## One\n\n${LONG_SECTION}\n## Two\n\n${LONG_SECTION}\n## Three\n\n${LONG_SECTION}`,
 	),
 };
+
+/**
+ * Lattice 2's file index of `BUNDLE`, as `~/.lattice/lattice.db` was before the
+ * cutover. It is a binary built by Lattice 2's own sync (main at 5949d1d, with
+ * LATTICE_EMBED_PROVIDER=hash: init, then sync, on a home holding `BUNDLE`; then
+ * VACUUMed to 1 KiB pages to keep the file small), kept because the code that
+ * built the index is gone and the import still reads one: it copies the vectors
+ * and measures search against it. Change `BUNDLE` and the import tests that copy
+ * its vectors fail until it is rebuilt that way.
+ */
+export const FILE_INDEX = join(
+	import.meta.dir,
+	"..",
+	"fixtures",
+	"index",
+	"lattice.db",
+);
+
+/** Put Lattice 2's file index of `BUNDLE` in the home. */
+export function writeFileIndex(home: string): void {
+	copyFileSync(FILE_INDEX, join(home, "lattice.db"));
+}
 
 /** Lattice 1's shape: no types, subject folders, an index.md, a stub, a dead link. */
 export const LIBRARY = {

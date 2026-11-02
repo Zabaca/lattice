@@ -1,14 +1,13 @@
 {
 	"name": "@zabaca/lattice",
 	"version": "2.1.0",
-	"description": "Local-first retrieval engine for markdown knowledge bases",
+	"description": "A local note store for AI agents: one SQLite database every session asks first, with search by keyword and meaning, attributed changes and undo",
 	"type": "module",
 	"bin": {
 		"lattice": "dist/main.js"
 	},
 	"files": [
 		"dist",
-		"commands",
 		"README.md"
 	],
 	"scripts": {
@@ -26,11 +25,10 @@
 		"release:dry": "bun publish --dry-run"
 	},
 	"keywords": [
-		"knowledge-graph",
+		"mcp",
+		"knowledge-base",
 		"sqlite",
-		"documentation",
-		"markdown",
-		"ai",
+		"ai-agents",
 		"embeddings",
 		"semantic-search"
 	],

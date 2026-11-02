@@ -69,7 +69,7 @@ function textOf(body: Body): string {
 /** The store as a person would check it afterwards (with `lattice sql`): whole, and with a change per version. */
 async function checkStore(home: string, note: string, versions: number) {
 	const sql = async (query: string) =>
-		JSON.parse((await cli(home, ["sql", "--store", query])).stdout) as Array<
+		JSON.parse((await cli(home, ["sql", query])).stdout) as Array<
 			Record<string, unknown>
 		>;
 	expect((await sql("PRAGMA integrity_check"))[0].integrity_check).toBe("ok");

@@ -5,8 +5,6 @@ import {
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
-	renameSync,
-	rmSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -40,12 +38,25 @@ function invoke(
 	});
 }
 
-/** An initialised home whose docs directory holds the fixture OKF bundle. */
+/** A home whose docs directory holds the fixture bundle: Lattice 2's files, ready to import. */
 async function bundledHome(): Promise<string> {
 	const home = freshHome();
-	await invoke(["init"], home);
 	cpSync(FIXTURE_BUNDLE, join(home, "docs"), { recursive: true });
 	return home;
+}
+
+/**
+ * Build the home's store from its docs with `lattice import`, which is how
+ * notes reach a store now. The library is left out: these tests are about the
+ * bundle.
+ */
+async function imported(
+	home: string,
+	env: Record<string, string | undefined> = {},
+) {
+	const result = await invoke(["import", "--no-library"], home, env);
+	expect(result.code).toBe(0);
+	return result;
 }
 
 /** Rows from a read-only query, driven through the CLI like everything else. */
@@ -83,17 +94,18 @@ describe("runCli argument handling", () => {
 });
 
 describe("lattice init", () => {
-	test("creates the home directory, docs and database, and reports them", async () => {
-		const home = freshHome();
+	test("creates the home directory and an empty store, and reports them", async () => {
+		const home = join(freshHome(), "nested");
 
 		const result = await invoke(["init"], home);
 
 		expect(result.code).toBe(0);
 		expect(result.stderr).toBe("");
-		expect(result.stdout).toContain(`Created ${join(home, "docs")}`);
-		expect(result.stdout).toContain(`Created ${join(home, "lattice.db")}`);
-		expect(existsSync(join(home, "docs"))).toBe(true);
-		expect(existsSync(join(home, "lattice.db"))).toBe(true);
+		expect(result.stdout).toContain(`Created ${home}`);
+		expect(result.stdout).toContain(`Created ${join(home, "store.db")}`);
+		expect(existsSync(join(home, "store.db"))).toBe(true);
+		expect(existsSync(join(home, "docs"))).toBe(false);
+		expect(existsSync(join(home, "lattice.db"))).toBe(false);
 	});
 
 	test("a second run exits zero and reports the existing artifacts", async () => {
@@ -105,8 +117,8 @@ describe("lattice init", () => {
 		expect(first.code).toBe(0);
 		expect(second.code).toBe(0);
 		expect(second.stderr).toBe("");
-		expect(second.stdout).toContain(`Exists  ${join(home, "docs")}`);
-		expect(second.stdout).toContain(`Exists  ${join(home, "lattice.db")}`);
+		expect(second.stdout).toContain(`Exists  ${home}`);
+		expect(second.stdout).toContain(`Exists  ${join(home, "store.db")}`);
 		expect(second.stdout).not.toContain("Created");
 	});
 });
@@ -134,16 +146,17 @@ describe("lattice sql", () => {
 
 		expect(result.code).not.toBe(0);
 		expect(result.stderr).toContain("read-only");
+		// The schema version and the kind: both still there.
 		expect(
 			JSON.parse(
 				(await invoke(["sql", "SELECT count(*) AS n FROM meta"], home)).stdout,
 			),
-		).toEqual([{ n: 1 }]);
+		).toEqual([{ n: 2 }]);
 	});
 });
 
 describe("lattice status", () => {
-	test("reports an empty index and exits zero after init", async () => {
+	test("reports an empty store and exits zero after init", async () => {
 		const home = freshHome();
 		await invoke(["init"], home);
 
@@ -151,138 +164,18 @@ describe("lattice status", () => {
 
 		expect(result.code).toBe(0);
 		expect(result.stderr).toBe("");
-		expect(result.stdout).toContain("Concepts:   0");
-		expect(result.stdout).toContain("Chunks:     0");
-		expect(result.stdout).toContain("Embeddings: 0");
-		expect(result.stdout).toContain("Links:      0");
-		expect(result.stdout).toContain("Nothing indexed yet.");
+		expect(result.stdout).toContain("Notes:     0");
+		expect(result.stdout).toContain("Sections:  0");
+		expect(result.stdout).toContain("Passages:  0");
+		expect(result.stdout).toContain("Off Mac:   not set up");
 	});
 
-	test("exits non-zero when the index does not exist", async () => {
+	test("exits non-zero when the store does not exist", async () => {
 		const result = await invoke(["status"]);
 
 		expect(result.code).not.toBe(0);
-		expect(result.stderr).toContain("No Lattice index");
+		expect(result.stderr).toContain("No note store");
 		expect(result.stderr).toContain("lattice init");
-	});
-});
-
-describe("lattice sync", () => {
-	test("indexes every non-reserved markdown file by its bundle-relative path", async () => {
-		const home = await bundledHome();
-
-		const result = await invoke(["sync"], home);
-
-		expect(result.code).toBe(0);
-		const paths = await sql<{ path: string }>(
-			home,
-			"SELECT path FROM concepts ORDER BY path",
-		);
-		expect(paths.map((row) => row.path)).toEqual([
-			"bigquery-table/orders.md",
-			"bigquery-table/users.md",
-			"gauge/body-match.md",
-			"gauge/fresh-widget.md",
-			"gauge/heading-match.md",
-			"gauge/stale-widget.md",
-			"gauge/title-match.md",
-			"guide/chunking.md",
-			"note/broken.md",
-			"note/plain.md",
-			"note/unverified.md",
-		]);
-	});
-
-	test("promotes the filter fields to columns and keeps the rest whole", async () => {
-		const home = await bundledHome();
-		await invoke(["sync"], home);
-
-		const [users] = await sql<{
-			identifier: string;
-			dir: string;
-			type: string;
-			title: string;
-			description: string;
-			status: string;
-			stale_after: string;
-			frontmatter: string;
-		}>(
-			home,
-			"SELECT identifier, dir, type, title, description, status, stale_after, frontmatter" +
-				" FROM concepts WHERE path = 'bigquery-table/users.md'",
-		);
-
-		expect(users.identifier).toBe("bigquery-table/users");
-		expect(users.dir).toBe("bigquery-table");
-		expect(users.type).toBe("BigQuery Table");
-		expect(users.title).toBe("Users table");
-		expect(users.description).toBe("One row per registered account.");
-		expect(users.status).toBe("stable");
-		expect(users.stale_after).toBe("2027-01-01T00:00:00Z");
-
-		// The remainder keeps the fields no column was promoted for, and drops
-		// the promoted ones so there is one place to read each of them.
-		const rest = JSON.parse(users.frontmatter);
-		expect(rest.resource).toBe("bigquery://project/dataset/users");
-		expect(rest.generated.by).toBe("human:ahormati");
-		expect(rest).not.toHaveProperty("type");
-		expect(rest).not.toHaveProperty("tags");
-	});
-
-	test("records tags and derives trust from the verification records", async () => {
-		const home = await bundledHome();
-		await invoke(["sync"], home);
-
-		expect(
-			await sql(
-				home,
-				"SELECT c.path, t.tag FROM tags t JOIN concepts c ON c.id = t.concept_id" +
-					" ORDER BY c.path, t.tag",
-			),
-		).toEqual([
-			{ path: "bigquery-table/orders.md", tag: "data" },
-			{ path: "bigquery-table/users.md", tag: "core" },
-			{ path: "bigquery-table/users.md", tag: "data" },
-			{ path: "gauge/body-match.md", tag: "rank" },
-			{ path: "gauge/fresh-widget.md", tag: "rank" },
-			{ path: "gauge/heading-match.md", tag: "rank" },
-			{ path: "gauge/stale-widget.md", tag: "rank" },
-			{ path: "gauge/title-match.md", tag: "rank" },
-			{ path: "guide/chunking.md", tag: "guide" },
-		]);
-
-		expect(
-			await sql(home, "SELECT path, trust FROM concepts ORDER BY path"),
-		).toEqual([
-			{ path: "bigquery-table/orders.md", trust: "machine-confirmed" },
-			{ path: "bigquery-table/users.md", trust: "human-reviewed" },
-			{ path: "gauge/body-match.md", trust: "unverified" },
-			{ path: "gauge/fresh-widget.md", trust: "unverified" },
-			{ path: "gauge/heading-match.md", trust: "unverified" },
-			{ path: "gauge/stale-widget.md", trust: "unverified" },
-			{ path: "gauge/title-match.md", trust: "unverified" },
-			{ path: "guide/chunking.md", trust: "unverified" },
-			{ path: "note/broken.md", trust: "unverified" },
-			{ path: "note/plain.md", trust: "unverified" },
-			{ path: "note/unverified.md", trust: "unverified" },
-		]);
-	});
-
-	test("indexes a file with missing or invalid frontmatter with no type", async () => {
-		const home = await bundledHome();
-
-		const result = await invoke(["sync"], home);
-
-		expect(result.code).toBe(0);
-		expect(
-			await sql(
-				home,
-				"SELECT path, type FROM concepts WHERE path LIKE 'note/%' AND type IS NULL ORDER BY path",
-			),
-		).toEqual([
-			{ path: "note/broken.md", type: null },
-			{ path: "note/plain.md", type: null },
-		]);
 	});
 });
 
@@ -315,7 +208,7 @@ async function chunksOf(home: string, path: string): Promise<ChunkRow[]> {
 describe("chunking", () => {
 	test("splits at headings, merging a section too short to stand alone", async () => {
 		const home = await bundledHome();
-		await invoke(["sync"], home);
+		await imported(home);
 
 		const chunks = await chunksOf(home, "guide/chunking.md");
 
@@ -333,36 +226,39 @@ describe("chunking", () => {
 		);
 	});
 
-	test("chunk offsets address the original file, frontmatter included", async () => {
+	test("chunk offsets address the note's text, which opens where the frontmatter ends", async () => {
 		const home = await bundledHome();
-		await invoke(["sync"], home);
+		await imported(home);
 
 		const chunks = await chunksOf(home, "guide/chunking.md");
 
-		// The fixture's first heading is on line 7, behind four lines of
-		// frontmatter and its two delimiters; the section runs to the line before
-		// "## Short" on line 14.
-		expect(chunks[0].start_line).toBe(7);
-		expect(chunks[0].end_line).toBe(13);
-		expect(chunks[1].start_line).toBe(14);
-		// The fenced section starts at "## Fenced code" and runs to the last line.
-		expect(chunks[4].start_line).toBe(46);
-		expect(chunks[4].end_line).toBe(82);
+		// The note's text is the file's body: it opens on the blank line after the
+		// frontmatter (file line 6, five lines of it with the delimiters), so the
+		// file's first heading, on line 7, is line 2 here; the section runs to
+		// the line before "## Short" (file line 14, here 9).
+		expect(chunks[0].start_line).toBe(2);
+		expect(chunks[0].end_line).toBe(8);
+		expect(chunks[1].start_line).toBe(9);
+		// The fenced section starts at "## Fenced code" (file line 46) and runs
+		// to the last line (file line 82).
+		expect(chunks[4].start_line).toBe(41);
+		expect(chunks[4].end_line).toBe(77);
 
 		const raw = readFileSync(
 			join(home, "docs", "guide", "chunking.md"),
 			"utf8",
 		);
-		expect(raw.slice(chunks[0].start_char, chunks[0].end_char).trim()).toBe(
+		const body = raw.split("\n").slice(5).join("\n");
+		expect(body.slice(chunks[0].start_char, chunks[0].end_char).trim()).toBe(
 			chunks[0].content,
 		);
-		expect(raw.split("\n")[chunks[0].start_line - 1]).toBe("# Chunking guide");
-		expect(raw.split("\n")[chunks[4].start_line - 1]).toBe("## Fenced code");
+		expect(body.split("\n")[chunks[0].start_line - 1]).toBe("# Chunking guide");
+		expect(body.split("\n")[chunks[4].start_line - 1]).toBe("## Fenced code");
 	});
 
 	test("splits an oversize section at paragraphs with an overlap", async () => {
 		const home = await bundledHome();
-		await invoke(["sync"], home);
+		await imported(home);
 
 		const chunks = await chunksOf(home, "guide/chunking.md");
 		const [first, second] = chunks.filter(
@@ -387,7 +283,7 @@ describe("chunking", () => {
 
 	test("never splits a fenced code block, even over the cap", async () => {
 		const home = await bundledHome();
-		await invoke(["sync"], home);
+		await imported(home);
 
 		const chunks = await chunksOf(home, "guide/chunking.md");
 		const fenced = chunks.filter((chunk) => chunk.heading === "Fenced code");
@@ -428,7 +324,7 @@ describe("authored links", () => {
 	test("records body links inside the bundle, and nothing else", async () => {
 		const home = await bundledHome();
 
-		await invoke(["sync"], home);
+		await imported(home);
 
 		const links = await linksFrom(home, "bigquery-table/users.md");
 		// Three of the four links in the body point inside the bundle; the fourth
@@ -445,7 +341,7 @@ describe("authored links", () => {
 	test("resolves a link that has a target and leaves the rest unresolved", async () => {
 		const home = await bundledHome();
 
-		await invoke(["sync"], home);
+		await imported(home);
 
 		const links = await linksFrom(home, "bigquery-table/users.md");
 		expect(links.map((link) => link.target)).toEqual([
@@ -460,7 +356,7 @@ describe("authored links", () => {
 	test("keeps the anchor and the sentence the link was written in", async () => {
 		const home = await bundledHome();
 
-		await invoke(["sync"], home);
+		await imported(home);
 
 		const [, , anchored] = await linksFrom(home, "bigquery-table/users.md");
 		expect(anchored.anchor).toBe("columns");
@@ -473,7 +369,7 @@ describe("authored links", () => {
 	test("records a frontmatter citation as an edge of its own kind", async () => {
 		const home = await bundledHome();
 
-		await invoke(["sync"], home);
+		await imported(home);
 
 		const links = await linksFrom(home, "bigquery-table/orders.md");
 		// The citation of `users.md` and the body mention of it are both edges,
@@ -488,7 +384,7 @@ describe("authored links", () => {
 
 	test("attributes a link to the chunk it was written in", async () => {
 		const home = await bundledHome();
-		await invoke(["sync"], home);
+		await imported(home);
 
 		const [rows] = await sql<{ heading: string }>(
 			home,
@@ -499,76 +395,12 @@ describe("authored links", () => {
 
 		expect(rows.heading).toBe("Columns");
 	});
-
-	test("writing the missing document resolves the link with no edit to the source", async () => {
-		const home = await bundledHome();
-		await invoke(["sync"], home);
-		const sourceBefore = readFileSync(
-			join(home, "docs", "bigquery-table", "users.md"),
-			"utf8",
-		);
-
-		writeFileSync(
-			join(home, "docs", "bigquery-table", "sessions.md"),
-			"---\ntype: BigQuery Table\ntitle: Sessions table\n---\n\n# Sessions table\n\nOne row per session.\n",
-		);
-		await invoke(["sync"], home);
-
-		expect((await linksFrom(home, "bigquery-table/users.md"))[1].target).toBe(
-			"bigquery-table/sessions.md",
-		);
-		expect(
-			readFileSync(join(home, "docs", "bigquery-table", "users.md"), "utf8"),
-		).toBe(sourceBefore);
-	});
-
-	test("moving a document re-aims the relative links it wrote", async () => {
-		const home = await bundledHome();
-		await invoke(["sync"], home);
-
-		mkdirSync(join(home, "docs", "moved"));
-		renameSync(
-			join(home, "docs", "bigquery-table", "users.md"),
-			join(home, "docs", "moved", "users.md"),
-		);
-		await invoke(["sync"], home);
-
-		// `[Orders table](orders.md)` is relative to the file that wrote it, so
-		// from `moved/` it now names `moved/orders.md` — which nobody has
-		// written. The old target must not stay resolved.
-		expect(
-			(await linksFrom(home, "moved/users.md")).map((link) => [
-				link.target_path,
-				link.target,
-			]),
-		).toEqual([
-			["moved/orders.md", null],
-			["moved/sessions.md", null],
-			["moved/orders.md", null],
-		]);
-	});
-
-	test("deleting a target leaves inbound links in place but unresolved", async () => {
-		const home = await bundledHome();
-		await invoke(["sync"], home);
-
-		rmSync(join(home, "docs", "bigquery-table", "orders.md"));
-		await invoke(["sync"], home);
-
-		const links = await linksFrom(home, "bigquery-table/users.md");
-		expect(links).toHaveLength(3);
-		expect(links.map((link) => [link.target_path, link.target])).toEqual([
-			["bigquery-table/orders.md", null],
-			["bigquery-table/sessions.md", null],
-			["bigquery-table/orders.md", null],
-		]);
-	});
 });
 
 describe("lattice rels", () => {
 	test("reports outlinks, backlinks and unresolved links", async () => {
 		const home = await bundledHome();
-		await invoke(["sync"], home);
+		await imported(home);
 
 		const result = await invoke(["rels", "bigquery-table/users"], home);
 
@@ -587,7 +419,7 @@ describe("lattice rels", () => {
 
 	test("takes a path as readily as an identifier", async () => {
 		const home = await bundledHome();
-		await invoke(["sync"], home);
+		await imported(home);
 
 		const byPath = await invoke(["rels", "bigquery-table/users.md"], home);
 		const byIdentifier = await invoke(["rels", "bigquery-table/users"], home);
@@ -598,7 +430,7 @@ describe("lattice rels", () => {
 
 	test("--json emits the three relations machine-readably", async () => {
 		const home = await bundledHome();
-		await invoke(["sync"], home);
+		await imported(home);
 
 		const result = await invoke(
 			["rels", "bigquery-table/users", "--json"],
@@ -636,7 +468,7 @@ describe("lattice rels", () => {
 
 	test("exits non-zero for a concept that is not indexed", async () => {
 		const home = await bundledHome();
-		await invoke(["sync"], home);
+		await imported(home);
 
 		const result = await invoke(["rels", "bigquery-table/nowhere"], home);
 
@@ -646,243 +478,10 @@ describe("lattice rels", () => {
 	});
 });
 
-describe("incremental sync", () => {
-	test("a second sync with no filesystem change does no work", async () => {
-		const home = await bundledHome();
-		await invoke(["sync"], home);
-		const before = await sql(
-			home,
-			"SELECT id, path, content_hash, indexed_at FROM concepts ORDER BY id",
-		);
-
-		const second = await invoke(["sync"], home);
-
-		expect(second.code).toBe(0);
-		expect(second.stdout).toContain("Nothing to sync");
-		expect(
-			await sql(
-				home,
-				"SELECT id, path, content_hash, indexed_at FROM concepts ORDER BY id",
-			),
-		).toEqual(before);
-	});
-
-	test("changing one file re-indexes only that file", async () => {
-		const home = await bundledHome();
-		await invoke(["sync"], home);
-		const untouchedBefore = await sql(
-			home,
-			"SELECT id, indexed_at FROM concepts WHERE path <> 'note/unverified.md' ORDER BY id",
-		);
-		const [idBefore] = await sql<{ id: number }>(
-			home,
-			"SELECT id FROM concepts WHERE path = 'note/unverified.md'",
-		);
-
-		writeFileSync(
-			join(home, "docs", "note", "unverified.md"),
-			"---\ntype: Note\ntitle: Scratch note\n---\n\n# Scratch note\n\nRewritten.\n",
-		);
-		const result = await invoke(["sync"], home);
-
-		expect(result.stdout).toContain("0 new, 1 changed");
-		expect(
-			await sql(
-				home,
-				"SELECT id, indexed_at FROM concepts WHERE path <> 'note/unverified.md' ORDER BY id",
-			),
-		).toEqual(untouchedBefore);
-		expect((await chunksOf(home, "note/unverified.md"))[0].content).toContain(
-			"Rewritten.",
-		);
-		// The concept is the path, so an edit keeps the identity it had.
-		const [idAfter] = await sql<{ id: number }>(
-			home,
-			"SELECT id FROM concepts WHERE path = 'note/unverified.md'",
-		);
-		expect(idAfter.id).toBe(idBefore.id);
-	});
-
-	test("deleting a file removes its concept, chunks and tags", async () => {
-		const home = await bundledHome();
-		await invoke(["sync"], home);
-		expect(await chunksOf(home, "bigquery-table/users.md")).not.toHaveLength(0);
-
-		rmSync(join(home, "docs", "bigquery-table", "users.md"));
-		const result = await invoke(["sync"], home);
-
-		expect(result.stdout).toContain("1 deleted");
-		expect(
-			await sql(
-				home,
-				"SELECT path FROM concepts WHERE path = 'bigquery-table/users.md'",
-			),
-		).toEqual([]);
-		expect(await chunksOf(home, "bigquery-table/users.md")).toEqual([]);
-		expect(
-			await sql(
-				home,
-				"SELECT count(*) AS n FROM tags WHERE concept_id NOT IN (SELECT id FROM concepts)",
-			),
-		).toEqual([{ n: 0 }]);
-	});
-
-	test("renaming a file with unchanged content preserves its identity", async () => {
-		const home = await bundledHome();
-		await invoke(["sync"], home);
-		const [before] = await sql<{ id: number; indexed_at: string }>(
-			home,
-			"SELECT id, indexed_at FROM concepts WHERE path = 'bigquery-table/users.md'",
-		);
-
-		renameSync(
-			join(home, "docs", "bigquery-table", "users.md"),
-			join(home, "docs", "bigquery-table", "accounts.md"),
-		);
-		const result = await invoke(["sync"], home);
-
-		expect(result.stdout).toContain("1 renamed");
-		expect(
-			await sql(
-				home,
-				"SELECT id, identifier, indexed_at FROM concepts WHERE path = 'bigquery-table/accounts.md'",
-			),
-		).toEqual([
-			{
-				id: before.id,
-				identifier: "bigquery-table/accounts",
-				indexed_at: before.indexed_at,
-			},
-		]);
-	});
-});
-
-describe("the sync lock", () => {
-	test("refuses to start while another process holds the lock", async () => {
-		const home = await bundledHome();
-		writeFileSync(join(home, ".sync.lock"), `${process.pid}\n`);
-
-		const result = await invoke(["sync"], home);
-
-		expect(result.code).not.toBe(0);
-		expect(result.stderr).toContain("Another sync is already running");
-		expect(await sql(home, "SELECT count(*) AS n FROM concepts")).toEqual([
-			{ n: 0 },
-		]);
-	});
-
-	test("takes over a lock left behind by a dead process", async () => {
-		const home = await bundledHome();
-		const dead = Bun.spawnSync(["true"]);
-		writeFileSync(join(home, ".sync.lock"), `${dead.pid}\n`);
-
-		const result = await invoke(["sync"], home);
-
-		expect(result.code).toBe(0);
-		expect(existsSync(join(home, ".sync.lock"))).toBe(false);
-		expect(await sql(home, "SELECT count(*) AS n FROM concepts")).toEqual([
-			{ n: 11 },
-		]);
-	});
-});
-
-describe("lattice status against a bundle", () => {
-	test("reports what a sync would do and names the broken frontmatter", async () => {
-		const home = await bundledHome();
-
-		const before = await invoke(["status"], home);
-
-		expect(before.code).toBe(0);
-		expect(before.stdout).toContain("New:     11");
-		expect(before.stdout).toContain("Changed: 0");
-		expect(before.stdout).toContain("Deleted: 0");
-		expect(before.stdout).toContain("note/broken.md");
-		expect(before.stdout).toContain("note/plain.md");
-		expect(before.stdout).not.toContain("bigquery-table/users.md");
-	});
-
-	test("reports a document filed outside its type's directory, before and after sync", async () => {
-		const home = await bundledHome();
-		mkdirSync(join(home, "docs", "misc"));
-		writeFileSync(
-			join(home, "docs", "misc", "x.md"),
-			"---\ntype: Note\n---\n\n# Misfiled\n",
-		);
-		const message =
-			"misc/x.md: filed under `misc/` but type `Note` belongs in `note/`";
-
-		const before = await invoke(["status"], home);
-		expect(before.stdout).toContain(message);
-
-		const synced = await invoke(["sync"], home);
-		expect(synced.stdout).toContain(message);
-
-		const after = await invoke(["status"], home);
-		expect(after.stdout).toContain(message);
-	});
-
-	test("reports an up-to-date bundle after a sync, then the next change", async () => {
-		const home = await bundledHome();
-		await invoke(["sync"], home);
-
-		const synced = await invoke(["status"], home);
-		expect(synced.stdout).toContain("Concepts:   11");
-		expect(synced.stdout).toContain("Up to date");
-
-		writeFileSync(join(home, "docs", "note", "added.md"), "# Added\n\nNew.\n");
-		rmSync(join(home, "docs", "note", "plain.md"));
-		const changed = await invoke(["status"], home);
-
-		expect(changed.stdout).toContain("New:     1");
-		expect(changed.stdout).toContain("Deleted: 1");
-	});
-});
-
-describe("interrupting a sync", () => {
-	test("leaves a readable index the next sync completes", async () => {
-		const home = await bundledHome();
-		// Enough documents that the sync is still running when the signal lands;
-		// if it has already finished, the assertions below still hold.
-		for (let i = 0; i < 2000; i++) {
-			writeFileSync(
-				join(home, "docs", "note", `bulk-${i}.md`),
-				`---\ntype: Note\ntitle: Bulk ${i}\n---\n\n# Bulk ${i}\n\n${"Filler sentence. ".repeat(60)}\n`,
-			);
-		}
-
-		const running = Bun.spawn(["bun", "run", "src/main.ts", "sync"], {
-			env: {
-				...process.env,
-				LATTICE_HOME: home,
-				LATTICE_EMBED_PROVIDER: "hash",
-			},
-			stdout: "ignore",
-			stderr: "ignore",
-		});
-		await Bun.sleep(200);
-		running.kill("SIGINT");
-		await running.exited;
-
-		// The index is readable, the lock is gone, and the rest is just work to do.
-		expect(existsSync(join(home, ".sync.lock"))).toBe(false);
-		const result = await invoke(["sync"], home);
-		expect(result.code).toBe(0);
-		expect(await sql(home, "SELECT count(*) AS n FROM concepts")).toEqual([
-			{ n: 2011 },
-		]);
-		expect(
-			await sql(
-				home,
-				"SELECT count(*) AS n FROM concepts WHERE id NOT IN (SELECT concept_id FROM chunks)",
-			),
-		).toEqual([{ n: 0 }]);
-	});
-});
-
-/** A synced home holding the fixture bundle — the corpus every search test queries. */
+/** A home whose store holds the fixture bundle: the corpus every search test queries. */
 async function searchableHome(): Promise<string> {
 	const home = await bundledHome();
-	await invoke(["sync"], home);
+	await imported(home);
 	return home;
 }
 
@@ -958,13 +557,12 @@ const HYBRID_ENV = {
 	LATTICE_EMBED_STUB: JSON.stringify(HYBRID_GROUPS),
 };
 
-/** A synced home over the hybrid fixture bundle, embedded with the stub provider. */
+/** A home whose store holds the hybrid fixture bundle, embedded with the stub provider. */
 async function hybridHome(): Promise<string> {
 	const home = freshHome();
-	await invoke(["init"], home);
 	cpSync(FIXTURE_HYBRID, join(home, "docs"), { recursive: true });
-	const synced = await invoke(["sync"], home, HYBRID_ENV);
-	expect(synced.stderr).toBe("");
+	const built = await imported(home, HYBRID_ENV);
+	expect(built.stderr).toBe("");
 	return home;
 }
 
@@ -1475,7 +1073,6 @@ describe("lattice search", () => {
 		expect(users.title).toBe("Users table");
 		expect(users.type).toBe("BigQuery Table");
 		expect(users.status).toBe("stable");
-		expect(users.trust).toBe("human-reviewed");
 		expect(users.staleAfter).toBe("2027-01-01T00:00:00Z");
 		expect(users.stale).toBe(false);
 		expect(users.score).toBeGreaterThan(0);
@@ -1589,9 +1186,6 @@ describe("lattice search", () => {
 		expect(await paths(["--status", "stable"])).toEqual([
 			"bigquery-table/users.md",
 		]);
-		expect(await paths(["--trust", "human-reviewed"])).toEqual([
-			"bigquery-table/users.md",
-		]);
 
 		expect(
 			(await paths(["--type", "Gauge"])).every((path) =>
@@ -1671,19 +1265,21 @@ describe("lattice search", () => {
 		expect(result.stderr).toContain("--as-of expects a date");
 	});
 
-	test("reports offsets that slice the matching passage out of the source file", async () => {
+	test("reports offsets that slice the matching passage out of the note's text", async () => {
 		const home = await searchableHome();
 
 		const { hits } = await search(home, ["fenced"]);
 		const [guide] = hits.filter((hit) => hit.path === "guide/chunking.md");
 		const chunk = guide.chunks[0];
 
+		// The note's text is the file's body, which starts after five lines of frontmatter.
 		const raw = readFileSync(
 			join(home, "docs", "guide", "chunking.md"),
 			"utf8",
 		);
-		expect(raw.slice(chunk.startChar, chunk.endChar)).toContain("Fenced code");
-		expect(raw.split("\n")[chunk.startLine - 1]).toBe("## Fenced code");
+		const body = raw.split("\n").slice(5).join("\n");
+		expect(body.slice(chunk.startChar, chunk.endChar)).toContain("Fenced code");
+		expect(body.split("\n")[chunk.startLine - 1]).toBe("## Fenced code");
 		expect(chunk.endLine).toBeGreaterThanOrEqual(chunk.startLine);
 	});
 
@@ -1695,9 +1291,7 @@ describe("lattice search", () => {
 		expect(found.code).toBe(0);
 		expect(found.stderr).toBe("");
 		expect(found.stdout).toContain("bigquery-table/users.md — Users table");
-		expect(found.stdout).toContain(
-			"[BigQuery Table · stable · human-reviewed]",
-		);
+		expect(found.stdout).toContain("[BigQuery Table · stable]");
 		expect(found.stdout).toContain("user_id");
 
 		const missing = await invoke(["search", "zzzznothinghere"], home);
@@ -1706,11 +1300,11 @@ describe("lattice search", () => {
 		expect(missing.stdout).toBe("No matches.\n");
 	});
 
-	test("exits non-zero when there is no index to search", async () => {
+	test("exits non-zero when there is no store to search", async () => {
 		const result = await invoke(["search", "anything"]);
 
 		expect(result.code).not.toBe(0);
-		expect(result.stderr).toContain("No Lattice index");
+		expect(result.stderr).toContain("No note store");
 		expect(result.stderr).toContain("lattice init");
 	});
 });
@@ -1719,7 +1313,7 @@ describe("the embedding phase", () => {
 	test("sync gives every chunk a vector of the provider's dimension", async () => {
 		const home = await bundledHome();
 
-		const result = await invoke(["sync"], home);
+		const result = await imported(home);
 
 		expect(result.code).toBe(0);
 		expect(
@@ -1738,10 +1332,35 @@ describe("the embedding phase", () => {
 	});
 });
 
+describe("the embed lock", () => {
+	test("refuses to start while another process holds the lock", async () => {
+		const home = await bundledHome();
+		await imported(home);
+		writeFileSync(join(home, ".embed.lock"), `${process.pid}\n`);
+
+		const result = await invoke(["embed"], home);
+
+		expect(result.code).not.toBe(0);
+		expect(result.stderr).toContain("Another embed is already running");
+	});
+
+	test("takes over a lock left behind by a dead process", async () => {
+		const home = await bundledHome();
+		await imported(home);
+		const dead = Bun.spawnSync(["true"]);
+		writeFileSync(join(home, ".embed.lock"), `${dead.pid}\n`);
+
+		const result = await invoke(["embed"], home);
+
+		expect(result.code).toBe(0);
+		expect(existsSync(join(home, ".embed.lock"))).toBe(false);
+	});
+});
+
 describe("concept vectors", () => {
 	test("are derived from the title, description and tags, not the body", async () => {
 		const home = await bundledHome();
-		await invoke(["sync"], home);
+		await imported(home);
 
 		// The fixture's two notes without frontmatter have no title, no
 		// description and no tags, so there is nothing to embed for them.
@@ -1790,10 +1409,13 @@ describe("provider failures", () => {
 	test("a retryable failure leaves a backlog the next run clears", async () => {
 		const home = await bundledHome();
 
-		const synced = await withFault(["sync"], home, "retryable:Chunking");
+		const built = await withFault(
+			["import", "--no-library"],
+			home,
+			"retryable:Chunking",
+		);
 
-		expect(synced.code).toBe(0);
-		expect(synced.stdout).toContain("Failed:");
+		expect(built.code).toBe(0);
 		const [pending] = await sql<{ n: number }>(
 			home,
 			"SELECT count(*) AS n FROM chunks WHERE id NOT IN (SELECT chunk_id FROM chunk_embeddings)",
@@ -1806,7 +1428,7 @@ describe("provider failures", () => {
 			),
 		).toEqual([{ retryable: 1, attempts: 1 }]);
 
-		// Nothing is re-read from disk; the backlog alone drives the work.
+		// Nothing is re-read from the files; the backlog alone drives the work.
 		const embedded = await invoke(["embed"], home);
 
 		expect(embedded.code).toBe(0);
@@ -1824,7 +1446,7 @@ describe("provider failures", () => {
 	test("a permanent failure is retried only when asked", async () => {
 		const home = await bundledHome();
 
-		await withFault(["sync"], home, "permanent:Chunking");
+		await withFault(["import", "--no-library"], home, "permanent:Chunking");
 
 		const [failed] = await sql<{ n: number }>(
 			home,
@@ -1859,37 +1481,14 @@ describe("provider failures", () => {
 			await sql(home, "SELECT count(*) AS n FROM chunk_embed_failures"),
 		).toEqual([{ n: 0 }]);
 	});
-
-	test("re-chunking a document clears its stale failure records", async () => {
-		const home = await bundledHome();
-		await withFault(["sync"], home, "permanent:Chunking");
-		expect(
-			(
-				await sql<{ n: number }>(
-					home,
-					"SELECT count(*) AS n FROM chunk_embed_failures",
-				)
-			)[0].n,
-		).toBeGreaterThan(0);
-
-		writeFileSync(
-			join(home, "docs", "guide", "chunking.md"),
-			"---\ntype: Guide\ntitle: Chunking\n---\n\n# Rewritten\n\nDifferent text entirely.\n",
-		);
-		await invoke(["sync"], home);
-
-		expect(
-			await sql(home, "SELECT count(*) AS n FROM chunk_embed_failures"),
-		).toEqual([{ n: 0 }]);
-	});
 });
 
 describe("lattice status and the embedding backlog", () => {
-	test("names the model and dimensions and counts chunks awaiting vectors", async () => {
+	test("names the model and dimensions and counts passages awaiting vectors", async () => {
 		const home = await bundledHome();
 
 		await runCli({
-			argv: ["sync"],
+			argv: ["import", "--no-library"],
 			env: {
 				LATTICE_HOME: home,
 				LATTICE_EMBED_PROVIDER: "hash",
@@ -1903,21 +1502,25 @@ describe("lattice status and the embedding backlog", () => {
 			"SELECT count(*) AS n FROM chunks WHERE id NOT IN (SELECT chunk_id FROM chunk_embeddings)",
 		);
 		expect(waiting.code).toBe(0);
-		expect(waiting.stdout).toContain("Model:  hash-512 (512 dimensions)");
-		expect(waiting.stdout).toContain(`Awaiting vectors: ${pending.n}`);
+		expect(waiting.stdout).toContain("Model:    hash-512 (512 dimensions)");
+		expect(waiting.stdout).toContain(`${pending.n} waiting`);
+		expect(waiting.stdout).toContain(
+			`Search:    degraded: ${pending.n} passages have no vector yet`,
+		);
 
 		await invoke(["embed"], home);
 		const done = await invoke(["status"], home);
 
-		expect(done.stdout).toContain("Awaiting vectors: 0");
+		expect(done.stdout).toContain("0 waiting");
+		expect(done.stdout).toContain("Search:    full");
 	});
 });
 
 describe("changing the embedding model", () => {
-	/** The same bundle, indexed and embedded in the default (512) space. */
+	/** The same bundle, imported and embedded in the default (512) space. */
 	async function embeddedHome(): Promise<string> {
 		const home = await bundledHome();
-		const result = await invoke(["sync"], home);
+		const result = await imported(home);
 		expect(result.code).toBe(0);
 		return home;
 	}
@@ -1927,32 +1530,12 @@ describe("changing the embedding model", () => {
 		return invoke(argv, home, { LATTICE_EMBED_DIM: "256" });
 	}
 
-	test("sync under a changed model refuses and says what to do about it", async () => {
+	test("embed and search refuse a changed model and say what to do about it, rather than mixing spaces", async () => {
 		const home = await embeddedHome();
 		const [{ n: before }] = await sql<{ n: number }>(
 			home,
 			"SELECT count(*) AS n FROM chunk_embeddings",
 		);
-
-		const result = await inNewSpace(["sync"], home);
-
-		expect(result.code).not.toBe(0);
-		expect(result.stderr).toContain("hash-512");
-		expect(result.stderr).toContain("hash-256");
-		expect(result.stderr).toContain(String(before));
-		expect(result.stderr).toContain("LATTICE_EMBED_DIM");
-		expect(result.stderr).toContain("lattice embed --reembed");
-
-		// Nothing was written into the new space by the refused run.
-		const [{ n: after }] = await sql<{ n: number }>(
-			home,
-			"SELECT count(*) AS n FROM chunk_embeddings WHERE dim = 256",
-		);
-		expect(after).toBe(0);
-	});
-
-	test("embed and search refuse the same change, rather than mixing spaces", async () => {
-		const home = await embeddedHome();
 
 		for (const argv of [["embed"], ["search", "users"]]) {
 			const result = await inNewSpace(argv, home);
@@ -1960,11 +1543,21 @@ describe("changing the embedding model", () => {
 			expect(result.code).not.toBe(0);
 			expect(result.stderr).toContain("hash-512");
 			expect(result.stderr).toContain("hash-256");
+			expect(result.stderr).toContain(String(before));
+			expect(result.stderr).toContain("LATTICE_EMBED_DIM");
 			expect(result.stderr).toContain("lattice embed --reembed");
 		}
+
+		// Nothing was written into the new space by the refused runs.
+		expect(
+			await sql(
+				home,
+				"SELECT count(*) AS n FROM chunk_embeddings WHERE dim = 256",
+			),
+		).toEqual([{ n: 0 }]);
 	});
 
-	test("--reembed rebuilds the index and drops the space it replaced", async () => {
+	test("--reembed rebuilds the store's vectors and drops the space it replaced", async () => {
 		const home = await embeddedHome();
 
 		const result = await inNewSpace(["embed", "--reembed"], home);
@@ -1981,8 +1574,8 @@ describe("changing the embedding model", () => {
 			await sql(home, "SELECT value FROM meta WHERE key = 'embedding_model'"),
 		).toEqual([{ value: "hash-256" }]);
 
-		// And the new space is now simply the index's own: nothing refuses.
-		expect((await inNewSpace(["sync"], home)).code).toBe(0);
+		// And the new space is now simply the store's own: nothing refuses.
+		expect((await inNewSpace(["embed"], home)).code).toBe(0);
 	});
 
 	test("a permanent failure in the new space blocks the swap rather than losing vectors", async () => {
@@ -1993,7 +1586,7 @@ describe("changing the embedding model", () => {
 		);
 
 		// One chunk can never be embedded in the new space. Finishing anyway
-		// would delete a vector the index still has and cannot rebuild.
+		// would delete a vector the store still has and cannot rebuild.
 		const result = await invoke(["embed", "--reembed"], home, {
 			LATTICE_EMBED_DIM: "256",
 			LATTICE_EMBED_FAIL: "permanent:Users table",
@@ -2069,25 +1662,26 @@ describe("the local model", () => {
 		const result = await offline(["init"], home);
 
 		expect(result.code).toBe(0);
-		expect(existsSync(join(home, "lattice.db"))).toBe(true);
+		expect(existsSync(join(home, "store.db"))).toBe(true);
 		expect(result.stdout).toContain("Embeddings are not ready yet");
 		expect(result.stdout).toContain(join(home, "models"));
 		expect(result.stdout).toContain("nomic-ai/nomic-embed-text-v1.5");
 	});
 
-	test("sync says what model is missing rather than failing obscurely", async () => {
+	test("embed says what model is missing rather than failing obscurely", async () => {
 		const home = await bundledHome();
+		await imported(home);
 
-		const result = await offline(["sync"], home);
+		const result = await offline(["embed"], home);
 
 		expect(result.code).not.toBe(0);
 		expect(result.stderr).toContain(join(home, "models"));
 		expect(result.stderr).toContain("LATTICE_OFFLINE");
 	});
 
-	test("status still reports the index when the model is not there", async () => {
+	test("status still reports the store when the model is not there", async () => {
 		const home = await bundledHome();
-		await invoke(["sync"], home);
+		await imported(home);
 
 		const result = await offline(["status"], home);
 
@@ -2097,9 +1691,10 @@ describe("the local model", () => {
 		);
 
 		expect(result.code).toBe(0);
-		expect(result.stdout).toContain(`Chunks:     ${chunks}`);
-		expect(result.stdout).toContain(`Embeddings: ${chunks}`);
-		expect(result.stdout).toContain("Embeddings are not ready yet");
+		expect(result.stdout).toContain(
+			`Passages:  ${chunks}; ${chunks} with vectors`,
+		);
+		expect(result.stdout).toContain("the embedding model cannot be used here");
 	});
 
 	test("init reports progress while it works", async () => {
@@ -2141,7 +1736,6 @@ describe("search at scale", () => {
 
 	test("answers within the budget on a corpus at that scale", async () => {
 		const home = freshHome();
-		await invoke(["init"], home);
 		mkdirSync(join(home, "docs", "corpus"), { recursive: true });
 		for (let i = 0; i < DOCUMENTS; i++) {
 			writeFileSync(
@@ -2151,7 +1745,7 @@ describe("search at scale", () => {
 					`## Detail\n\nMeasurements for gauge ${i} were taken on the bench.\n`,
 			);
 		}
-		expect((await invoke(["sync"], home)).stderr).toBe("");
+		expect((await invoke(["import", "--no-library"], home)).stderr).toBe("");
 
 		// A budget is only meaningful if the scan it is measuring is real: the
 		// semantic leg must have a vector for every passage to work through.
@@ -2202,7 +1796,7 @@ Depreciation flattens after the fourth year.
 `;
 
 describe("a research document", () => {
-	test("indexes with its type, title, description and tags, and cites its in-bundle source", async () => {
+	test("imports with its type, title, description and tags, and cites its in-bundle source", async () => {
 		const home = await bundledHome();
 		// Filed under the directory its type names.
 		mkdirSync(join(home, "docs", "research"), { recursive: true });
@@ -2216,15 +1810,10 @@ describe("a research document", () => {
 			RESEARCH_TEMPLATE,
 		);
 
-		const synced = await invoke(["sync"], home);
-		expect(synced.code).toBe(0);
-
-		// The fixture bundle has its own deliberately broken files; the point
-		// here is that the template is not among them.
-		const status = await invoke(["status"], home);
-		expect(status.stdout).not.toContain(
-			"research/tesla-model-s-value-retention.md:",
-		);
+		// An import that comes back clean read every file's frontmatter whole,
+		// the template's included.
+		const built = await imported(home);
+		expect(built.stdout).toContain("fields equal the frontmatter");
 
 		// The promoted columns, read back through search rather than the database.
 		const found = await invoke(

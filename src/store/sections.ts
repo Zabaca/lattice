@@ -8,7 +8,7 @@
  * does for the chunker and the link reader.
  */
 
-import { readLines } from "../sync/lines.js";
+import { readLines } from "../markdown/lines.js";
 
 export interface SectionText {
 	/** The heading's words, or null for text that sits above the first heading. */
